@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
-"""Monta os sprites do PixelLab (assets/pixellab/fase-*) no formato que a interface usa.
+"""Monta os sprites do PixelLab (assets/pixellab/) no formato que a interface usa.
 
-Saída em web/public/sprites/: um PNG por objeto, os ladrilhos de piso, uma tira horizontal por
-animação e o manifest.json com o tamanho dos quadros e o ponto dos pés (âncora) de cada uma.
+Entrada:
+  personagens/<nome>/anim/<animação>/<direção>/frame_NNN.png   (pacotes baixados do PixelLab)
+  objetos/*.png                                                 (todos os objetos, das duas fases)
+  fase-*/piso*/tileset.png                                      (tilesets: grama + outro terreno)
+
+Saída em web/public/sprites/: uma tira horizontal por animação de cada personagem, um PNG por
+objeto, um ladrilho por piso e o manifest.json com tamanho dos quadros, pés e cabeça.
 
 Uso: python3 assets/pixellab/montar-sprites.py   (precisa do Pillow)
 """
@@ -10,26 +15,32 @@ Uso: python3 assets/pixellab/montar-sprites.py   (precisa do Pillow)
 import colorsys
 import json
 import os
+import shutil
 from pathlib import Path
 
 from PIL import Image
 
 ROOT = Path(__file__).resolve().parents[2]
-SRC = ROOT / "assets" / "pixellab" / "fase-1"
+SRC = ROOT / "assets" / "pixellab"
 OUT = ROOT / "web" / "public" / "sprites"
 
-# Quais quadros de cada animação entram no loop. "digitando" saiu do PixelLab como
-# sentar → digitar → levantar; só os quadros do meio são o personagem digitando.
-ANIMACOES = {
+# Quais quadros de cada animação entram no loop. As do PixelLab vêm com o começo e o fim
+# do movimento (sentar → digitar → levantar; braços subindo → descendo): o loop usa só o meio.
+QUADROS = {
     "parado": None,
     "digitando": [3, 4, 5, 6],
     "mao": [2, 3, 4, 5, 6, 7],
+    "comemorando": [3, 4, 5, 6, 7, 8],
+    "andar": None,
 }
 
-
-def is_wood(rgb) -> bool:
-    h, l, _ = colorsys.rgb_to_hls(*(v / 255 for v in rgb))
-    return h * 360 < 60 and l > 0.55
+# Pisos: (nome, tileset de origem, o que conta como o terreno).
+PISOS = [
+    ("grama", "fase-1/piso/tileset.png", "grama"),
+    ("madeira", "fase-1/piso/tileset.png", "outro"),
+    ("corredor", "fase-2/piso-corredor/tileset.png", "outro"),
+    ("copa", "fase-2/piso-copa/tileset.png", "outro"),
+]
 
 
 def is_grass(rgb) -> bool:
@@ -37,16 +48,16 @@ def is_grass(rgb) -> bool:
     return 80 < h * 360 < 160 and s > 0.3
 
 
-def pure_tile(sheet: Image.Image, terreno, n: int = 32) -> Image.Image:
+def pure_tile(sheet: Image.Image, want_grass: bool, n: int = 32) -> Image.Image:
     """
-    Quadrado n×n só do terreno pedido, em qualquer posição da folha, escolhendo o que melhor
-    se repete lado a lado (borda esquerda parecida com a direita, a de cima com a de baixo).
+    Quadrado n×n só de um terreno, em qualquer posição da folha, escolhendo o que melhor se
+    repete lado a lado (borda esquerda parecida com a direita, a de cima com a de baixo).
     Não usamos a metadata do PixelLab: na fase 1 os cantos dela não batiam com a imagem.
     """
     rgb = sheet.convert("RGB")
     W, H = rgb.size
     px = rgb.load()
-    ok = [[1 if terreno(px[x, y]) else 0 for x in range(W)] for y in range(H)]
+    ok = [[1 if is_grass(px[x, y]) == want_grass else 0 for x in range(W)] for y in range(H)]
     acc = [[0] * (W + 1) for _ in range(H + 1)]
     for y in range(H):
         for x in range(W):
@@ -65,7 +76,7 @@ def pure_tile(sheet: Image.Image, terreno, n: int = 32) -> Image.Image:
         if acc[y + n][x + n] - acc[y][x + n] - acc[y + n][x] + acc[y][x] == n * n
     ]
     if not candidates:
-        raise SystemExit(f"nenhum quadrado {n}x{n} só de {terreno.__name__} na folha")
+        raise SystemExit(f"nenhum quadrado {n}x{n} só de {'grama' if want_grass else 'piso'} na folha")
     _, x, y = min(candidates)
     return sheet.crop((x, y, x + n, y + n))
 
@@ -81,42 +92,59 @@ def head_y(frames: list[Image.Image]) -> int:
     return tops[len(tops) // 2]
 
 
+def strip(frames: list[Image.Image]) -> Image.Image:
+    w, h = frames[0].size
+    out = Image.new("RGBA", (w * len(frames), h))
+    for i, fr in enumerate(frames):
+        out.alpha_composite(fr, (i * w, 0))
+    return out
+
+
 def main() -> None:
-    OUT.mkdir(parents=True, exist_ok=True)
-    manifest: dict = {"objetos": {}, "pisos": {}, "animacoes": {}}
+    if OUT.exists():
+        shutil.rmtree(OUT)
+    (OUT / "personagens").mkdir(parents=True)
+    manifest: dict = {"objetos": {}, "pisos": {}, "personagens": {}}
 
     for f in sorted((SRC / "objetos").glob("*.png")):
         img = Image.open(f).convert("RGBA")
         img.save(OUT / f.name)
         manifest["objetos"][f.stem] = {"arquivo": f.name, "w": img.width, "h": img.height}
 
-    sheet = Image.open(SRC / "piso" / "tileset.png").convert("RGBA")
-    for nome, terreno in (("grama", is_grass), ("madeira", is_wood)):
-        t = pure_tile(sheet, terreno)
+    for nome, origem, terreno in PISOS:
+        t = pure_tile(Image.open(SRC / origem).convert("RGBA"), terreno == "grama")
         t.save(OUT / f"{nome}.png")
         manifest["pisos"][nome] = {"arquivo": f"{nome}.png", "w": t.width, "h": t.height}
 
-    base = SRC / "personagem"
-    for nome, escolha in ANIMACOES.items():
-        pasta = base / "anim" / nome / "south"
-        todos = [Image.open(pasta / f).convert("RGBA") for f in sorted(os.listdir(pasta))]
-        frames = [todos[i] for i in escolha] if escolha else todos
-        w, h = frames[0].size
-        strip = Image.new("RGBA", (w * len(frames), h))
-        for i, fr in enumerate(frames):
-            strip.alpha_composite(fr, (i * w, 0))
-        strip.save(OUT / f"funcionario-{nome}.png")
-        manifest["animacoes"][nome] = {
-            "arquivo": f"funcionario-{nome}.png",
-            "w": w,
-            "h": h,
-            "quadros": len(frames),
-            "pesY": feet_y(frames),
-            "cabecaY": head_y(frames),
-        }
+    for pasta in sorted((SRC / "personagens").iterdir()):
+        if not pasta.is_dir():
+            continue
+        anims = {}
+        for anim, escolha in QUADROS.items():
+            base = pasta / "anim" / anim
+            if not base.exists():
+                continue
+            for direcao in sorted(os.listdir(base)):
+                arquivos = sorted(os.listdir(base / direcao))
+                todos = [Image.open(base / direcao / a).convert("RGBA") for a in arquivos]
+                frames = [todos[i] for i in escolha if i < len(todos)] if escolha else todos
+                # Só o andar tem direções; as outras são de frente e ficam sem sufixo.
+                chave = f"{anim}-{direcao}" if anim == "andar" else anim
+                arquivo = f"personagens/{pasta.name}-{chave}.png"
+                strip(frames).save(OUT / arquivo)
+                anims[chave] = {
+                    "arquivo": arquivo,
+                    "w": frames[0].width,
+                    "h": frames[0].height,
+                    "quadros": len(frames),
+                    "pesY": feet_y(frames),
+                    "cabecaY": head_y(frames),
+                }
+        manifest["personagens"][pasta.name] = anims
 
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
-    print(f"sprites em {OUT.relative_to(ROOT)}: {len(list(OUT.glob('*.png')))} imagens")
+    total = len(list(OUT.rglob("*.png")))
+    print(f"sprites em {OUT.relative_to(ROOT)}: {total} imagens, {len(manifest['personagens'])} personagens")
 
 
 if __name__ == "__main__":

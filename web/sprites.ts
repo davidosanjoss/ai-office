@@ -5,27 +5,39 @@ export interface Anim {
   w: number;
   h: number;
   quadros: number;
-  /** Linha dos pés dentro do quadro. */
+  /** Linha dos pés dentro do quadro: é por ela que quem anda é posicionado. */
   pesY: number;
   /** Topo da cabeça dentro do quadro: é por ela que o funcionário sentado é posicionado. */
   cabecaY: number;
 }
 
-interface Manifest {
+type AnimMeta = Omit<Anim, 'img'> & { arquivo: string };
+
+export interface Manifest {
   objetos: Record<string, { arquivo: string; w: number; h: number }>;
   pisos: Record<string, { arquivo: string; w: number; h: number }>;
-  animacoes: Record<string, { arquivo: string; w: number; h: number; quadros: number; pesY: number; cabecaY: number }>;
+  /** Animações de cada personagem: parado, digitando, mao, comemorando, andar-<direção>. */
+  personagens: Record<string, Record<string, AnimMeta>>;
 }
 
-/** Tons do moletom: cada agente ganha um, para não ficarem todos iguais. */
-export const HOODIE_HUES = [215, 0, 135, 280, 30, 175, 330, 55];
+/** A secretária da recepção sempre é a mesma personagem. */
+export const RECEPCIONISTA = 'funcionaria-8';
+
+/**
+ * Personagem de um agente: sempre o mesmo para o mesmo agente (sorteado pelo ID), nunca a
+ * recepcionista, que fica no balcão.
+ */
+export function characterFor(seed: number, names: string[]): string | undefined {
+  const pool = names.filter((n) => n !== RECEPCIONISTA);
+  const list = pool.length ? pool : names;
+  return list.length ? list[seed % list.length] : undefined;
+}
 
 export class Sprites {
   objetos = new Map<string, HTMLImageElement>();
   pisos = new Map<string, HTMLImageElement>();
-  animacoes = new Map<string, Anim>();
+  personagens = new Map<string, Map<string, Anim>>();
   ready = false;
-  private recolored = new Map<string, HTMLCanvasElement>();
 
   async load(base = 'sprites/'): Promise<void> {
     const manifest = (await (await fetch(`${base}manifest.json`)).json()) as Manifest;
@@ -36,74 +48,28 @@ export class Sprites {
         i.onerror = () => reject(new Error(`sprite não carregou: ${file}`));
         i.src = base + file;
       });
-    await Promise.all([
+    const jobs: Promise<unknown>[] = [
       ...Object.entries(manifest.objetos).map(async ([k, v]) => this.objetos.set(k, await img(v.arquivo))),
       ...Object.entries(manifest.pisos).map(async ([k, v]) => this.pisos.set(k, await img(v.arquivo))),
-      ...Object.entries(manifest.animacoes).map(async ([k, v]) => this.animacoes.set(k, { ...v, img: await img(v.arquivo) })),
-    ]);
+    ];
+    for (const [nome, anims] of Object.entries(manifest.personagens)) {
+      const map = new Map<string, Anim>();
+      this.personagens.set(nome, map);
+      for (const [k, v] of Object.entries(anims)) {
+        jobs.push(img(v.arquivo).then((i) => map.set(k, { ...v, img: i })));
+      }
+    }
+    await Promise.all(jobs);
     this.ready = true;
   }
 
-  /**
-   * A tira da animação com o moletom (azul no original) trocado para outro tom.
-   * Calculado uma vez por animação e tom.
-   */
-  anim(name: string, hue: number): { anim: Anim; source: CanvasImageSource } | undefined {
-    const anim = this.animacoes.get(name);
-    if (!anim) return undefined;
-    if (hue === HOODIE_HUES[0]) return { anim, source: anim.img };
-    const key = `${name}:${hue}`;
-    let canvas = this.recolored.get(key);
-    if (!canvas) {
-      canvas = recolor(anim.img, hue);
-      this.recolored.set(key, canvas);
-    }
-    return { anim, source: canvas };
+  names(): string[] {
+    return [...this.personagens.keys()];
   }
-}
 
-/** Troca o matiz dos pixels azuis saturados (o moletom) por `hue`, mantendo luz e saturação. */
-export function recolor(img: HTMLImageElement, hue: number): HTMLCanvasElement {
-  const c = document.createElement('canvas');
-  c.width = img.width;
-  c.height = img.height;
-  const ctx = c.getContext('2d')!;
-  ctx.drawImage(img, 0, 0);
-  const data = ctx.getImageData(0, 0, c.width, c.height);
-  const px = data.data;
-  for (let i = 0; i < px.length; i += 4) {
-    if (px[i + 3] === 0) continue;
-    const [h, s, l] = rgbToHsl(px[i], px[i + 1], px[i + 2]);
-    // Moletom: azul a ~220° com luz ~0,5. A calça tem o mesmo azul, mas escura (~0,3): fica de fora.
-    if (h >= 200 && h <= 235 && s > 0.25 && l > 0.38) {
-      const [r, g, b] = hslToRgb(hue, s, l);
-      px[i] = r;
-      px[i + 1] = g;
-      px[i + 2] = b;
-    }
+  /** Animação de um personagem; cai em "parado" se ele não tiver a pedida. */
+  anim(character: string | undefined, name: string): Anim | undefined {
+    const anims = character ? this.personagens.get(character) : undefined;
+    return anims?.get(name) ?? anims?.get('parado');
   }
-  ctx.putImageData(data, 0, 0);
-  return c;
-}
-
-export function rgbToHsl(r: number, g: number, b: number): [number, number, number] {
-  r /= 255;
-  g /= 255;
-  b /= 255;
-  const max = Math.max(r, g, b);
-  const min = Math.min(r, g, b);
-  const l = (max + min) / 2;
-  if (max === min) return [0, 0, l];
-  const d = max - min;
-  const s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-  let h = max === r ? (g - b) / d + (g < b ? 6 : 0) : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
-  h *= 60;
-  return [h, s, l];
-}
-
-export function hslToRgb(h: number, s: number, l: number): [number, number, number] {
-  const k = (n: number) => (n + h / 30) % 12;
-  const a = s * Math.min(l, 1 - l);
-  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
-  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
 }

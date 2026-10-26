@@ -1,6 +1,6 @@
 {
   "name": "ai-office",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Escritório em pixel art para gerenciar várias sessões do Claude Code",
   "scripts": {
     "dev:server": "tsx watch server/index.ts",

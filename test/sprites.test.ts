@@ -2,62 +2,70 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { HEAD_Y, seatTop } from '../web/office.ts';
-import { HOODIE_HUES, hslToRgb, rgbToHsl } from '../web/sprites.ts';
+import { RECEPCIONISTA, characterFor, type Manifest } from '../web/sprites.ts';
 
 const DIR = path.resolve('web/public/sprites');
-const manifest = JSON.parse(fs.readFileSync(path.join(DIR, 'manifest.json'), 'utf8'));
+const manifest = JSON.parse(fs.readFileSync(path.join(DIR, 'manifest.json'), 'utf8')) as Manifest;
+const agentes = Object.keys(manifest.personagens).filter((n) => n !== RECEPCIONISTA);
 
 describe('pacote de sprites', () => {
   it('todo arquivo citado no manifest existe', () => {
     const files = [
-      ...Object.values<any>(manifest.objetos),
-      ...Object.values<any>(manifest.pisos),
-      ...Object.values<any>(manifest.animacoes),
+      ...Object.values(manifest.objetos),
+      ...Object.values(manifest.pisos),
+      ...Object.values(manifest.personagens).flatMap((a) => Object.values(a)),
     ].map((e) => e.arquivo);
     for (const f of files) expect(fs.existsSync(path.join(DIR, f)), f).toBe(true);
   });
 
-  it('o escritório tem tudo o que desenha', () => {
-    expect(Object.keys(manifest.objetos)).toEqual(expect.arrayContaining(['mesa', 'cadeira', 'planta', 'arvore']));
-    expect(Object.keys(manifest.pisos)).toEqual(expect.arrayContaining(['grama', 'madeira']));
-    expect(Object.keys(manifest.animacoes)).toEqual(expect.arrayContaining(['parado', 'digitando', 'mao']));
+  it('o escritório tem os objetos e pisos que desenha', () => {
+    expect(Object.keys(manifest.objetos)).toEqual(
+      expect.arrayContaining(['mesa-costas', 'cadeira', 'balcao', 'sofa', 'cafeteira', 'geladeira', 'mesa-copa', 'poste', 'carro', 'arvore']),
+    );
+    expect(Object.keys(manifest.pisos)).toEqual(expect.arrayContaining(['grama', 'madeira', 'corredor', 'copa']));
   });
 
-  it('regressão: toda animação deixa a cabeça na mesma altura (digitando é sentada e afundava atrás da mesa)', () => {
-    const heads = Object.values<any>(manifest.animacoes).map((a) => seatTop(a) + a.cabecaY);
-    expect(new Set(heads)).toEqual(new Set([HEAD_Y]));
+  it('todo personagem que vira agente tem as animações da mesa e de andar nas 4 direções', () => {
+    expect(agentes.length).toBeGreaterThanOrEqual(7);
+    for (const nome of agentes) {
+      expect(Object.keys(manifest.personagens[nome]), nome).toEqual(
+        expect.arrayContaining(['parado', 'digitando', 'mao', 'comemorando', 'andar-south', 'andar-east', 'andar-north', 'andar-west']),
+      );
+    }
+    expect(manifest.personagens[RECEPCIONISTA]).toHaveProperty('parado');
+  });
+
+  it('regressão: toda animação de mesa deixa a cabeça na mesma altura (digitando é sentada e afundava atrás da mesa)', () => {
+    for (const nome of agentes) {
+      for (const anim of ['parado', 'digitando', 'mao', 'comemorando']) {
+        const a = manifest.personagens[nome][anim];
+        expect(seatTop(a) + a.cabecaY, `${nome}/${anim}`).toBe(HEAD_Y);
+      }
+    }
     // Posicionar pelos pés, como antes, deixava a cabeça de quem digita bem mais baixa.
-    const byFeet = (a: any) => 86 - a.pesY + a.cabecaY;
-    expect(byFeet(manifest.animacoes.digitando) - byFeet(manifest.animacoes.parado)).toBeGreaterThan(4);
+    const p = manifest.personagens['funcionario-1'];
+    const byFeet = (a: { pesY: number; cabecaY: number }) => 86 - a.pesY + a.cabecaY;
+    expect(byFeet(p.digitando) - byFeet(p.parado)).toBeGreaterThan(4);
   });
 });
 
-describe('cor do moletom', () => {
-  it('rgb ↔ hsl ida e volta', () => {
-    const samples: [number, number, number][] = [
-      [78, 110, 190],
-      [200, 40, 40],
-      [20, 160, 90],
-      [128, 128, 128],
-    ];
-    for (const [r, g, b] of samples) {
-      const back = hslToRgb(...rgbToHsl(r, g, b));
-      back.forEach((v, i) => expect(Math.abs(v - [r, g, b][i])).toBeLessThanOrEqual(1));
-    }
+describe('personagem de cada agente', () => {
+  const nomes = Object.keys(manifest.personagens);
+
+  it('é sempre o mesmo para o mesmo agente', () => {
+    expect(characterFor(12345, nomes)).toBe(characterFor(12345, nomes));
   });
 
-  it('o azul do moletom cai na faixa trocada; o da calça (mais escuro) não', () => {
-    const [hHoodie, , lHoodie] = rgbToHsl(77, 106, 179); // moletom
-    const [hJeans, , lJeans] = rgbToHsl(31, 52, 122); // calça
-    expect(hHoodie).toBeGreaterThanOrEqual(200);
-    expect(hHoodie).toBeLessThanOrEqual(235);
-    expect(lHoodie).toBeGreaterThan(0.38);
-    expect(hJeans).toBeGreaterThanOrEqual(200);
-    expect(lJeans).toBeLessThanOrEqual(0.38);
+  it('nunca é a recepcionista, que fica no balcão', () => {
+    for (let seed = 0; seed < 50; seed++) expect(characterFor(seed, nomes)).not.toBe(RECEPCIONISTA);
   });
 
-  it('o primeiro tom é o original (sem recolorir)', () => {
-    expect(HOODIE_HUES[0]).toBeGreaterThanOrEqual(200);
-    expect(HOODIE_HUES[0]).toBeLessThanOrEqual(235);
+  it('agentes diferentes se espalham pelos personagens', () => {
+    const usados = new Set(Array.from({ length: 40 }, (_, i) => characterFor(i, nomes)));
+    expect(usados.size).toBe(agentes.length);
+  });
+
+  it('sem personagens carregados, nenhum', () => {
+    expect(characterFor(1, [])).toBeUndefined();
   });
 });

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { FIXED_ROOMS, autoPlace, canPlace, freeCells, isValidCell, occupiedCells } from '../shared/building.ts';
 import type { Agent, Room } from '../shared/types.ts';
-import { CELL_H, CELL_W, MAX_VISIBLE_AGENTS, ZOOMS, cellRect, fitCamera, layoutBuilding, stepZoom } from '../web/office.ts';
+import { CELL_H, CELL_W, CORR, MAX_VISIBLE_AGENTS, ZOOMS, cellRect, fitCamera, layoutBuilding, stepZoom } from '../web/office.ts';
 
 const room = (id: string, pos?: { x: number; y: number }): Room => ({ id, name: id, path: `/${id}`, createdAt: 0, pos });
 const keys = (cells: { x: number; y: number }[]) => cells.map((c) => `${c.x},${c.y}`).sort();
@@ -70,7 +70,8 @@ describe('desenho do prédio', () => {
 
   it('cada sala vai para a sua vaga; andar de cima fica acima no mapa', () => {
     const { rooms } = layoutBuilding([room('a', { x: 0, y: 1 }), room('b', { x: 2, y: 0 })], []);
-    expect(rooms[0].rect).toEqual({ x: 0, y: -CELL_H, w: CELL_W, h: CELL_H });
+    // Entre um andar e outro passa um corredor.
+    expect(rooms[0].rect).toEqual({ x: 0, y: -(CELL_H + CORR), w: CELL_W, h: CELL_H });
     expect(rooms[1].rect).toEqual(cellRect({ x: 2, y: 0 }));
   });
 
@@ -88,9 +89,10 @@ describe('desenho do prédio', () => {
 
   it('a caixa do prédio inclui as vagas livres e a rua', () => {
     const { bounds } = layoutBuilding([], []);
-    expect(bounds.x).toBe(-CELL_W);
-    expect(bounds.y).toBe(-CELL_H);
-    expect(bounds.w).toBe(4 * CELL_W);
+    // Vagas livres de -1 a 2 (4 colunas), com corredor entre elas e meia largura nas pontas.
+    expect(bounds.x).toBe(-(CELL_W + CORR) - CORR / 2);
+    expect(bounds.y).toBe(-(CELL_H + CORR) - CORR / 2);
+    expect(bounds.w).toBe(4 * CELL_W + 4 * CORR);
     expect(bounds.h).toBeGreaterThan(2 * CELL_H);
   });
 });

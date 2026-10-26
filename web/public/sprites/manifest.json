@@ -5,10 +5,55 @@
       "w": 64,
       "h": 64
     },
+    "balcao": {
+      "arquivo": "balcao.png",
+      "w": 128,
+      "h": 48
+    },
+    "banco": {
+      "arquivo": "banco.png",
+      "w": 80,
+      "h": 40
+    },
+    "bebedouro": {
+      "arquivo": "bebedouro.png",
+      "w": 32,
+      "h": 64
+    },
     "cadeira": {
       "arquivo": "cadeira.png",
       "w": 32,
       "h": 32
+    },
+    "cafeteira": {
+      "arquivo": "cafeteira.png",
+      "w": 48,
+      "h": 48
+    },
+    "carro": {
+      "arquivo": "carro.png",
+      "w": 96,
+      "h": 56
+    },
+    "estante": {
+      "arquivo": "estante.png",
+      "w": 64,
+      "h": 80
+    },
+    "geladeira": {
+      "arquivo": "geladeira.png",
+      "w": 48,
+      "h": 80
+    },
+    "mesa-copa": {
+      "arquivo": "mesa-copa.png",
+      "w": 96,
+      "h": 80
+    },
+    "mesa-costas": {
+      "arquivo": "mesa-costas.png",
+      "w": 64,
+      "h": 48
     },
     "mesa": {
       "arquivo": "mesa.png",
@@ -19,6 +64,26 @@
       "arquivo": "planta.png",
       "w": 32,
       "h": 32
+    },
+    "poste": {
+      "arquivo": "poste.png",
+      "w": 32,
+      "h": 96
+    },
+    "sofa": {
+      "arquivo": "sofa.png",
+      "w": 80,
+      "h": 48
+    },
+    "tv": {
+      "arquivo": "tv.png",
+      "w": 80,
+      "h": 64
+    },
+    "vaso-grande": {
+      "arquivo": "vaso-grande.png",
+      "w": 48,
+      "h": 64
     }
   },
   "pisos": {
@@ -31,32 +96,490 @@
       "arquivo": "madeira.png",
       "w": 32,
       "h": 32
+    },
+    "corredor": {
+      "arquivo": "corredor.png",
+      "w": 32,
+      "h": 32
+    },
+    "copa": {
+      "arquivo": "copa.png",
+      "w": 32,
+      "h": 32
     }
   },
-  "animacoes": {
-    "parado": {
-      "arquivo": "funcionario-parado.png",
-      "w": 68,
-      "h": 68,
-      "quadros": 4,
-      "pesY": 58,
-      "cabecaY": 9
+  "personagens": {
+    "funcionaria-2": {
+      "parado": {
+        "arquivo": "personagens/funcionaria-2-parado.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 4,
+        "pesY": 57,
+        "cabecaY": 9
+      },
+      "digitando": {
+        "arquivo": "personagens/funcionaria-2-digitando.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 4,
+        "pesY": 58,
+        "cabecaY": 14
+      },
+      "mao": {
+        "arquivo": "personagens/funcionaria-2-mao.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 58,
+        "cabecaY": 10
+      },
+      "comemorando": {
+        "arquivo": "personagens/funcionaria-2-comemorando.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 58,
+        "cabecaY": 10
+      },
+      "andar-east": {
+        "arquivo": "personagens/funcionaria-2-andar-east.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 10
+      },
+      "andar-north": {
+        "arquivo": "personagens/funcionaria-2-andar-north.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 9
+      },
+      "andar-south": {
+        "arquivo": "personagens/funcionaria-2-andar-south.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 8
+      },
+      "andar-west": {
+        "arquivo": "personagens/funcionaria-2-andar-west.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 11
+      }
     },
-    "digitando": {
-      "arquivo": "funcionario-digitando.png",
-      "w": 72,
-      "h": 72,
-      "quadros": 4,
-      "pesY": 61,
-      "cabecaY": 20
+    "funcionaria-4": {
+      "parado": {
+        "arquivo": "personagens/funcionaria-4-parado.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 4,
+        "pesY": 57,
+        "cabecaY": 9
+      },
+      "digitando": {
+        "arquivo": "personagens/funcionaria-4-digitando.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 4,
+        "pesY": 58,
+        "cabecaY": 13
+      },
+      "mao": {
+        "arquivo": "personagens/funcionaria-4-mao.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 58,
+        "cabecaY": 10
+      },
+      "comemorando": {
+        "arquivo": "personagens/funcionaria-4-comemorando.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 58,
+        "cabecaY": 11
+      },
+      "andar-east": {
+        "arquivo": "personagens/funcionaria-4-andar-east.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 10
+      },
+      "andar-north": {
+        "arquivo": "personagens/funcionaria-4-andar-north.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 9
+      },
+      "andar-south": {
+        "arquivo": "personagens/funcionaria-4-andar-south.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 9
+      },
+      "andar-west": {
+        "arquivo": "personagens/funcionaria-4-andar-west.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 10
+      }
     },
-    "mao": {
-      "arquivo": "funcionario-mao.png",
-      "w": 72,
-      "h": 72,
-      "quadros": 6,
-      "pesY": 61,
-      "cabecaY": 11
+    "funcionaria-6": {
+      "parado": {
+        "arquivo": "personagens/funcionaria-6-parado.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 4,
+        "pesY": 58,
+        "cabecaY": 7
+      },
+      "digitando": {
+        "arquivo": "personagens/funcionaria-6-digitando.png",
+        "w": 76,
+        "h": 76,
+        "quadros": 4,
+        "pesY": 63,
+        "cabecaY": 15
+      },
+      "mao": {
+        "arquivo": "personagens/funcionaria-6-mao.png",
+        "w": 76,
+        "h": 76,
+        "quadros": 6,
+        "pesY": 63,
+        "cabecaY": 12
+      },
+      "comemorando": {
+        "arquivo": "personagens/funcionaria-6-comemorando.png",
+        "w": 76,
+        "h": 76,
+        "quadros": 6,
+        "pesY": 63,
+        "cabecaY": 12
+      },
+      "andar-east": {
+        "arquivo": "personagens/funcionaria-6-andar-east.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 9
+      },
+      "andar-north": {
+        "arquivo": "personagens/funcionaria-6-andar-north.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 10
+      },
+      "andar-south": {
+        "arquivo": "personagens/funcionaria-6-andar-south.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 7
+      },
+      "andar-west": {
+        "arquivo": "personagens/funcionaria-6-andar-west.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 10
+      }
+    },
+    "funcionaria-8": {
+      "parado": {
+        "arquivo": "personagens/funcionaria-8-parado.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 4,
+        "pesY": 57,
+        "cabecaY": 8
+      }
+    },
+    "funcionario-1": {
+      "parado": {
+        "arquivo": "personagens/funcionario-1-parado.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 4,
+        "pesY": 58,
+        "cabecaY": 9
+      },
+      "digitando": {
+        "arquivo": "personagens/funcionario-1-digitando.png",
+        "w": 72,
+        "h": 72,
+        "quadros": 4,
+        "pesY": 61,
+        "cabecaY": 20
+      },
+      "mao": {
+        "arquivo": "personagens/funcionario-1-mao.png",
+        "w": 72,
+        "h": 72,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 11
+      },
+      "comemorando": {
+        "arquivo": "personagens/funcionario-1-comemorando.png",
+        "w": 72,
+        "h": 72,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 12
+      },
+      "andar-east": {
+        "arquivo": "personagens/funcionario-1-andar-east.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 62,
+        "cabecaY": 11
+      },
+      "andar-north": {
+        "arquivo": "personagens/funcionario-1-andar-north.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 9
+      },
+      "andar-south": {
+        "arquivo": "personagens/funcionario-1-andar-south.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 9
+      },
+      "andar-west": {
+        "arquivo": "personagens/funcionario-1-andar-west.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 10
+      }
+    },
+    "funcionario-3": {
+      "parado": {
+        "arquivo": "personagens/funcionario-3-parado.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 4,
+        "pesY": 58,
+        "cabecaY": 10
+      },
+      "digitando": {
+        "arquivo": "personagens/funcionario-3-digitando.png",
+        "w": 72,
+        "h": 72,
+        "quadros": 4,
+        "pesY": 61,
+        "cabecaY": 18
+      },
+      "mao": {
+        "arquivo": "personagens/funcionario-3-mao.png",
+        "w": 72,
+        "h": 72,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 12
+      },
+      "comemorando": {
+        "arquivo": "personagens/funcionario-3-comemorando.png",
+        "w": 72,
+        "h": 72,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 11
+      },
+      "andar-east": {
+        "arquivo": "personagens/funcionario-3-andar-east.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 10
+      },
+      "andar-north": {
+        "arquivo": "personagens/funcionario-3-andar-north.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 9
+      },
+      "andar-south": {
+        "arquivo": "personagens/funcionario-3-andar-south.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 9
+      },
+      "andar-west": {
+        "arquivo": "personagens/funcionario-3-andar-west.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 11
+      }
+    },
+    "funcionario-5": {
+      "parado": {
+        "arquivo": "personagens/funcionario-5-parado.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 4,
+        "pesY": 57,
+        "cabecaY": 10
+      },
+      "digitando": {
+        "arquivo": "personagens/funcionario-5-digitando.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 4,
+        "pesY": 57,
+        "cabecaY": 15
+      },
+      "mao": {
+        "arquivo": "personagens/funcionario-5-mao.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 57,
+        "cabecaY": 10
+      },
+      "comemorando": {
+        "arquivo": "personagens/funcionario-5-comemorando.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 55,
+        "cabecaY": 12
+      },
+      "andar-east": {
+        "arquivo": "personagens/funcionario-5-andar-east.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 11
+      },
+      "andar-north": {
+        "arquivo": "personagens/funcionario-5-andar-north.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 10
+      },
+      "andar-south": {
+        "arquivo": "personagens/funcionario-5-andar-south.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 59,
+        "cabecaY": 10
+      },
+      "andar-west": {
+        "arquivo": "personagens/funcionario-5-andar-west.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 11
+      }
+    },
+    "funcionario-7": {
+      "parado": {
+        "arquivo": "personagens/funcionario-7-parado.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 4,
+        "pesY": 57,
+        "cabecaY": 10
+      },
+      "digitando": {
+        "arquivo": "personagens/funcionario-7-digitando.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 4,
+        "pesY": 58,
+        "cabecaY": 14
+      },
+      "mao": {
+        "arquivo": "personagens/funcionario-7-mao.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 58,
+        "cabecaY": 11
+      },
+      "comemorando": {
+        "arquivo": "personagens/funcionario-7-comemorando.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 58,
+        "cabecaY": 11
+      },
+      "andar-east": {
+        "arquivo": "personagens/funcionario-7-andar-east.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 60,
+        "cabecaY": 12
+      },
+      "andar-north": {
+        "arquivo": "personagens/funcionario-7-andar-north.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 61,
+        "cabecaY": 10
+      },
+      "andar-south": {
+        "arquivo": "personagens/funcionario-7-andar-south.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 59,
+        "cabecaY": 9
+      },
+      "andar-west": {
+        "arquivo": "personagens/funcionario-7-andar-west.png",
+        "w": 68,
+        "h": 68,
+        "quadros": 6,
+        "pesY": 59,
+        "cabecaY": 11
+      }
     }
   }
 }
