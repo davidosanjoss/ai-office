@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Office</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' shape-rendering='crispEdges'><rect width='16' height='16' fill='%231a1b26'/><rect x='5' y='2' width='6' height='6' fill='%23f1c27d'/><rect x='5' y='2' width='6' height='2' fill='%234a2c12'/><rect x='4' y='8' width='8' height='6' fill='%237dcfff'/></svg>" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link href="https://fonts.googleapis.com/css2?family=Silkscreen&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">AI Office</div>
+      <button id="btn-add-room" class="btn">+ Sala</button>
+      <button id="btn-inbox" class="inbox" hidden></button>
+      <div class="spacer"></div>
+      <label class="toggle" title="Quando um agente termina ou pede aprovação, abre o terminal dele assim que você parar de digitar">
+        <input type="checkbox" id="opt-autofocus" checked /> Abrir quem terminar
+      </label>
+      <button id="btn-notify" class="btn ghost" title="Avisar com notificação do sistema quando a aba estiver em segundo plano">🔔</button>
+      <span id="conn" class="conn off" title="Conexão com o servidor"></span>
+    </header>
+
+    <section id="office">
+      <div class="map-controls">
+        <button id="map-zoom-in" title="Aproximar (rodinha do mouse)">+</button>
+        <button id="map-zoom-out" title="Afastar">−</button>
+        <button id="map-fit" title="Ver o prédio inteiro">⌖</button>
+      </div>
+    </section>
+    <div id="splitter" title="Arraste para redimensionar"></div>
+
+    <main id="workspace">
+      <section class="terminal-pane">
+        <nav id="tabs"></nav>
+        <!-- Faixa acima do terminal (e não por cima): a saída de quem encerrou continua legível. -->
+        <div id="exited" class="exited" hidden>
+          <span id="exited-text"></span>
+          <button id="btn-resume" class="btn small">Retomar conversa</button>
+        </div>
+        <!-- Visualizador de diff: ocupa o lugar do terminal; Esc volta. -->
+        <section id="diff-view" hidden>
+          <header class="diff-head">
+            <button id="diff-close" class="icon" title="Voltar ao terminal (Esc)">←</button>
+            <div class="diff-title">
+              <span id="diff-path"></span>
+              <small><span id="diff-scope"></span> · <span id="diff-stats"></span></small>
+            </div>
+            <span id="diff-pos" class="muted"></span>
+            <button id="diff-prev" class="btn small ghost" title="Arquivo anterior (Alt+↑)">↑</button>
+            <button id="diff-next" class="btn small ghost" title="Próximo arquivo (Alt+↓)">↓</button>
+          </header>
+          <div id="diff-body"></div>
+        </section>
+        <div id="terminals">
+          <div id="placeholder" class="placeholder">Clique num funcionário do escritório para abrir o terminal dele.</div>
+        </div>
+      </section>
+
+      <aside id="sidebar">
+        <div id="room-info"></div>
+        <section class="panel">
+          <h3>Git <button id="btn-git-refresh" class="icon" title="Atualizar">↻</button></h3>
+          <div id="git"></div>
+        </section>
+        <section class="panel grow">
+          <h3>
+            Atividade
+            <span class="seg">
+              <button data-scope="room" class="on">Sala</button><button data-scope="all">Todas</button>
+            </span>
+          </h3>
+          <ol id="activity"></ol>
+        </section>
+      </aside>
+    </main>
+
+    <dialog id="dlg-room">
+      <form method="dialog">
+        <h2>Nova sala</h2>
+        <p class="muted" id="dlg-room-where"></p>
+        <label>Pasta do projeto
+          <span class="path-row">
+            <input name="path" list="projects" required placeholder="/home/voce/projetos/meu-app" autocomplete="off" />
+            <button type="button" id="btn-browse" class="btn">📁 Procurar…</button>
+          </span>
+        </label>
+        <datalist id="projects"></datalist>
+        <label>Nome (opcional) <input name="name" autocomplete="off" /></label>
+        <p class="error" hidden></p>
+        <menu>
+          <button value="ok" class="btn">Criar sala</button>
+          <button value="cancel" formnovalidate class="btn ghost">Cancelar</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-agent">
+      <form method="dialog">
+        <h2>Contratar agente</h2>
+        <p class="muted" id="dlg-agent-room"></p>
+        <label>Nome (opcional) <input name="name" autocomplete="off" placeholder="sorteado se vazio" /></label>
+        <label class="check">
+          <input type="checkbox" name="worktree" />
+          <span>Trabalhar num <b>git worktree</b> separado<br /><small>Cria uma branch própria para não conflitar com os outros agentes da sala.</small></span>
+        </label>
+        <p class="error" hidden></p>
+        <menu>
+          <button value="ok" class="btn">Contratar</button>
+          <button value="cancel" formnovalidate class="btn ghost">Cancelar</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-confirm">
+      <form method="dialog">
+        <h2 id="confirm-title"></h2>
+        <p id="confirm-text" class="muted"></p>
+        <menu>
+          <button value="ok" class="btn danger">Confirmar</button>
+          <button value="cancel" class="btn ghost" autofocus>Cancelar</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <div id="toasts"></div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

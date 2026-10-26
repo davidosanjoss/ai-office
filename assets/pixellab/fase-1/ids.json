@@ -1,0 +1,23 @@
+{
+  "saldo_antes": 328.11,
+  "personagem": "4b9bb2c8-074e-4b25-9d09-b4e87176a9b6",
+  "piso_tileset": "9eca4a92-35f8-49c9-98a7-e55d5542e69d",
+  "objetos": {
+    "mesa": "5144a54b-9fbc-473e-83e6-3a9c66260d81",
+    "cadeira": "eaa4d614-860d-45ba-9d01-8ac74d9071dd",
+    "planta": "8ed77a27-dbc2-4778-b9c9-45caca24674d",
+    "arvore": "8733e955-9289-4f9d-952f-065761d44f9c"
+  },
+  "saldo_depois": 319.11,
+  "custo": "9 gerações: personagem standard 4 direções (1), 3 animações só de frente (1 cada), tileset standard (1), 4 objetos (1 cada)",
+  "animacoes": {
+    "parado": "49cab3b5-5ea6-4827-ac01-e72184fdf4cf",
+    "digitando": "885dc10d-e3b1-4c06-a2f3-2854cf7ce78f",
+    "mao": "d794397b-cfb6-4813-bce6-c15faee2dffc"
+  },
+  "observacoes": [
+    "digitando saiu como sentar-digitar-levantar: o loop usa só os quadros 3 a 6",
+    "a metadata de cantos do tileset não bate com a imagem: o script escolhe os ladrilhos pelos pixels",
+    "o monitor da mesa está virado para a câmera"
+  ]
+}

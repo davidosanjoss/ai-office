@@ -1,0 +1,109 @@
+// Tipos compartilhados entre servidor e navegador.
+
+export type AgentStatus =
+  | 'starting' // PTY aberto, Claude ainda carregando
+  | 'idle' // pronto, esperando instrução
+  | 'working' // processando um pedido
+  | 'waiting' // pediu permissão: levanta a mão
+  | 'done' // terminou o pedido e você ainda não viu
+  | 'exited'; // processo encerrado (pode ser retomado)
+
+export interface Room {
+  id: string;
+  name: string;
+  path: string;
+  createdAt: number;
+  /** Vaga no prédio (shared/building.ts). Salas antigas ganham uma ao carregar. */
+  pos?: { x: number; y: number };
+}
+
+export interface Agent {
+  id: string;
+  /** 'shell' é um terminal comum, sem Claude. Ausente nos registros antigos = 'claude'. */
+  kind?: 'claude' | 'shell';
+  roomId: string;
+  name: string;
+  /** Pasta onde o agente roda: a do projeto ou a de um worktree. */
+  cwd: string;
+  /** Branch do worktree, quando o agente tem um. */
+  worktreeBranch?: string;
+  sessionId: string;
+  status: AgentStatus;
+  activity: string;
+  subagents: number;
+  createdAt: number;
+  /** Quando entrou em 'done' ou 'waiting'; ordena a fila de atenção. */
+  attentionAt?: number;
+  exitCode?: number;
+}
+
+export interface ActivityEvent {
+  id: number;
+  ts: number;
+  agentId: string;
+  roomId: string;
+  text: string;
+  kind: 'tool' | 'prompt' | 'done' | 'waiting' | 'system';
+}
+
+export interface OfficeState {
+  rooms: Room[];
+  agents: Agent[];
+  activity: ActivityEvent[];
+}
+
+/** Um arquivo alterado. additions/deletions ausentes = binário. */
+export interface FileChange {
+  path: string;
+  /** Letra do git: M modificado, A novo, D apagado, ?? não rastreado, U conflito. */
+  status: string;
+  additions?: number;
+  deletions?: number;
+}
+
+/** 'working': o que não foi commitado. 'branch': o que a branch mudou desde que saiu da base. */
+export type DiffScope = 'working' | 'branch';
+
+export interface GitInfo {
+  isRepo: boolean;
+  branch?: string;
+  ahead?: number;
+  behind?: number;
+  /** Mudanças não commitadas (incluindo arquivos novos). */
+  files?: FileChange[];
+  /** Branch de onde esta saiu (ex.: main), quando é outra. */
+  base?: string;
+  /** Commits desta branch que a base não tem. */
+  branchCommits?: number;
+  /** O que a branch mudou desde o ponto em que saiu da base. */
+  branchFiles?: FileChange[];
+  commits?: { hash: string; subject: string; when: string }[];
+  worktrees?: { path: string; branch: string }[];
+}
+
+export interface FileDiff {
+  path: string;
+  scope: DiffScope;
+  /** Diff unificado (formato do `git diff`). */
+  diff: string;
+  binary: boolean;
+  truncated: boolean;
+}
+
+// Mensagens WebSocket servidor → navegador
+export type ServerMsg =
+  | { t: 'state'; state: OfficeState }
+  | { t: 'agent'; agent: Agent }
+  | { t: 'agentRemoved'; id: string }
+  | { t: 'room'; room: Room }
+  | { t: 'roomRemoved'; id: string }
+  | { t: 'activity'; event: ActivityEvent }
+  | { t: 'out'; id: string; data: string }
+  | { t: 'replay'; id: string; data: string };
+
+// Mensagens WebSocket navegador → servidor
+export type ClientMsg =
+  | { t: 'in'; id: string; data: string }
+  | { t: 'resize'; id: string; cols: number; rows: number }
+  | { t: 'attach'; id: string }
+  | { t: 'seen'; id: string };

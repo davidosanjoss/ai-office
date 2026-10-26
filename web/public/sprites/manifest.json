@@ -1,0 +1,62 @@
+{
+  "objetos": {
+    "arvore": {
+      "arquivo": "arvore.png",
+      "w": 64,
+      "h": 64
+    },
+    "cadeira": {
+      "arquivo": "cadeira.png",
+      "w": 32,
+      "h": 32
+    },
+    "mesa": {
+      "arquivo": "mesa.png",
+      "w": 64,
+      "h": 48
+    },
+    "planta": {
+      "arquivo": "planta.png",
+      "w": 32,
+      "h": 32
+    }
+  },
+  "pisos": {
+    "grama": {
+      "arquivo": "grama.png",
+      "w": 32,
+      "h": 32
+    },
+    "madeira": {
+      "arquivo": "madeira.png",
+      "w": 32,
+      "h": 32
+    }
+  },
+  "animacoes": {
+    "parado": {
+      "arquivo": "funcionario-parado.png",
+      "w": 68,
+      "h": 68,
+      "quadros": 4,
+      "pesY": 58,
+      "cabecaY": 9
+    },
+    "digitando": {
+      "arquivo": "funcionario-digitando.png",
+      "w": 72,
+      "h": 72,
+      "quadros": 4,
+      "pesY": 61,
+      "cabecaY": 20
+    },
+    "mao": {
+      "arquivo": "funcionario-mao.png",
+      "w": 72,
+      "h": 72,
+      "quadros": 6,
+      "pesY": 61,
+      "cabecaY": 11
+    }
+  }
+}
