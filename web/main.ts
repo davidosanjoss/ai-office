@@ -355,10 +355,17 @@ function renderRoomInfo() {
 // ---------- elevador ----------
 
 /** Painel do elevador: um botão por andar (de cima para baixo), com quantos precisam de você. */
+let elevatorKey = '';
+
 function renderElevator() {
   const panel = $('#elevator');
   const attention = logic.attentionByFloor(state.agents, state.rooms);
   const stops = logic.elevatorStops(state.floors).reverse();
+  // Só redesenha quando algo do painel muda: recriar os botões a cada atualização de agente
+  // fazia um clique cair num botão que acabou de ser trocado (e não pegar).
+  const key = JSON.stringify([currentFloor, state.floors.map((f) => [f.id, f.name, f.color]), [...attention]]);
+  if (key === elevatorKey) return;
+  elevatorKey = key;
   panel.replaceChildren(
     ...stops.map((id) => {
       const floor = state.floors.find((f) => f.id === id);

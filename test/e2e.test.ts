@@ -277,6 +277,15 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     expect(created.pos).toEqual(cell);
   });
 
+  it('regressão: atualizar um agente não recria os botões do elevador (o clique caía num botão trocado)', async () => {
+    const before = await page.$('#elevator .floor.add');
+    const a = agents().find((x) => x.kind !== 'shell')!;
+    // Qualquer mudança de agente que não mexe no painel: antes, o painel inteiro era recriado.
+    store.patchAgent(a.id, { activity: `atividade ${Date.now()}` });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await before!.evaluate((el) => el.isConnected)).toBe(true);
+  });
+
   it('andares: cria pelo elevador, sobe e desce com Alt+PageUp/PageDown, e o térreo não tem vagas', async () => {
     const current = () => page.$eval('#elevator .floor.current', (b) => (b as HTMLElement).dataset.floor ?? '');
     await page.click('#elevator .floor.add');
