@@ -81,7 +81,27 @@
 
       <aside id="sidebar">
         <div id="room-info"></div>
-        <section class="panel grow">
+        <section id="war-panel" class="panel grow" hidden>
+          <header class="war-head">
+            <h3 id="war-title"></h3>
+            <p id="war-desc" class="muted"></p>
+            <div id="war-people"></div>
+            <p id="war-file" class="war-file"></p>
+          </header>
+          <ol id="war-chat"></ol>
+          <form id="war-form" autocomplete="off">
+            <textarea id="war-input" rows="2" placeholder="Mensagem para todos. Use @nome ou @projeto para um só. Enter envia, Shift+Enter quebra a linha."></textarea>
+            <button class="btn small" type="submit">Enviar</button>
+          </form>
+          <p id="war-error" class="error" hidden></p>
+          <div class="war-actions">
+            <button id="war-open" class="btn small" type="button">Abrir incidente</button>
+            <button id="war-call" class="btn small" type="button">+ Chamar</button>
+            <button id="war-close" class="btn small ghost" type="button">Encerrar incidente</button>
+            <button id="war-remove" class="btn small ghost" type="button">Tirar esta sala de guerra</button>
+          </div>
+        </section>
+        <section id="git-panel" class="panel grow">
           <h3>Git <button id="btn-git-refresh" class="icon" title="Atualizar">↻</button></h3>
           <div id="git"></div>
         </section>
@@ -142,6 +162,36 @@
           <button value="ok" class="btn">Salvar</button>
           <button value="cancel" formnovalidate class="btn ghost">Cancelar</button>
           <button type="button" id="floor-delete" class="btn danger" hidden>Apagar andar</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-incident">
+      <form method="dialog">
+        <h2 id="incident-heading">Abrir incidente</h2>
+        <div id="incident-fields">
+          <label>Título <input name="title" autocomplete="off" placeholder="Ex.: 503 na API de pedidos" /></label>
+          <label>Descrição <textarea name="description" rows="3" placeholder="O que está acontecendo, desde quando, o que já se sabe"></textarea></label>
+        </div>
+        <p class="muted">Quem entra na sala (só projetos e agentes deste andar):</p>
+        <div id="incident-who"></div>
+        <p class="error" hidden></p>
+        <menu>
+          <button value="ok" class="btn" id="incident-submit">Abrir</button>
+          <button value="cancel" formnovalidate class="btn ghost">Cancelar</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-close-incident">
+      <form method="dialog">
+        <h2>Encerrar incidente</h2>
+        <p class="muted">O registro vira post-mortem. Quem veio só para o incidente vai embora; os outros voltam para a mesa.</p>
+        <label>Como foi resolvido <textarea name="resolution" rows="4" placeholder="Causa, correção e o que fazer para não repetir"></textarea></label>
+        <p class="error" hidden></p>
+        <menu>
+          <button value="ok" class="btn">Encerrar</button>
+          <button value="cancel" formnovalidate class="btn ghost">Cancelar</button>
         </menu>
       </form>
     </dialog>

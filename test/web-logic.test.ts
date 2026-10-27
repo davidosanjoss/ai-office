@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Agent, Floor, Room } from '../shared/types.ts';
+import type { Agent, Floor, Incident, IncidentMessage, Room } from '../shared/types.ts';
 import {
   IDLE_RELEASE_MS,
   TYPING_GRACE_MS,
@@ -20,6 +20,13 @@ import {
   directoryTree,
   normalize,
   officeCounters,
+  canRemoveWarRoom,
+  canShare,
+  chatAuthor,
+  incidentAgents,
+  incidentAt,
+  incidentCandidates,
+  warRoomsOf,
 } from '../web/logic.ts';
 
 const agent = (id: string, patch: Partial<Agent> = {}): Agent => ({
@@ -226,5 +233,63 @@ describe('barra lateral e contadores', () => {
     const vazio: Floor = { id: 'novo', name: 'Novo', color: '#fff', order: 3, createdAt: 0 };
     expect(directoryTree([...floors, vazio], rooms, agents).at(-1)).toEqual({ floor: vazio, rooms: [] });
     expect(normalize('Ação')).toBe('acao');
+  });
+});
+
+describe('sala de guerra', () => {
+  const floor: Floor = { id: 'f', name: 'Empresa', color: '#7aa2f7', order: 1, createdAt: 0 };
+  const rooms: Room[] = [
+    { id: 'r1', name: 'gateway', path: '/g', createdAt: 0, floorId: 'f' },
+    { id: 'r2', name: 'filas', path: '/q', createdAt: 0, floorId: 'f' },
+    { id: 'r3', name: 'site', path: '/s', createdAt: 0, floorId: 'outro' },
+  ];
+  const incident: Incident = { id: 'i', floorId: 'f', slot: 0, title: '503', description: '', createdAt: 0, participants: ['b', 'a'], messages: [], file: '/x.md' };
+  const msg = (patch: Partial<IncidentMessage>): IncidentMessage => ({ id: 1, ts: 0, kind: 'agente', to: [], text: '', ...patch });
+
+  it('um andar tem uma sala de guerra até você abrir outra', () => {
+    expect(warRoomsOf(floor)).toBe(1);
+    expect(warRoomsOf({ ...floor, warRooms: 3 })).toBe(3);
+    expect(incidentAt([incident], 'f', 0)).toBe(incident);
+    expect(incidentAt([incident], 'f', 1)).toBeUndefined();
+  });
+
+  it('as abas são os participantes, na ordem em que entraram, sem quem já saiu', () => {
+    const agents = [agent('a'), agent('b')];
+    expect(incidentAgents(incident, agents).map((a) => a.id)).toEqual(['b', 'a']);
+    expect(incidentAgents(incident, [agent('a')]).map((a) => a.id)).toEqual(['a']);
+    expect(incidentAgents(undefined, agents)).toEqual([]);
+  });
+
+  it('só agentes do Claude do andar, fora de outro incidente, podem ser chamados', () => {
+    const agents = [
+      agent('livre', { roomId: 'r1' }),
+      agent('ocupado', { roomId: 'r2', incidentId: 'x' }),
+      agent('terminal', { roomId: 'r1', kind: 'shell' }),
+      agent('outro-andar', { roomId: 'r3' }),
+    ];
+    expect(incidentCandidates(agents, rooms, 'f').map((a) => a.id)).toEqual(['livre']);
+  });
+
+  it('no chat, cada resposta mostra quem falou e de qual projeto', () => {
+    const agents = [agent('a', { name: 'Ana', roomId: 'r1' })];
+    expect(chatAuthor(msg({ kind: 'voce' }), agents, rooms)).toBe('Você');
+    expect(chatAuthor(msg({ kind: 'agente', agentId: 'a' }), agents, rooms)).toBe('Ana · gateway');
+    expect(chatAuthor(msg({ kind: 'repasse', agentId: 'a' }), agents, rooms)).toBe('Repasse de Ana · gateway');
+    expect(chatAuthor(msg({ kind: 'agente', agentId: 'sumiu' }), agents, rooms)).toBe('Agente que saiu');
+  });
+
+  it('só dá para repassar a resposta de um agente quando há mais alguém na sala', () => {
+    expect(canShare(msg({ agentId: 'a' }), incident)).toBe(true);
+    expect(canShare(msg({ agentId: 'a' }), { ...incident, participants: ['a'] })).toBe(false);
+    expect(canShare(msg({ kind: 'voce' }), incident)).toBe(false);
+    expect(canShare(msg({ kind: 'repasse', agentId: 'a' }), incident)).toBe(false);
+  });
+
+  it('só a sala de guerra de cima, vazia, pode ser tirada; a primeira fica sempre', () => {
+    const three = { ...floor, warRooms: 3 };
+    expect(canRemoveWarRoom(three, 2, [])).toBe(true);
+    expect(canRemoveWarRoom(three, 1, [])).toBe(false);
+    expect(canRemoveWarRoom(three, 2, [{ ...incident, slot: 2 }])).toBe(false);
+    expect(canRemoveWarRoom(floor, 0, [])).toBe(false);
   });
 });

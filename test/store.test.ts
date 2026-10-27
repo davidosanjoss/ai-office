@@ -130,6 +130,39 @@ describe('andares no store', () => {
     expect(s.rooms.get('orfa')?.pos).toBeDefined();
   });
 
+  it('salas na coluna em cima do elevador mudam de vaga: ali agora ficam as salas de guerra', () => {
+    const file = path.join(tempDir('store'), 'state.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        floors: [{ id: 'geral', name: 'Geral', color: '#7aa2f7', order: 1, createdAt: 1 }],
+        rooms: [
+          { id: 'na-coluna', name: 'a', path: '/a', createdAt: 1, floorId: 'geral', pos: { x: 0, y: 1 } },
+          { id: 'fora', name: 'b', path: '/b', createdAt: 2, floorId: 'geral', pos: { x: 1, y: 1 } },
+        ],
+        agents: [],
+      }),
+    );
+    const s = new Store(file);
+    s.load();
+    expect(s.rooms.get('fora')?.pos).toEqual({ x: 1, y: 1 });
+    const moved = s.rooms.get('na-coluna')?.pos;
+    expect(moved).toBeDefined();
+    expect(moved!.x).not.toBe(0);
+  });
+
+  it('incidentes abertos sobrevivem ao reinício', async () => {
+    const file = path.join(tempDir('store'), 'state.json');
+    const s1 = new Store(file);
+    s1.putIncident({ id: 'i1', floorId: 'geral', slot: 0, title: '503', description: '', createdAt: 1, participants: ['a1'], messages: [], file: '/x.md' });
+    await waitFor(() => fs.existsSync(file), 2000, 'state.json');
+    const s2 = new Store(file);
+    s2.load();
+    expect(s2.incidents.get('i1')).toMatchObject({ title: '503', participants: ['a1'] });
+    expect(s2.snapshot().incidents).toHaveLength(1);
+    expect(s2.warRoomsOf('geral')).toBe(1);
+  });
+
   it('o estado enviado ao navegador traz os andares em ordem', () => {
     const s = new Store(path.join(tempDir('store'), 'state.json'));
     s.putFloor({ id: 'b', name: 'B', color: '#000000', order: 2, createdAt: 0 });

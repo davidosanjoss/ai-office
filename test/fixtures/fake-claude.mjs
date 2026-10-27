@@ -7,6 +7,7 @@
 //
 // Comandos digitados no terminal:
 //   prompt <texto>  simula um pedido: UserPromptSubmit, PreToolUse(Read), PostToolUse, Stop
+//   [Sala de guerra] ...  idem: o escritório digita isso, e o Claude real trata como um pedido
 //   ask             pede permissão (Notification permission_prompt)
 //   /exit           encerra com código 0
 
@@ -53,11 +54,15 @@ function hook(event, payload = {}) {
   }
 }
 
-function writeTranscript(text) {
-  const dir = path.join(projects, process.cwd().replace(/[^a-zA-Z0-9]/g, '-'));
-  fs.mkdirSync(dir, { recursive: true });
-  const line = JSON.stringify({ type: 'user', sessionId, cwd: process.cwd(), message: text });
-  fs.appendFileSync(path.join(dir, `${sessionId}.jsonl`), `${line}\n`);
+function transcriptPath() {
+  return path.join(projects, process.cwd().replace(/[^a-zA-Z0-9]/g, '-'), `${sessionId}.jsonl`);
+}
+
+/** Uma linha do transcript no formato do real (JSONL com type e message.content). */
+function writeTranscript(type, content) {
+  fs.mkdirSync(path.dirname(transcriptPath()), { recursive: true });
+  const line = JSON.stringify({ type, sessionId, cwd: process.cwd(), message: { role: type, content } });
+  fs.appendFileSync(transcriptPath(), `${line}\n`);
 }
 
 const out = (s) => process.stdout.write(s);
@@ -104,14 +109,19 @@ function run(cmd) {
     hook('Notification', { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' });
     return;
   }
-  if (cmd.startsWith('prompt ')) {
-    const text = cmd.slice(7);
-    writeTranscript(text);
+  if (cmd.startsWith('prompt ') || cmd.startsWith('[Sala de guerra]')) {
+    const text = cmd.startsWith('prompt ') ? cmd.slice(7) : cmd;
+    const reply = `feito: ${text}`;
+    writeTranscript('user', text);
     hook('UserPromptSubmit', { prompt: text });
+    // Como o real: a ferramenta, o resultado e só depois o texto final da resposta.
+    writeTranscript('assistant', [{ type: 'tool_use', id: 't1', name: 'Read', input: {} }]);
     hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: path.join(process.cwd(), 'README.md') } });
+    writeTranscript('user', [{ type: 'tool_result', tool_use_id: 't1', content: 'ok' }]);
     hook('PostToolUse', { tool_name: 'Read' });
-    hook('Stop', {});
-    out(`feito: ${text}\r\n`);
+    writeTranscript('assistant', [{ type: 'text', text: reply }]);
+    hook('Stop', { transcript_path: transcriptPath() });
+    out(`${reply}\r\n`);
     out('\x1b[c');
     return;
   }

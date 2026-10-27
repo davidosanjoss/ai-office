@@ -1,8 +1,8 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import { FLOOR_COLORS, autoPlace } from '../shared/building.ts';
-import type { ActivityEvent, Agent, Floor, OfficeState, Room, ServerMsg } from '../shared/types.ts';
+import { FLOOR_COLORS, autoPlace, isWarColumn } from '../shared/building.ts';
+import type { ActivityEvent, Agent, Floor, Incident, OfficeState, Room, ServerMsg } from '../shared/types.ts';
 import { DATA_DIR } from './platform.ts';
 
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
@@ -12,6 +12,7 @@ interface Persisted {
   floors?: Floor[];
   rooms: Room[];
   agents: Agent[];
+  incidents?: Incident[];
 }
 
 /** Andar criado para as salas de antes dos andares existirem. */
@@ -22,6 +23,7 @@ export class Store extends EventEmitter {
   floors = new Map<string, Floor>();
   rooms = new Map<string, Room>();
   agents = new Map<string, Agent>();
+  incidents = new Map<string, Incident>();
   activity: ActivityEvent[] = [];
   private nextEventId = 1;
   private saveTimer?: NodeJS.Timeout;
@@ -49,9 +51,17 @@ export class Store extends EventEmitter {
         }
         migrated = true;
       }
+      // A coluna em cima do elevador passou a ser das salas de guerra: quem estava lá muda de vaga.
+      for (const r of this.rooms.values()) {
+        if (r.pos && isWarColumn(r.pos)) {
+          r.pos = undefined;
+          migrated = true;
+        }
+      }
       // Salas de antes do prédio ganham uma vaga encostada nele, na ordem em que foram criadas.
       const semVaga = [...this.rooms.values()].filter((r) => !r.pos).sort((a, b) => a.createdAt - b.createdAt);
-      for (const r of semVaga) r.pos = autoPlace(this.roomsOn(r.floorId!));
+      for (const r of semVaga) r.pos = autoPlace(this.roomsOn(r.floorId!), 'andar', this.warRoomsOf(r.floorId!));
+      for (const i of data.incidents ?? []) this.incidents.set(i.id, i);
       if (semVaga.length || migrated) this.save();
       // Processos não sobrevivem a um reinício do servidor; o agente fica disponível para retomar.
       for (const a of data.agents ?? []) {
@@ -65,7 +75,12 @@ export class Store extends EventEmitter {
   private save() {
     clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => {
-      const data: Persisted = { floors: [...this.floors.values()], rooms: [...this.rooms.values()], agents: [...this.agents.values()] };
+      const data: Persisted = {
+        floors: [...this.floors.values()],
+        rooms: [...this.rooms.values()],
+        agents: [...this.agents.values()],
+        incidents: [...this.incidents.values()],
+      };
       fs.writeFileSync(this.file, JSON.stringify(data, null, 2));
     }, 300);
   }
@@ -76,6 +91,7 @@ export class Store extends EventEmitter {
       rooms: [...this.rooms.values()],
       agents: [...this.agents.values()],
       activity: this.activity,
+      incidents: [...this.incidents.values()],
     };
   }
 
@@ -86,6 +102,23 @@ export class Store extends EventEmitter {
   /** Salas de um andar. */
   roomsOn(floorId: string): Room[] {
     return [...this.rooms.values()].filter((r) => r.floorId === floorId);
+  }
+
+  /** Quantas salas de guerra o andar tem. */
+  warRoomsOf(floorId: string): number {
+    return this.floors.get(floorId)?.warRooms ?? 1;
+  }
+
+  putIncident(incident: Incident) {
+    this.incidents.set(incident.id, incident);
+    this.save();
+    this.send({ t: 'incident', incident });
+  }
+
+  removeIncident(id: string) {
+    this.incidents.delete(id);
+    this.save();
+    this.send({ t: 'incidentRemoved', id });
   }
 
   putFloor(floor: Floor) {

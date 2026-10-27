@@ -6,8 +6,8 @@
 // suavização; os textos são desenhados depois, já na escala da tela, para ficarem legíveis.
 // A arte vem do PixelLab (web/sprites.ts); paredes, balcões, rua e balões são desenhados aqui.
 
-import { type Cell, type FixedRoom, type FloorKind, fixedRooms, freeCells } from '../shared/building.ts';
-import type { Agent, AgentStatus, Room } from '../shared/types.ts';
+import { type Cell, type FixedRoom, type FloorKind, fixedRooms, freeCells, nextWarCell } from '../shared/building.ts';
+import type { Agent, AgentStatus, Incident, Room } from '../shared/types.ts';
 import { RECEPCIONISTA, Sprites, characterFor } from './sprites.ts';
 import {
   type Geometry,
@@ -79,7 +79,9 @@ interface Rect {
 
 type Hit =
   | (Rect & { kind: 'agent' | 'add' | 'room'; id: string })
-  | (Rect & { kind: 'newroom'; cell: Cell });
+  | (Rect & { kind: 'newroom'; cell: Cell })
+  | (Rect & { kind: 'war'; slot: number })
+  | (Rect & { kind: 'newwar' });
 
 export interface PlacedRoom {
   room: Room;
@@ -94,6 +96,8 @@ export interface BuildingLayout {
   rooms: PlacedRoom[];
   fixed: (FixedRoom & { rect: Rect })[];
   free: (Cell & { rect: Rect })[];
+  /** Vaga do "+" que abre mais uma sala de guerra, em cima da última. */
+  warAdd?: Cell & { rect: Rect };
   /** Caixa que contém o prédio, as vagas livres e a rua. */
   bounds: Rect;
   /** Só o prédio construído e a rua: é o que o enquadramento inicial mostra. */
@@ -120,9 +124,11 @@ export interface FloorView {
   id: string;
   kind: FloorKind;
   color: string;
+  /** Salas de guerra do andar (ausente = 1). */
+  warRooms?: number;
 }
 
-export function layoutBuilding(rooms: Room[], agents: Agent[], kind: FloorKind = 'andar'): BuildingLayout {
+export function layoutBuilding(rooms: Room[], agents: Agent[], kind: FloorKind = 'andar', warRooms = 1): BuildingLayout {
   const placed: PlacedRoom[] = rooms
     .filter((r) => r.pos)
     .map((room) => {
@@ -134,8 +140,10 @@ export function layoutBuilding(rooms: Room[], agents: Agent[], kind: FloorKind =
         overflow: Math.max(0, inRoom.length - MAX_VISIBLE_AGENTS),
       };
     });
-  const fixed = fixedRooms(kind).map((f) => ({ ...f, rect: cellRect(f) }));
-  const free = freeCells(rooms, kind).map((c) => ({ ...c, rect: cellRect(c) }));
+  const fixed = fixedRooms(kind, warRooms).map((f) => ({ ...f, rect: cellRect(f) }));
+  const free = freeCells(rooms, kind, warRooms).map((c) => ({ ...c, rect: cellRect(c) }));
+  const next = kind === 'andar' ? nextWarCell(warRooms) : undefined;
+  const warAdd = next && { ...next, rect: cellRect(next) };
   const box = (rects: Rect[]): Rect => {
     const all = rects.map(withCorridor);
     const x = Math.min(...all.map((r) => r.x));
@@ -145,7 +153,8 @@ export function layoutBuilding(rooms: Room[], agents: Agent[], kind: FloorKind =
     return { x, y, w: right - x, h: bottom - y };
   };
   const built = [...placed.map((p) => p.rect), ...fixed.map((f) => f.rect)];
-  return { rooms: placed, fixed, free, bounds: box([...built, ...free.map((f) => f.rect)]), core: box(built) };
+  const extras = [...free.map((f) => f.rect), ...(warAdd ? [warAdd.rect] : [])];
+  return { rooms: placed, fixed, free, warAdd, bounds: box([...built, ...extras]), core: box(built) };
 }
 
 /** Onde o quadro da animação começa (em y, dentro da vaga) para a cabeça ficar em HEAD_Y. */
@@ -179,6 +188,8 @@ export interface OfficeCallbacks {
   onAddAgent(roomId: string): void;
   onSelectRoom(roomId: string): void;
   onNewRoom(cell: Cell): void;
+  onSelectWarRoom(slot: number): void;
+  onAddWarRoom(): void;
 }
 
 /** A câmera de cada andar fica salva separada: voltar a um andar volta à mesma vista. */
@@ -203,11 +214,18 @@ export class Office {
   private cssW = 0;
   private cssH = 0;
   /** Funcionários fora da mesa (sessão encerrada), andando pelo prédio. */
-  private walkers = new Map<string, Walker & { agent: Agent }>();
+  private walkers = new Map<string, Walker & { agent: Agent; transit?: boolean }>();
+  /** Incidente de cada agente na última atualização: quando muda, ele levanta e vai (ou volta) andando. */
+  private lastIncident = new Map<string, string | undefined>();
+  private incidents: Incident[] = [];
+  /** Todos os agentes do andar, inclusive os que não couberam nas mesas. */
+  private floorAgents: Agent[] = [];
   private graph = buildGraph([], GEO);
   private lastWalk = 0;
   selectedAgent?: string;
   selectedRoom?: string;
+  /** Sala de guerra selecionada (número no andar). */
+  selectedWar?: number;
 
   constructor(private host: HTMLElement, private cb: OfficeCallbacks) {
     this.canvas = document.createElement('canvas');
@@ -229,10 +247,12 @@ export class Office {
   }
 
   /** Mostra um andar: só as salas dele e os agentes delas. */
-  update(floor: FloorView, rooms: Room[], agents: Agent[]) {
+  update(floor: FloorView, rooms: Room[], agents: Agent[], incidents: Incident[] = []) {
     if (floor.id !== this.floor.id) this.enterFloor(floor);
     this.floor = floor;
-    this.layout = layoutBuilding(rooms, agents, floor.kind);
+    this.incidents = incidents.filter((i) => i.floorId === floor.id);
+    this.floorAgents = agents;
+    this.layout = layoutBuilding(rooms, agents, floor.kind, floor.warRooms ?? 1);
     this.graph = buildGraph(this.builtCells(), GEO);
     this.syncWalkers(rooms, agents);
     if ((!this.cam || !this.userMoved) && this.cssW) this.fit();
@@ -242,6 +262,7 @@ export class Office {
   /** Trocou de andar: quem andava no outro some, e a câmera volta à vista salva deste andar. */
   private enterFloor(floor: FloorView) {
     this.walkers.clear();
+    this.lastIncident.clear();
     this.hover = undefined;
     this.cam = undefined;
     this.userMoved = false;
@@ -291,7 +312,15 @@ export class Office {
 
   /** Leva a câmera até a sala, se ela não estiver inteira na tela. */
   reveal(roomId: string) {
-    const r = this.layout.rooms.find((p) => p.room.id === roomId)?.rect;
+    this.revealRect(this.layout.rooms.find((p) => p.room.id === roomId)?.rect);
+  }
+
+  /** Leva a câmera até uma sala de guerra. */
+  revealWar(slot: number) {
+    this.revealRect(this.layout.fixed.find((f) => f.id === 'guerra' && f.slot === slot)?.rect);
+  }
+
+  private revealRect(r: Rect | undefined) {
     if (!r || !this.cssW) return;
     const c = this.camera;
     const view = { x: c.x - this.cssW / 2 / c.z, y: c.y - this.cssH / 2 / c.z, w: this.cssW / c.z, h: this.cssH / c.z };
@@ -335,11 +364,30 @@ export class Office {
     return [...this.layout.fixed, ...this.layout.rooms.map((r) => r.room.pos!)];
   }
 
-  /** Quem encerrou a sessão levanta da mesa e sai andando; quem voltou some do corredor. */
+  /**
+   * Quem encerrou a sessão levanta da mesa e sai andando; quem voltou some do corredor.
+   * Quem foi chamado para a sala de guerra (ou voltou dela) atravessa o corredor até lá.
+   */
   private syncWalkers(rooms: Room[], agents: Agent[]) {
     const now = performance.now();
     for (const a of agents) {
       const room = rooms.find((r) => r.id === a.roomId);
+      const known = this.lastIncident.has(a.id);
+      const before = this.lastIncident.get(a.id);
+      this.lastIncident.set(a.id, a.incidentId);
+      // Recém-contratado para o incidente também vai andando, da sala do projeto até a de guerra.
+      const fresh = !known && !!a.incidentId && Date.now() - a.createdAt < 15_000;
+      if (room?.pos && a.status !== 'exited' && ((known && before !== a.incidentId) || fresh)) {
+        const war = this.warCellOf(before ?? a.incidentId);
+        const going = !!a.incidentId;
+        const from = going ? room.pos : war;
+        const to = going ? war : room.pos;
+        if (from && to) this.startTransit(a, from, to, now);
+      }
+      if (this.walkers.get(a.id)?.transit) {
+        this.walkers.get(a.id)!.agent = a;
+        continue;
+      }
       if (a.status !== 'exited' || a.kind === 'shell' || !room?.pos) {
         this.walkers.delete(a.id);
         continue;
@@ -369,11 +417,36 @@ export class Office {
     for (const id of this.walkers.keys()) if (!agents.some((a) => a.id === id)) this.walkers.delete(id);
   }
 
+  /** Vaga da sala de guerra de um incidente deste andar. */
+  private warCellOf(incidentId: string | undefined): Cell | undefined {
+    const slot = this.incidents.find((i) => i.id === incidentId)?.slot;
+    return this.layout.fixed.find((f) => f.id === 'guerra' && f.slot === slot);
+  }
+
+  /** Levanta, sai pela porta e vai pelo corredor até a outra sala; lá some e senta. */
+  private startTransit(a: Agent, from: Cell, to: Cell, now: number) {
+    const route = routeBetween(this.graph, from, to, GEO);
+    if (!route.length) return;
+    const start = route[0];
+    this.walkers.set(a.id, { agent: a, x: start.x, y: start.y, dir: 'south', path: route.slice(1), restUntil: now + 300, cell: to, transit: true });
+  }
+
+  /** Está atravessando o corredor: nem na mesa, nem na sala de guerra ainda. */
+  private inTransit(id: string) {
+    return !!this.walkers.get(id)?.transit;
+  }
+
   private walk(t: number) {
     const dt = this.lastWalk ? Math.min(250, t - this.lastWalk) : 0;
     this.lastWalk = t;
     for (const w of this.walkers.values()) {
       if (t < w.restUntil) continue;
+      if (w.transit) {
+        // Chegou: senta (na mesa redonda ou na própria mesa) e para de andar.
+        if (w.path.length) step(w, dt, WALK_SPEED * 1.6);
+        if (!w.path.length) this.walkers.delete(w.agent.id);
+        continue;
+      }
       if (w.path.length) {
         step(w, dt, WALK_SPEED);
         if (!w.path.length) {
@@ -451,7 +524,7 @@ export class Office {
       return;
     }
     this.hover = this.hitAt(e);
-    this.canvas.style.cursor = this.hover && this.hover.kind !== 'room' ? 'pointer' : 'grab';
+    this.canvas.style.cursor = this.hover && this.hover.kind !== 'room' && this.hover.kind !== 'war' ? 'pointer' : 'grab';
   }
 
   private onUp(e: PointerEvent) {
@@ -465,6 +538,8 @@ export class Office {
     else if (hit.kind === 'add') this.cb.onAddAgent(hit.id);
     else if (hit.kind === 'room') this.cb.onSelectRoom(hit.id);
     else if (hit.kind === 'newroom') this.cb.onNewRoom(hit.cell);
+    else if (hit.kind === 'war') this.cb.onSelectWarRoom(hit.slot);
+    else if (hit.kind === 'newwar') this.cb.onAddWarRoom();
   }
 
   private onWheel(e: WheelEvent) {
@@ -495,6 +570,7 @@ export class Office {
       this.drawTrees(view);
     }
     for (const f of this.layout.free) if (overlaps(f.rect, view)) this.drawFreeCell(f);
+    if (this.layout.warAdd && overlaps(this.layout.warAdd.rect, view)) this.drawWarAdd(this.layout.warAdd.rect);
     this.drawCorridors();
     for (const f of this.layout.fixed) if (overlaps(f.rect, view)) this.drawFixed(f);
     for (const r of this.layout.rooms) if (overlaps(r.rect, view)) this.drawRoom(r);
@@ -663,7 +739,7 @@ export class Office {
       if (w.x < view.x - 50 || w.x > view.x + view.w + 50 || w.y < view.y - 80 || w.y > view.y + view.h + 20) continue;
       const seed = hash(w.agent.id);
       const who = characterFor(seed, names);
-      const moving = w.path.length > 0 && performance.now() >= w.restUntil;
+      const moving = w.path.length > 0 && (w.transit || performance.now() >= w.restUntil);
       const wx = w.x + laneOf(w.agent.id);
       const anim = this.sprites.anim(who, moving ? `andar-${w.dir}` : 'parado');
       if (!anim) continue;
@@ -714,6 +790,7 @@ export class Office {
   private drawFixed(f: FixedRoom & { rect: Rect }) {
     if (f.id === 'recepcao') this.drawReception(f.rect);
     else if (f.id === 'elevadores') this.drawElevators(f.rect);
+    else if (f.id === 'guerra') this.drawWarRoom(f.rect, f.slot ?? 0);
     else this.drawKitchen(f.rect);
   }
 
@@ -784,6 +861,104 @@ export class Office {
     this.obj('mesa-copa', r.x + r.w / 2 - 58, r.y + 120);
     this.obj('tv', r.x + 14, r.y + 150);
     this.obj('planta', r.x + r.w - 40, r.y + r.h - 40);
+  }
+
+  /** Quem está sentado na mesa redonda de um incidente (quem saiu do escritório ou ainda está a caminho, não). */
+  private seatedAt(incident: Incident | undefined): Agent[] {
+    if (!incident) return [];
+    return incident.participants
+      .map((id) => this.floorAgents.find((a) => a.id === id))
+      .filter((a): a is Agent => !!a && a.status !== 'exited' && !this.inTransit(a.id))
+      .slice(0, WAR_SEATS.length);
+  }
+
+  /**
+   * Sala de guerra: carpete, telão com o incidente na parede e uma mesa redonda com os participantes.
+   * Sem incidente, a luz fica apagada.
+   */
+  private drawWarRoom(r: Rect, slot: number) {
+    const p = this.pctx;
+    const incident = this.incidents.find((i) => i.slot === slot);
+    this.tileFloor({ x: r.x, y: r.y + WALL_H, w: r.w, h: r.h - WALL_H }, 'corredor', '#8e94a3');
+    rect(p, r.x + 20, r.y + WALL_H + 30, r.w - 40, r.h - WALL_H - 50, '#5b2f3a');
+    rect(p, r.x + 24, r.y + WALL_H + 34, r.w - 48, r.h - WALL_H - 58, '#6e3846');
+    this.drawShell(r, '#3b2f45');
+    // telão na parede: aceso com o incidente, apagado sem
+    rect(p, r.x + r.w / 2 - 70, r.y + 4, 140, 32, '#1f2335');
+    rect(p, r.x + r.w / 2 - 67, r.y + 7, 134, 26, incident ? (this.frame % 12 < 6 ? '#b8434f' : '#9a3440') : '#2a2f45');
+
+    const tx = r.x + r.w / 2;
+    const ty = r.y + 160;
+    const seated = this.seatedAt(incident);
+    // cadeiras vazias e quem está sentado atrás da mesa (cortados na altura do tampo)
+    WAR_SEATS.forEach(([dx, dy], i) => {
+      const a = seated[i];
+      const cadeira = this.sprites.objetos.get('cadeira');
+      if (cadeira && dy < 0) p.drawImage(cadeira, Math.round(tx + dx - cadeira.width / 2), ty + dy - 6);
+      if (!a || dy >= 0) return;
+      this.drawSeated(a, tx + dx, ty + dy - 34, ty - 4);
+    });
+    // mesa redonda
+    p.fillStyle = 'rgba(0,0,0,0.25)';
+    p.beginPath();
+    p.ellipse(tx, ty + 8, 104, 34, 0, 0, Math.PI * 2);
+    p.fill();
+    p.fillStyle = '#6b4329';
+    p.beginPath();
+    p.ellipse(tx, ty + 4, 100, 32, 0, 0, Math.PI * 2);
+    p.fill();
+    p.fillStyle = '#8a5a3c';
+    p.beginPath();
+    p.ellipse(tx, ty, 100, 30, 0, 0, Math.PI * 2);
+    p.fill();
+    // papéis espalhados na mesa
+    if (incident) {
+      rect(p, tx - 40, ty - 8, 14, 10, '#e0e6ff');
+      rect(p, tx + 12, ty - 2, 12, 9, '#e0e6ff');
+      rect(p, tx - 6, ty + 8, 16, 8, '#f5e6a8');
+    }
+    // quem senta na frente da mesa
+    WAR_SEATS.forEach(([dx, dy], i) => {
+      const a = seated[i];
+      if (a && dy >= 0) this.drawSeated(a, tx + dx, ty + dy, ty + dy + 60);
+    });
+
+    if (!incident) rect(p, r.x + 3, r.y + 3, r.w - 6, r.h - 7, 'rgba(8,10,22,0.55)');
+    if (this.selectedWar === slot) {
+      const c = '#c0caf5';
+      rect(p, r.x + 3, r.y + 3, r.w - 6, 2, c);
+      rect(p, r.x + 3, r.y + r.h - 6, r.w - 6, 2, c);
+      rect(p, r.x + 3, r.y + 3, 2, r.h - 6, c);
+      rect(p, r.x + r.w - 5, r.y + 3, 2, r.h - 6, c);
+    }
+    this.hits.push({ ...r, kind: 'war', slot });
+    for (const [i, a] of seated.entries()) {
+      const [dx, dy] = WAR_SEATS[i];
+      this.hits.push({ x: tx + dx - 16, y: ty + dy - 52, w: 32, h: 52, kind: 'agent', id: a.id });
+    }
+  }
+
+  /** Participante na mesa redonda, com a animação do estado e a seta se estiver selecionado. */
+  private drawSeated(a: Agent, cx: number, headY: number, clipBottom: number) {
+    const seed = hash(a.id);
+    const who = characterFor(seed, this.sprites.names());
+    if (who) this.drawPerson(cx, headY, who, ANIM_FOR[a.status] ?? 'parado', seed % 7, clipBottom);
+    if (this.selectedAgent === a.id) {
+      const by = headY - 30 + (this.frame % 4 < 2 ? 0 : 2);
+      for (let i = 0; i < 5; i++) rect(this.pctx, cx - 6 + i, by + i, 13 - i * 2, 1, '#c0caf5');
+    }
+  }
+
+  /** "+" em cima da última sala de guerra: abre mais uma, para outro incidente ao mesmo tempo. */
+  private drawWarAdd(r: Rect) {
+    const p = this.pctx;
+    const hovered = this.hover?.kind === 'newwar';
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h - 50;
+    rect(p, cx - 16, cy - 16, 32, 32, hovered ? '#9a3440' : 'rgba(26,27,38,0.55)');
+    rect(p, cx - 2, cy - 10, 4, 20, '#ffffff');
+    rect(p, cx - 10, cy - 2, 20, 4, '#ffffff');
+    this.hits.push({ x: cx - 40, y: cy - 30, w: 80, h: 60, kind: 'newwar' });
   }
 
   /** Vaga livre encostada no prédio: o "+" que abre uma sala nova ali. */
@@ -894,6 +1069,17 @@ export class Office {
     const cadeira = this.sprites.objetos.get('cadeira');
     if (cadeira) p.drawImage(cadeira, Math.round(cx - cadeira.width / 2) + SEAT_DX, sy + HEAD_Y + 6);
 
+    // Na sala de guerra (ou indo para lá): a mesa fica vazia, com uma bandeirinha.
+    const away = !!a.incidentId || this.inTransit(a.id);
+    if (away) {
+      const mesa = this.deskSprite();
+      if (mesa) p.drawImage(mesa, Math.round(cx - mesa.width / 2), sy + DESK_Y);
+      rect(p, cx + 18, sy + DESK_Y - 14, 2, 16, '#c0caf5');
+      rect(p, cx + 20, sy + DESK_Y - 14, 10, 7, '#b8434f');
+      this.hits.push({ x: sx + 2, y: sy + 8, w: SLOT_W - 4, h: SLOT_H - 10, kind: 'agent', id: a.id });
+      return;
+    }
+
     // funcionário (some quando sai do escritório; pisca enquanto chega)
     const animName = ANIM_FOR[a.status];
     const fading = a.status === 'starting' && f % 4 < 2;
@@ -960,8 +1146,17 @@ export class Office {
     const signFont = Math.max(9, Math.round(10 * z));
 
     for (const f of this.layout.fixed) {
+      if (f.id === 'guerra') {
+        this.drawWarTexts(f.rect, f.slot ?? 0, signFont);
+        continue;
+      }
       const s = this.toScreen(f.rect.x + f.rect.w / 2, f.rect.y + 19);
       this.label(f.name, s.x, s.y, signFont, '#ffffff', 'rgba(26,27,38,0.75)');
+    }
+    if (this.layout.warAdd && this.hover?.kind === 'newwar') {
+      const r = this.layout.warAdd.rect;
+      const s = this.toScreen(r.x + r.w / 2, r.y + r.h - 14);
+      this.label('Nova sala de guerra', s.x, s.y, Math.max(11, Math.round(9 * z)), '#ffffff', 'rgba(154,52,64,0.9)');
     }
 
     for (const f of this.layout.free) {
@@ -983,6 +1178,14 @@ export class Office {
       pr.agents.forEach((a, i) => {
         const o = slotOrigin(r, i);
         const cx = o.x + SLOT_W / 2;
+        if (a.incidentId || this.inTransit(a.id)) {
+          if (z >= 0.75) {
+            const size = Math.max(9, Math.round(8 * z));
+            const n = this.toScreen(cx, o.y + DESK_Y + 53);
+            this.label('na guerra', n.x, n.y, size, '#f7768e', 'rgba(26,27,38,0.85)');
+          }
+          return;
+        }
         if (z >= 0.75) {
           const size = Math.max(9, Math.round(9 * z));
           const n = this.toScreen(cx, o.y + DESK_Y + 53);
@@ -1021,6 +1224,45 @@ export class Office {
       const b = this.layout.bounds;
       const s = this.toScreen(b.x + b.w / 2, b.y - 10);
       this.label('Clique num + para abrir a sala do seu primeiro projeto', s.x, s.y, 13, '#ffffff', 'rgba(26,27,38,0.85)');
+    }
+  }
+
+  /** Placa, título do incidente no telão, nomes e balões de quem está na mesa redonda. */
+  private drawWarTexts(r: Rect, slot: number, signFont: number) {
+    const c = this.ctx;
+    const z = this.camera.z;
+    const incident = this.incidents.find((i) => i.slot === slot);
+    const screen = this.toScreen(r.x + r.w / 2, r.y + 20);
+    c.font = `${signFont}px "Silkscreen", monospace`;
+    this.label(incident ? fit(c, incident.title, 126 * z) : 'Sala de guerra · livre', screen.x, screen.y, signFont, incident ? '#ffffff' : '#a9b1d6');
+    if (!incident) {
+      if (this.hover?.kind === 'war' && this.hover.slot === slot) {
+        const s = this.toScreen(r.x + r.w / 2, r.y + r.h / 2 + 40);
+        this.label('Clique para abrir um incidente', s.x, s.y, Math.max(11, Math.round(9 * z)), '#ffffff', 'rgba(154,52,64,0.9)');
+      }
+      return;
+    }
+    const tx = r.x + r.w / 2;
+    const ty = r.y + 160;
+    this.seatedAt(incident).forEach((a, i) => {
+      const [dx, dy] = WAR_SEATS[i];
+      const headY = dy < 0 ? ty + dy - 34 : ty + dy;
+      if (z >= 0.75) {
+        const size = Math.max(9, Math.round(8 * z));
+        // Quem senta atrás tem o nome na borda da mesa, logo abaixo dele.
+        const n = this.toScreen(tx + dx, dy < 0 ? ty - 14 - dy / 4 : ty + dy + 48);
+        this.label(a.name, n.x, n.y, size, STATUS_COLOR[a.status], 'rgba(26,27,38,0.85)');
+      }
+      const hovered = this.hover?.kind === 'agent' && this.hover.id === a.id;
+      const icon = { waiting: '!', done: '✓', working: '…', starting: '…' }[a.status as string];
+      const head = this.toScreen(tx + dx, headY - 6);
+      if (hovered) this.bubble(head.x, head.y, a.activity, STATUS_COLOR[a.status], true);
+      else if (icon) this.bubble(head.x, head.y, icon, STATUS_COLOR[a.status], false);
+    });
+    const extra = incident.participants.length - this.seatedAt(incident).length;
+    if (extra > 0 && incident.participants.length > WAR_SEATS.length) {
+      const o = this.toScreen(r.x + r.w - 40, r.y + 19);
+      this.label(`+${incident.participants.length - WAR_SEATS.length}`, o.x, o.y, Math.max(9, Math.round(8 * z)), '#1a1b26', '#e0af68');
     }
   }
 
@@ -1065,6 +1307,21 @@ export class Office {
     c.fillText(label, x + w / 2, y + h / 2 + 1);
   }
 }
+
+/**
+ * Lugares na mesa redonda, em relação ao centro do tampo, na ordem em que são ocupados: do meio
+ * para as pontas atrás da mesa (dy < 0), depois nas cabeceiras e na frente.
+ */
+const WAR_SEATS: [number, number][] = [
+  [-40, -26],
+  [40, -26],
+  [-84, -16],
+  [84, -16],
+  [0, -30],
+  [-124, 4],
+  [124, 4],
+  [0, 40],
+];
 
 /** Cada um anda numa "faixa" do corredor, para dois no mesmo caminho não ficarem sobrepostos. */
 function laneOf(id: string) {

@@ -340,6 +340,61 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForSelector('#activity-float:not(.collapsed)');
   });
 
+  it('sala de guerra: abre um incidente pelo mapa, conversa pelo chat e encerrar devolve o agente à mesa', async () => {
+    const roomId = byName('Ana')!.roomId;
+    const floorId = store.rooms.get(roomId)!.floorId!;
+    const { data: zeca } = await api<Agent>('POST', '/api/agents', { roomId, name: 'Zeca' });
+    await waitStatus(zeca.id, 'idle');
+    await page.click(`#elevator .floor[data-floor="${floorId}"]`);
+
+    // A sala de guerra fica em cima do elevador e começa livre (luz apagada).
+    const r = cellRect({ x: 0, y: 1 });
+    await revealWorld(r.x + r.w / 2, r.y + r.h / 2);
+    // Na parte de cima: embaixo do mapa fica o painel de atividade.
+    await clickWorld(r.x + 40, r.y + 60);
+    await page.waitForSelector('#war-panel:not([hidden])');
+    expect(await page.$eval('#war-title', (e) => e.textContent)).toContain('livre');
+    expect(await page.$eval('#git-panel', (e) => (e as HTMLElement).hidden)).toBe(true);
+
+    await page.click('#war-open');
+    await page.waitForSelector('#dlg-incident[open]');
+    await page.type('#dlg-incident input[name=title]', '503 na API');
+    await page.click(`#incident-who input[name=agent][value="${zeca.id}"]`);
+    await page.click('#incident-submit');
+    const incident = await waitFor(() => [...store.incidents.values()].find((i) => i.title === '503 na API'), 5000, 'incidente aberto');
+    expect(incident.participants).toEqual([zeca.id]);
+
+    // As abas são os participantes, e a resposta ao convite aparece no chat.
+    await page.waitForFunction(() => document.querySelector('#tabs .tab.active')?.textContent?.includes('Zeca'));
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('#war-chat .msg.agente')].some((li) => li.textContent?.includes('feito: [Sala de guerra]')),
+      { timeout: 10_000 },
+    );
+
+    // Enter envia; a mensagem aparece no chat e chega no terminal do agente.
+    await page.type('#war-input', '@zeca olha o timeout');
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => [...document.querySelectorAll('#war-chat .msg.voce')].some((li) => li.textContent?.includes('olha o timeout')));
+    expect(await page.$eval('#war-input', (e) => (e as HTMLTextAreaElement).value)).toBe('');
+    await waitScreen('só para você: @zeca olha o timeout', 10_000);
+
+    // @ de quem não está na sala: avisa e não manda.
+    await page.type('#war-input', '@ninguem oi');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#war-error:not([hidden])');
+    expect(await page.$eval('#war-error', (e) => e.textContent)).toContain('@ninguem');
+    await page.$eval('#war-input', (e) => ((e as HTMLTextAreaElement).value = ''));
+
+    await page.click('#war-close');
+    await page.waitForSelector('#dlg-close-incident[open]');
+    await page.type('#dlg-close-incident textarea[name=resolution]', 'Timeout ajustado');
+    await page.click('#dlg-close-incident button[value=ok]');
+    await waitFor(() => !store.incidents.has(incident.id), 5000, 'incidente encerrado');
+    expect(store.agents.get(zeca.id)?.incidentId).toBeUndefined();
+    await page.waitForSelector('#war-open:not([hidden])');
+    expect(fs.readFileSync(incident.file, 'utf8')).toContain('Timeout ajustado');
+  });
+
   it('regressão: o piso de madeira é só madeira (a metadata do PixelLab vinha com os cantos trocados)', async () => {
     const grassPixels = await page.evaluate(async () => {
       const img = new Image();

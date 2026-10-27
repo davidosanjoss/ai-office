@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { onSessionStart, onStop } from './incidents.ts';
 import { store } from './store.ts';
 
 interface HookBody {
@@ -16,6 +17,7 @@ export function handleHook({ event, agentId, payload }: HookBody) {
   switch (event) {
     case 'SessionStart':
       store.patchAgent(id, { status: 'idle', activity: 'Pronto para trabalhar' });
+      onSessionStart(id);
       break;
 
     case 'UserPromptSubmit': {
@@ -56,6 +58,8 @@ export function handleHook({ event, agentId, payload }: HookBody) {
     case 'Stop':
       store.patchAgent(id, { status: 'done', activity: 'Terminou!', subagents: 0, attentionAt: Date.now() });
       store.log(id, 'Terminou o pedido', 'done');
+      // Na sala de guerra, a resposta vai para o chat e a próxima mensagem da fila é digitada.
+      onStop(id, payload);
       break;
 
     case 'SubagentStop':
