@@ -1,6 +1,6 @@
 ## O que muda
 
-<!-- Uma ou duas frases. Se fecha uma issue: "Fecha #123". -->
+<!-- Uma ou duas frases. Se fecha uma issue: "Closes #123" (em inglês, senão o GitHub não fecha sozinho). -->
 
 ## Como testar
 

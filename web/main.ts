@@ -2,7 +2,8 @@ import type { ActivityEvent, Agent, ClientMsg, DiffScope, FileChange, FileDiff, 
 import { FLOOR_COLORS, type Cell } from '../shared/building.ts';
 import { countChanges, parseDiff, renderDiff } from './diff.ts';
 import * as logic from './logic.ts';
-import { Office, STATUS_COLOR } from './office.ts';
+import { Office, STATUS_COLOR, hash } from './office.ts';
+import { characterFor, type Manifest } from './sprites.ts';
 import { Terminals } from './terminals.ts';
 import './styles.css';
 
@@ -246,6 +247,8 @@ function renderAll(full = true) {
     logic.officeAgents(logic.agentsOnFloor(state.agents, state.rooms, currentFloor)),
   );
   renderElevator();
+  renderCounters();
+  renderDirectory();
   renderTabs();
   renderRoomInfo();
   renderInbox();
@@ -351,6 +354,148 @@ function renderRoomInfo() {
     office.reveal(moved.id);
   });
 }
+
+// ---------- contadores e lista do escritório ----------
+
+function renderCounters() {
+  const c = logic.officeCounters(state.rooms, state.agents);
+  const items: [keyof logic.Counters, string][] = [
+    ['salas', 'salas'],
+    ['agentes', 'agentes'],
+    ['trabalhando', 'trabalhando'],
+    ['ajudantes', 'ajudantes'],
+    ['terminais', 'terminais'],
+  ];
+  $('#counters').innerHTML = items.map(([k, label]) => `<div class="counter ${k}" title="${label}"><b>${c[k]}</b><span>${label}</span></div>`).join('');
+}
+
+/** Primeiro quadro do "parado" de cada personagem, para o avatar da lista. */
+let avatars: { names: string[]; parado: Record<string, { arquivo: string; w: number; h: number; cabecaY: number }> } = { names: [], parado: {} };
+fetch('sprites/manifest.json')
+  .then((r) => r.json() as Promise<Manifest>)
+  .then((m) => {
+    avatars = {
+      names: Object.keys(m.personagens),
+      parado: Object.fromEntries(Object.entries(m.personagens).map(([k, v]) => [k, v.parado])),
+    };
+    directoryKey = '';
+    renderDirectory();
+  })
+  .catch(() => {});
+
+function avatarStyle(agentId: string): string {
+  const who = characterFor(hash(agentId), avatars.names);
+  const a = who ? avatars.parado[who] : undefined;
+  if (!a) return '';
+  // Mostra cabeça e tronco num quadradinho de 30 px.
+  const scale = 0.9;
+  const x = -(a.w * scale - 30) / 2;
+  const y = -(a.cabecaY * scale - 2);
+  return `background-image:url('sprites/${a.arquivo}');background-size:auto ${a.h * scale}px;background-position:${x}px ${y}px`;
+}
+
+let directoryKey = '';
+const dirSearch = $<HTMLInputElement>('#dir-search');
+dirSearch.addEventListener('input', () => renderDirectory());
+
+/** Lista do escritório: andares → salas → agentes. Clicar leva até o andar, a sala ou o agente. */
+function renderDirectory() {
+  if (document.body.classList.contains('dir-hidden')) return;
+  const tree = logic.directoryTree(state.floors, state.rooms, state.agents, dirSearch.value);
+  const attention = logic.attentionByFloor(state.agents, state.rooms);
+  // Só redesenha quando algo visível muda (mesma razão do elevador: clique em botão trocado).
+  const key = JSON.stringify([
+    dirSearch.value,
+    currentFloor,
+    selectedRoom,
+    selectedAgent,
+    avatars.names.length,
+    tree.map((f) => [f.floor.id, f.floor.name, f.floor.color, attention.get(f.floor.id), f.rooms.map((r) => [r.room.id, r.room.name, r.agents.map((a) => [a.id, a.name, a.status, a.activity])])]),
+  ]);
+  if (key === directoryKey) return;
+  directoryKey = key;
+
+  const box = $('#dir-tree');
+  box.replaceChildren();
+  for (const { floor, rooms } of tree) {
+    const wrap = document.createElement('div');
+    wrap.className = 'dir-floor';
+    const head = document.createElement('button');
+    head.className = `dir-floor-head${floor.id === currentFloor ? ' current' : ''}`;
+    head.style.setProperty('--floor-color', floor.color);
+    head.dataset.floor = floor.id;
+    head.textContent = floor.name;
+    const n = attention.get(floor.id) ?? 0;
+    if (n) {
+      const badge = document.createElement('span');
+      badge.className = 'floor-badge';
+      badge.textContent = String(n);
+      head.append(badge);
+    }
+    head.addEventListener('click', () => goToFloor(floor.id));
+    wrap.append(head);
+    if (!rooms.length) {
+      const empty = document.createElement('div');
+      empty.className = 'dir-empty';
+      empty.textContent = dirSearch.value ? 'Nada aqui' : 'Sem salas ainda';
+      wrap.append(empty);
+    }
+    for (const { room, agents } of rooms) {
+      const r = document.createElement('div');
+      r.className = 'dir-room';
+      const rh = document.createElement('button');
+      rh.className = `dir-room-head${room.id === selectedRoom ? ' current' : ''}`;
+      rh.dataset.room = room.id;
+      rh.textContent = room.name;
+      rh.addEventListener('click', () => {
+        goToFloor(room.floorId!);
+        selectRoom(room.id);
+        office.reveal(room.id);
+      });
+      r.append(rh);
+      for (const a of agents) {
+        const b = document.createElement('button');
+        b.className = `dir-agent${a.id === selectedAgent ? ' current' : ''}`;
+        b.dataset.agent = a.id;
+        b.title = a.activity;
+        b.innerHTML = `<span class="avatar" style="${avatarStyle(a.id)}"></span><span class="who"><b></b><small></small></span><span class="dot" style="background:${STATUS_COLOR[a.status]}"></span>`;
+        b.querySelector('b')!.textContent = a.name;
+        b.querySelector('small')!.textContent = a.activity;
+        b.addEventListener('click', () => selectAgent(a.id));
+        r.append(b);
+      }
+      wrap.append(r);
+    }
+    box.append(wrap);
+  }
+  if (!tree.length) box.innerHTML = '<p class="dir-empty">Nada encontrado.</p>';
+}
+
+// Lista e atividade: mostrar/esconder, lembrando a escolha.
+function remember(key: string, value: string) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {}
+}
+function recall(key: string) {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+if (recall('directory') === 'hidden') document.body.classList.add('dir-hidden');
+$('#btn-directory').addEventListener('click', () => {
+  const hidden = document.body.classList.toggle('dir-hidden');
+  remember('directory', hidden ? 'hidden' : 'shown');
+  directoryKey = '';
+  renderDirectory();
+});
+if (recall('activity') === 'collapsed') $('#activity-float').classList.add('collapsed');
+$('#activity-toggle').addEventListener('click', () => {
+  const collapsed = $('#activity-float').classList.toggle('collapsed');
+  remember('activity', collapsed ? 'collapsed' : 'open');
+});
 
 // ---------- elevador ----------
 

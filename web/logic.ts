@@ -109,3 +109,62 @@ export function nextStop(floors: Floor[], current: string, dir: 1 | -1): string 
   if (i < 0) return stops[Math.min(1, stops.length - 1)];
   return stops[Math.max(0, Math.min(stops.length - 1, i + dir))];
 }
+
+// ---------- barra lateral e contadores ----------
+
+export interface Counters {
+  salas: number;
+  /** Agentes do Claude (terminais comuns não contam). */
+  agentes: number;
+  trabalhando: number;
+  /** Ajudantes (subagentes) trabalhando agora. */
+  ajudantes: number;
+  /** Terminais comuns abertos. */
+  terminais: number;
+  precisam: number;
+}
+
+export function officeCounters(rooms: Room[], agents: Agent[]): Counters {
+  const claude = agents.filter((a) => a.kind !== 'shell');
+  return {
+    salas: rooms.length,
+    agentes: claude.length,
+    trabalhando: claude.filter((a) => a.status === 'working').length,
+    ajudantes: claude.reduce((n, a) => n + (a.subagents ?? 0), 0),
+    terminais: agents.filter((a) => a.kind === 'shell' && a.status !== 'exited').length,
+    precisam: attentionQueue(agents).length,
+  };
+}
+
+export interface DirectoryFloor {
+  floor: Floor;
+  rooms: { room: Room; agents: Agent[] }[];
+}
+
+/** Sem acento e sem maiúsculas: "Vitória" acha "vitoria". */
+export function normalize(text: string): string {
+  return text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+}
+
+/**
+ * Árvore da barra lateral: andares → salas → agentes (só os do Claude), filtrada pela busca.
+ * A busca olha o nome do andar, da sala e do agente e o que o agente está fazendo; achar um andar
+ * ou uma sala mostra tudo o que está dentro dele.
+ */
+export function directoryTree(floors: Floor[], rooms: Room[], agents: Agent[], query = ''): DirectoryFloor[] {
+  const q = normalize(query.trim());
+  const hit = (text: string) => !q || normalize(text).includes(q);
+  const out: DirectoryFloor[] = [];
+  for (const floor of [...floors].sort((a, b) => a.order - b.order)) {
+    const floorHit = hit(floor.name);
+    const list = [];
+    for (const room of rooms.filter((r) => r.floorId === floor.id).sort((a, b) => a.name.localeCompare(b.name))) {
+      const inRoom = roomAgents(agents, room.id).filter((a) => a.kind !== 'shell');
+      const roomHit = floorHit || hit(room.name);
+      const matching = roomHit ? inRoom : inRoom.filter((a) => hit(a.name) || hit(a.activity));
+      if (roomHit || matching.length) list.push({ room, agents: matching });
+    }
+    if (floorHit || list.length) out.push({ floor, rooms: list });
+  }
+  return out;
+}
