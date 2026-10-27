@@ -1,20 +1,25 @@
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ActivityEvent, Agent, OfficeState, Room, ServerMsg } from '../shared/types.ts';
-import { autoPlace } from '../shared/building.ts';
+import { FLOOR_COLORS, autoPlace } from '../shared/building.ts';
+import type { ActivityEvent, Agent, Floor, OfficeState, Room, ServerMsg } from '../shared/types.ts';
 import { DATA_DIR } from './platform.ts';
 
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const MAX_ACTIVITY = 300;
 
 interface Persisted {
+  floors?: Floor[];
   rooms: Room[];
   agents: Agent[];
 }
 
+/** Andar criado para as salas de antes dos andares existirem. */
+export const DEFAULT_FLOOR: Omit<Floor, 'createdAt'> = { id: 'geral', name: 'Geral', color: FLOOR_COLORS[0], order: 1 };
+
 /** Estado do escritório. Emite 'msg' com cada mudança para o WebSocket repassar. */
 export class Store extends EventEmitter {
+  floors = new Map<string, Floor>();
   rooms = new Map<string, Room>();
   agents = new Map<string, Agent>();
   activity: ActivityEvent[] = [];
@@ -29,11 +34,25 @@ export class Store extends EventEmitter {
     if (!fs.existsSync(this.file)) return;
     try {
       const data = JSON.parse(fs.readFileSync(this.file, 'utf8')) as Persisted;
+      for (const f of data.floors ?? []) this.floors.set(f.id, f);
       for (const r of data.rooms ?? []) this.rooms.set(r.id, r);
+      let migrated = false;
+      // Salas de antes dos andares vão para o andar "Geral", mantendo a vaga que já tinham.
+      const semAndar = [...this.rooms.values()].filter((r) => !r.floorId || !this.floors.has(r.floorId));
+      if (semAndar.length) {
+        if (!this.floors.has(DEFAULT_FLOOR.id)) this.floors.set(DEFAULT_FLOOR.id, { ...DEFAULT_FLOOR, createdAt: Date.now() });
+        for (const r of semAndar) {
+          r.floorId = DEFAULT_FLOOR.id;
+          // A vaga antiga pode já estar ocupada no andar de destino: aí ganha uma livre.
+          const ocupada = this.roomsOn(DEFAULT_FLOOR.id).some((o) => o !== r && o.pos && r.pos && o.pos.x === r.pos.x && o.pos.y === r.pos.y);
+          if (ocupada) r.pos = undefined;
+        }
+        migrated = true;
+      }
       // Salas de antes do prédio ganham uma vaga encostada nele, na ordem em que foram criadas.
       const semVaga = [...this.rooms.values()].filter((r) => !r.pos).sort((a, b) => a.createdAt - b.createdAt);
-      for (const r of semVaga) r.pos = autoPlace([...this.rooms.values()]);
-      if (semVaga.length) this.save();
+      for (const r of semVaga) r.pos = autoPlace(this.roomsOn(r.floorId!));
+      if (semVaga.length || migrated) this.save();
       // Processos não sobrevivem a um reinício do servidor; o agente fica disponível para retomar.
       for (const a of data.agents ?? []) {
         this.agents.set(a.id, { ...a, status: 'exited', activity: 'Fora do escritório', subagents: 0 });
@@ -46,17 +65,39 @@ export class Store extends EventEmitter {
   private save() {
     clearTimeout(this.saveTimer);
     this.saveTimer = setTimeout(() => {
-      const data: Persisted = { rooms: [...this.rooms.values()], agents: [...this.agents.values()] };
+      const data: Persisted = { floors: [...this.floors.values()], rooms: [...this.rooms.values()], agents: [...this.agents.values()] };
       fs.writeFileSync(this.file, JSON.stringify(data, null, 2));
     }, 300);
   }
 
   snapshot(): OfficeState {
-    return { rooms: [...this.rooms.values()], agents: [...this.agents.values()], activity: this.activity };
+    return {
+      floors: [...this.floors.values()].sort((a, b) => a.order - b.order),
+      rooms: [...this.rooms.values()],
+      agents: [...this.agents.values()],
+      activity: this.activity,
+    };
   }
 
   private send(msg: ServerMsg) {
     this.emit('msg', msg);
+  }
+
+  /** Salas de um andar. */
+  roomsOn(floorId: string): Room[] {
+    return [...this.rooms.values()].filter((r) => r.floorId === floorId);
+  }
+
+  putFloor(floor: Floor) {
+    this.floors.set(floor.id, floor);
+    this.save();
+    this.send({ t: 'floor', floor });
+  }
+
+  removeFloor(id: string) {
+    this.floors.delete(id);
+    this.save();
+    this.send({ t: 'floorRemoved', id });
   }
 
   putRoom(room: Room) {

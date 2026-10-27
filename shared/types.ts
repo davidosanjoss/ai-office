@@ -8,12 +8,25 @@ export type AgentStatus =
   | 'done' // terminou o pedido e você ainda não viu
   | 'exited'; // processo encerrado (pode ser retomado)
 
+/** Um andar do prédio: uma empresa ou contexto (empresa, pessoal, freelance...). */
+export interface Floor {
+  id: string;
+  name: string;
+  /** Cor das paredes, da placa e do botão no elevador. */
+  color: string;
+  /** Posição no prédio: 1 é o primeiro andar acima do térreo. */
+  order: number;
+  createdAt: number;
+}
+
 export interface Room {
   id: string;
   name: string;
   path: string;
   createdAt: number;
-  /** Vaga no prédio (shared/building.ts). Salas antigas ganham uma ao carregar. */
+  /** Andar da sala. Salas de antes dos andares vão para o primeiro andar ao carregar. */
+  floorId?: string;
+  /** Vaga na planta do andar (shared/building.ts). Salas antigas ganham uma ao carregar. */
   pos?: { x: number; y: number };
 }
 
@@ -47,6 +60,7 @@ export interface ActivityEvent {
 }
 
 export interface OfficeState {
+  floors: Floor[];
   rooms: Room[];
   agents: Agent[];
   activity: ActivityEvent[];
@@ -95,6 +109,8 @@ export type ServerMsg =
   | { t: 'state'; state: OfficeState }
   | { t: 'agent'; agent: Agent }
   | { t: 'agentRemoved'; id: string }
+  | { t: 'floor'; floor: Floor }
+  | { t: 'floorRemoved'; id: string }
   | { t: 'room'; room: Room }
   | { t: 'roomRemoved'; id: string }
   | { t: 'activity'; event: ActivityEvent }

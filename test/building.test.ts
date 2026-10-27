@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIXED_ROOMS, autoPlace, canPlace, freeCells, isValidCell, occupiedCells } from '../shared/building.ts';
+import { autoPlace, canPlace, fixedRooms, freeCells, isValidCell, occupiedCells } from '../shared/building.ts';
 import type { Agent, Room } from '../shared/types.ts';
 import { CELL_H, CELL_W, CORR, MAX_VISIBLE_AGENTS, ZOOMS, cellRect, fitCamera, layoutBuilding, stepZoom } from '../web/office.ts';
 
@@ -7,12 +7,18 @@ const room = (id: string, pos?: { x: number; y: number }): Room => ({ id, name: 
 const keys = (cells: { x: number; y: number }[]) => cells.map((c) => `${c.x},${c.y}`).sort();
 
 describe('planta do prédio', () => {
-  it('o térreo já tem a recepção e a copa', () => {
-    expect(FIXED_ROOMS.map((f) => f.id)).toEqual(['recepcao', 'copa']);
+  it('o térreo é a entrada: recepção e elevadores, e não recebe salas', () => {
+    expect(fixedRooms('terreo').map((f) => f.id)).toEqual(['recepcao', 'elevadores']);
+    expect(freeCells([], 'terreo')).toEqual([]);
+    expect(canPlace([], { x: -1, y: 0 }, 'terreo')).toBe(false);
+  });
+
+  it('cada andar de empresa tem o hall dos elevadores e a própria copa', () => {
+    expect(fixedRooms('andar').map((f) => f.id)).toEqual(['elevadores', 'copa']);
     expect(occupiedCells([])).toEqual(new Set(['0,0', '1,0']));
   });
 
-  it('sem salas, os "+" ficam dos lados e em cima do térreo, nunca na rua', () => {
+  it('sem salas, os "+" ficam dos lados e em cima da primeira fileira, nunca abaixo dela', () => {
     expect(keys(freeCells([]))).toEqual(keys([
       { x: -1, y: 0 },
       { x: 2, y: 0 },
@@ -110,5 +116,17 @@ describe('câmera', () => {
     expect(stepZoom(1, -1)).toBe(0.75);
     expect(stepZoom(ZOOMS[0], -1)).toBe(ZOOMS[0]);
     expect(stepZoom(ZOOMS.at(-1)!, 1)).toBe(ZOOMS.at(-1));
+  });
+});
+
+describe('andares na tela', () => {
+  it('térreo: recepção, elevadores e a rua; andares de empresa: sem rua', () => {
+    const terreo = layoutBuilding([], [], 'terreo');
+    const andar = layoutBuilding([], [], 'andar');
+    expect(terreo.fixed.map((f) => f.id)).toEqual(['recepcao', 'elevadores']);
+    expect(terreo.free).toEqual([]);
+    expect(andar.fixed.map((f) => f.id)).toEqual(['elevadores', 'copa']);
+    // A caixa do térreo inclui a rua embaixo; a do andar, não.
+    expect(terreo.core.h).toBeGreaterThan(andar.core.h);
   });
 });

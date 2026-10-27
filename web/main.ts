@@ -1,5 +1,5 @@
-import type { ActivityEvent, Agent, ClientMsg, DiffScope, FileChange, FileDiff, GitInfo, OfficeState, Room, ServerMsg } from '../shared/types.ts';
-import type { Cell } from '../shared/building.ts';
+import type { ActivityEvent, Agent, ClientMsg, DiffScope, FileChange, FileDiff, Floor, GitInfo, OfficeState, Room, ServerMsg } from '../shared/types.ts';
+import { FLOOR_COLORS, type Cell } from '../shared/building.ts';
 import { countChanges, parseDiff, renderDiff } from './diff.ts';
 import * as logic from './logic.ts';
 import { Office, STATUS_COLOR } from './office.ts';
@@ -8,7 +8,15 @@ import './styles.css';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
-const state: OfficeState = { rooms: [], agents: [], activity: [] };
+const state: OfficeState = { floors: [], rooms: [], agents: [], activity: [] };
+/** Andar na tela: o id de um Floor, ou logic.TERREO. */
+let currentFloor: string = (() => {
+  try {
+    return localStorage.getItem('floor') ?? '';
+  } catch {
+    return '';
+  }
+})();
 let selectedRoom: string | undefined;
 let selectedAgent: string | undefined;
 let activityScope: 'room' | 'all' = 'room';
@@ -42,9 +50,20 @@ function handle(msg: ServerMsg) {
   switch (msg.t) {
     case 'state':
       Object.assign(state, msg.state);
-      if (!selectedRoom || !state.rooms.some((r) => r.id === selectedRoom)) selectedRoom = state.rooms[0]?.id;
+      if (!state.floors.some((f) => f.id === currentFloor) && currentFloor !== logic.TERREO) currentFloor = state.floors[0]?.id ?? logic.TERREO;
+      if (!selectedRoom || !state.rooms.some((r) => r.id === selectedRoom)) selectedRoom = floorRooms()[0]?.id;
       renderAll();
       refreshGit();
+      break;
+    case 'floor':
+      upsert(state.floors, msg.floor);
+      state.floors.sort((a, b) => a.order - b.order);
+      renderAll();
+      break;
+    case 'floorRemoved':
+      state.floors = state.floors.filter((f) => f.id !== msg.id);
+      if (currentFloor === msg.id) goToFloor(state.floors[0]?.id ?? logic.TERREO);
+      renderAll();
       break;
     case 'room':
       upsert(state.rooms, msg.room);
@@ -116,9 +135,25 @@ function roomAgents(roomId?: string) {
   return logic.roomAgents(state.agents, roomId);
 }
 
+function floorRooms(floorId = currentFloor) {
+  return logic.roomsOnFloor(state.rooms, floorId);
+}
+
+/** Pega o elevador: mostra outro andar. A sala e o agente selecionados continuam os mesmos. */
+function goToFloor(floorId: string) {
+  if (floorId === currentFloor) return;
+  currentFloor = floorId;
+  try {
+    localStorage.setItem('floor', floorId);
+  } catch {}
+  renderAll();
+}
+
 function selectRoom(roomId: string) {
   if (selectedRoom === roomId) return;
   selectedRoom = roomId;
+  const floor = state.rooms.find((r) => r.id === roomId)?.floorId;
+  if (floor && floor !== currentFloor) goToFloor(floor);
   const first = roomAgents(roomId).find((a) => a.status !== 'exited') ?? roomAgents(roomId)[0];
   selectAgent(first?.id);
 }
@@ -134,6 +169,9 @@ function selectAgent(id?: string) {
   const agent = state.agents.find((a) => a.id === id);
   if (agent) {
     selectedRoom = agent.roomId;
+    // Agente de outro andar (pelas abas, avisos ou "aguardando"): o elevador leva até lá.
+    const floor = logic.floorOfAgent(agent, state.rooms);
+    if (floor && floor !== currentFloor) goToFloor(floor);
     office.reveal(agent.roomId);
   }
   // Mesmo encerrado o terminal aparece: o que o processo mostrou ao sair fica visível.
@@ -178,8 +216,9 @@ autoFocusOpt.addEventListener('change', () => {
 // Abre sozinho o terminal de quem terminou primeiro, mas só quando o agente atual não
 // precisa de você: está trabalhando, encerrado ou parado há um tempo sem você digitar.
 setInterval(() => {
+  // Só dentro do andar em que você está: os outros andares só avisam (bolinha no elevador).
   const next = logic.nextAutoFocus({
-    agents: state.agents,
+    agents: logic.agentsOnFloor(state.agents, state.rooms, currentFloor),
     selectedId: selectedAgent,
     enabled: autoFocusOpt.checked,
     now: Date.now(),
@@ -200,7 +239,13 @@ function renderAll(full = true) {
   office.selectedAgent = selectedAgent;
   office.selectedRoom = selectedRoom;
   // Terminais comuns não são funcionários: só aparecem nas abas.
-  office.update(state.rooms, logic.officeAgents(state.agents));
+  const floor = state.floors.find((f) => f.id === currentFloor);
+  office.update(
+    floor ? { id: floor.id, kind: 'andar', color: floor.color } : { id: logic.TERREO, kind: 'terreo', color: '#7aa2f7' },
+    floorRooms(),
+    logic.officeAgents(logic.agentsOnFloor(state.agents, state.rooms, currentFloor)),
+  );
+  renderElevator();
   renderTabs();
   renderRoomInfo();
   renderInbox();
@@ -289,14 +334,115 @@ function renderRoomInfo() {
       <button class="btn small" data-act="hire">+ Agente</button>
       <button class="btn small" data-act="shell">&gt;_ Terminal</button>
       <button class="btn small ghost" data-act="remove">Fechar sala</button>
-    </div>`;
+    </div>
+    <label class="move-room">Andar <select data-act="move"></select></label>`;
   box.querySelector('.room-title')!.textContent = room.name;
   box.querySelector('.room-path')!.textContent = agent?.worktreeBranch ? agent.cwd : room.path;
   box.querySelector('.agent-line')!.textContent = agent ? `${agent.name}: ${agent.activity}` : '';
   box.querySelector('[data-act=hire]')!.addEventListener('click', () => openAgentDialog(room.id));
   box.querySelector('[data-act=shell]')!.addEventListener('click', () => openShell(room.id));
   box.querySelector('[data-act=remove]')!.addEventListener('click', () => closeRoom(room));
+  const move = box.querySelector<HTMLSelectElement>('[data-act=move]')!;
+  move.replaceChildren(...state.floors.map((f) => new Option(f.name, f.id, false, f.id === room.floorId)));
+  move.addEventListener('change', async () => {
+    const moved = (await api('POST', `/api/rooms/${room.id}/move`, { floorId: move.value })) as Room;
+    upsert(state.rooms, moved);
+    goToFloor(moved.floorId!);
+    office.reveal(moved.id);
+  });
 }
+
+// ---------- elevador ----------
+
+/** Painel do elevador: um botão por andar (de cima para baixo), com quantos precisam de você. */
+function renderElevator() {
+  const panel = $('#elevator');
+  const attention = logic.attentionByFloor(state.agents, state.rooms);
+  const stops = logic.elevatorStops(state.floors).reverse();
+  panel.replaceChildren(
+    ...stops.map((id) => {
+      const floor = state.floors.find((f) => f.id === id);
+      const btn = document.createElement('button');
+      btn.className = `floor${id === currentFloor ? ' current' : ''}`;
+      btn.dataset.floor = id;
+      btn.style.setProperty('--floor-color', floor?.color ?? '#a9b1d6');
+      btn.title = floor ? `${floor.name} (Alt+PageUp / Alt+PageDown)` : 'Térreo: recepção e entrada';
+      const label = document.createElement('span');
+      label.className = 'floor-name';
+      label.textContent = floor ? floor.name : 'Térreo';
+      btn.append(label);
+      const n = attention.get(id) ?? 0;
+      if (n) {
+        const badge = document.createElement('span');
+        badge.className = 'floor-badge';
+        badge.textContent = String(n);
+        badge.title = `${n} ${n === 1 ? 'agente precisa' : 'agentes precisam'} de você`;
+        btn.append(badge);
+      }
+      btn.addEventListener('click', () => goToFloor(id));
+      return btn;
+    }),
+  );
+  const add = document.createElement('button');
+  add.className = 'floor add';
+  add.textContent = '+ andar';
+  add.title = 'Novo andar (empresa, pessoal, freelance…)';
+  add.addEventListener('click', () => openFloorDialog());
+  panel.prepend(add);
+  if (state.floors.some((f) => f.id === currentFloor)) {
+    const edit = document.createElement('button');
+    edit.className = 'floor edit';
+    edit.textContent = '✎';
+    edit.title = 'Renomear, trocar a cor ou apagar este andar';
+    edit.addEventListener('click', () => openFloorDialog(state.floors.find((f) => f.id === currentFloor)));
+    panel.append(edit);
+  }
+}
+
+const dlgFloor = $<HTMLDialogElement>('#dlg-floor');
+let editingFloor: Floor | undefined;
+
+function openFloorDialog(floor?: Floor) {
+  editingFloor = floor;
+  const form = dlgFloor.querySelector('form')!;
+  form.reset();
+  $('#dlg-floor-title').textContent = floor ? `Andar ${floor.name}` : 'Novo andar';
+  dlgFloor.querySelector<HTMLInputElement>('input[name=name]')!.value = floor?.name ?? '';
+  const colors = $('#floor-colors');
+  const chosen = floor?.color ?? FLOOR_COLORS[state.floors.length % FLOOR_COLORS.length];
+  colors.replaceChildren(
+    ...FLOOR_COLORS.map((c) => {
+      const label = document.createElement('label');
+      label.className = 'swatch';
+      label.style.setProperty('--swatch', c);
+      label.innerHTML = `<input type="radio" name="color" value="${c}"${c === chosen ? ' checked' : ''} />`;
+      return label;
+    }),
+  );
+  $('#floor-delete').hidden = !floor;
+  dlgFloor.querySelector<HTMLElement>('.error')!.hidden = true;
+  dlgFloor.showModal();
+}
+
+formDialog(dlgFloor, async (data) => {
+  const body = { name: data.get('name'), color: data.get('color') };
+  const floor = (editingFloor ? await api('PATCH', `/api/floors/${editingFloor.id}`, body) : await api('POST', '/api/floors', body)) as Floor;
+  upsert(state.floors, floor);
+  state.floors.sort((a, b) => a.order - b.order);
+  goToFloor(floor.id);
+});
+
+$('#floor-delete').addEventListener('click', async () => {
+  if (!editingFloor) return;
+  const error = dlgFloor.querySelector<HTMLElement>('.error')!;
+  try {
+    await api('DELETE', `/api/floors/${editingFloor.id}`);
+    dlgFloor.close();
+  } catch (err) {
+    error.textContent = (err as Error).message;
+    error.hidden = false;
+  }
+});
 
 // ---------- atividade ----------
 
@@ -539,10 +685,14 @@ const dlgRoom = $<HTMLDialogElement>('#dlg-room');
 /** Vaga do prédio escolhida no "+" do mapa; sem ela, o servidor escolhe uma encostada no prédio. */
 let newRoomCell: Cell | undefined;
 formDialog(dlgRoom, async (data) => {
-  const room = (await api('POST', '/api/rooms', { path: data.get('path'), name: data.get('name'), pos: newRoomCell })) as Room;
+  const floorId = String(data.get('floor') ?? '');
+  // A vaga clicada no "+" só vale para o andar em que ela foi clicada.
+  const pos = floorId === currentFloor ? newRoomCell : undefined;
+  const room = (await api('POST', '/api/rooms', { path: data.get('path'), name: data.get('name'), floorId, pos })) as Room;
   upsert(state.rooms, room);
   selectedRoom = room.id;
   selectedAgent = undefined;
+  if (room.floorId && room.floorId !== currentFloor) goToFloor(room.floorId);
   renderAll();
   office.reveal(room.id);
 });
@@ -550,6 +700,9 @@ $('#btn-add-room').addEventListener('click', () => openRoomDialog());
 
 async function openRoomDialog(cell?: Cell) {
   newRoomCell = cell;
+  // Começa no andar da tela; no térreo (que não tem salas), no primeiro andar.
+  const defaultFloor = state.floors.some((f) => f.id === currentFloor) ? currentFloor : state.floors[0]?.id;
+  $('#room-floor').replaceChildren(...state.floors.map((f) => new Option(f.name, f.id, false, f.id === defaultFloor)));
   $('#dlg-room-where').textContent = cell ? 'A sala vai ocupar a vaga que você clicou no prédio.' : 'A sala vai para uma vaga livre encostada no prédio.';
   dlgRoom.querySelector<HTMLElement>('.error')!.hidden = true;
   dlgRoom.showModal();
@@ -697,6 +850,9 @@ window.addEventListener(
     } else if (e.code === 'KeyT' && selectedRoom) {
       e.preventDefault();
       openShell(selectedRoom);
+    } else if (e.code === 'PageUp' || e.code === 'PageDown') {
+      e.preventDefault();
+      goToFloor(logic.nextStop(state.floors, currentFloor, e.code === 'PageUp' ? 1 : -1));
     } else if (e.code === 'KeyN') {
       e.preventDefault();
       $('#btn-inbox').click();

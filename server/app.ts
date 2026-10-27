@@ -22,8 +22,9 @@ import { fileDiff, gitInfo } from './git.ts';
 import { handleHook } from './hooks.ts';
 import { pickFolder } from './picker.ts';
 import { PORT } from './platform.ts';
-import { store } from './store.ts';
-import { autoPlace, canPlace, isValidCell } from '../shared/building.ts';
+import { DEFAULT_FLOOR, store } from './store.ts';
+import { FLOOR_COLORS, autoPlace, canPlace, isValidCell } from '../shared/building.ts';
+import type { Floor, Room } from '../shared/types.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
@@ -32,6 +33,9 @@ const DIST = path.join(ROOT, 'dist');
 export async function buildApp(opts: { port?: number } = {}) {
   const port = opts.port ?? PORT;
   const app = Fastify({ logger: false });
+
+  // Instalação nova: o prédio já começa com um andar, para a primeira sala ter onde ficar.
+  if (!store.floors.size) store.putFloor({ ...DEFAULT_FLOOR, createdAt: Date.now() });
 
   // Proteção contra sites maliciosos falando com o localhost (CSRF e DNS rebinding).
   const allowedHosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
@@ -95,20 +99,68 @@ export async function buildApp(opts: { port?: number } = {}) {
     }
   });
 
-  app.post<{ Body: { path: string; name?: string; pos?: { x: number; y: number } } }>('/api/rooms', async (req, reply) => {
+  // ---------- andares ----------
+
+  app.post<{ Body: { name?: string; color?: string } }>('/api/floors', async (req, reply) => {
+    const name = String(req.body?.name ?? '').trim();
+    if (!name) return reply.code(400).send({ error: 'Dê um nome ao andar' });
+    const floors = [...store.floors.values()];
+    const order = floors.reduce((max, f) => Math.max(max, f.order), 0) + 1;
+    const color = validColor(req.body?.color) ?? FLOOR_COLORS[floors.length % FLOOR_COLORS.length];
+    const floor: Floor = { id: randomUUID().slice(0, 8), name, color, order, createdAt: Date.now() };
+    store.putFloor(floor);
+    return floor;
+  });
+
+  app.patch<{ Params: { id: string }; Body: { name?: string; color?: string } }>('/api/floors/:id', async (req, reply) => {
+    const floor = store.floors.get(req.params.id);
+    if (!floor) return reply.code(404).send({ error: 'Andar não encontrado' });
+    const name = req.body?.name === undefined ? floor.name : String(req.body.name).trim();
+    if (!name) return reply.code(400).send({ error: 'Dê um nome ao andar' });
+    const updated = { ...floor, name, color: validColor(req.body?.color) ?? floor.color };
+    store.putFloor(updated);
+    return updated;
+  });
+
+  app.delete<{ Params: { id: string } }>('/api/floors/:id', async (req, reply) => {
+    if (!store.floors.has(req.params.id)) return reply.code(404).send({ error: 'Andar não encontrado' });
+    if (store.roomsOn(req.params.id).length) {
+      return reply.code(400).send({ error: 'O andar ainda tem salas: mova ou feche as salas antes de apagar' });
+    }
+    store.removeFloor(req.params.id);
+    return { ok: true };
+  });
+
+  // ---------- salas ----------
+
+  app.post<{ Body: { path: string; name?: string; floorId?: string; pos?: { x: number; y: number } } }>('/api/rooms', async (req, reply) => {
     const dir = path.resolve(String(req.body?.path ?? '').trim());
     if (!fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return reply.code(400).send({ error: 'Pasta não existe' });
     const existing = [...store.rooms.values()].find((r) => r.path === dir);
     if (existing) return existing;
-    const rooms = [...store.rooms.values()];
+    const floorId = req.body.floorId ?? firstFloorId();
+    if (!floorId || !store.floors.has(floorId)) return reply.code(400).send({ error: 'Escolha um andar para a sala' });
+    const rooms = store.roomsOn(floorId);
     const wanted = req.body.pos;
     if (wanted !== undefined && !(isValidCell(wanted) && canPlace(rooms, wanted))) {
-      return reply.code(400).send({ error: 'Essa vaga do prédio não está livre' });
+      return reply.code(400).send({ error: 'Essa vaga do andar não está livre' });
     }
     const pos = wanted ? { x: wanted.x, y: wanted.y } : autoPlace(rooms);
-    const room = { id: randomUUID().slice(0, 8), name: req.body.name?.trim() || path.basename(dir), path: dir, createdAt: Date.now(), pos };
+    const room: Room = { id: randomUUID().slice(0, 8), name: req.body.name?.trim() || path.basename(dir), path: dir, createdAt: Date.now(), floorId, pos };
     store.putRoom(room);
     return room;
+  });
+
+  /** Leva a sala (com os agentes, que continuam trabalhando) para uma vaga livre de outro andar. */
+  app.post<{ Params: { id: string }; Body: { floorId: string } }>('/api/rooms/:id/move', async (req, reply) => {
+    const room = store.rooms.get(req.params.id);
+    if (!room) return reply.code(404).send({ error: 'Sala não encontrada' });
+    const floorId = String(req.body?.floorId ?? '');
+    if (!store.floors.has(floorId)) return reply.code(400).send({ error: 'Andar não encontrado' });
+    if (room.floorId === floorId) return room;
+    const moved = { ...room, floorId, pos: autoPlace(store.roomsOn(floorId)) };
+    store.putRoom(moved);
+    return moved;
   });
 
   app.delete<{ Params: { id: string } }>('/api/rooms/:id', async (req) => {
@@ -185,4 +237,14 @@ export async function buildApp(opts: { port?: number } = {}) {
   }
 
   return app;
+}
+
+/** Primeiro andar acima do térreo: destino padrão de salas novas sem andar escolhido. */
+function firstFloorId(): string | undefined {
+  return [...store.floors.values()].sort((a, b) => a.order - b.order)[0]?.id;
+}
+
+/** Só cores no formato #rrggbb: o valor vai direto para o CSS e para o canvas. */
+function validColor(c: unknown): string | undefined {
+  return typeof c === 'string' && /^#[0-9a-f]{6}$/i.test(c) ? c.toLowerCase() : undefined;
 }

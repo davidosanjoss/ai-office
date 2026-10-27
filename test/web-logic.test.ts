@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { Agent } from '../shared/types.ts';
+import type { Agent, Floor, Room } from '../shared/types.ts';
 import {
   IDLE_RELEASE_MS,
   TYPING_GRACE_MS,
@@ -10,6 +10,13 @@ import {
   officeAgents,
   resumeLabel,
   roomAgents,
+  TERREO,
+  agentsOnFloor,
+  attentionByFloor,
+  elevatorStops,
+  floorOfAgent,
+  nextStop,
+  roomsOnFloor,
 } from '../web/logic.ts';
 
 const agent = (id: string, patch: Partial<Agent> = {}): Agent => ({
@@ -122,5 +129,48 @@ describe('faixa de "encerrado"', () => {
   it('regressão: mostra o motivo quando o Claude não conseguiu abrir', () => {
     const a = agent('Ana', { status: 'exited', activity: 'Não conseguiu abrir: No conversation found', exitCode: 1 });
     expect(exitedMessage(a)).toBe('Ana não conseguiu abrir: No conversation found');
+  });
+});
+
+describe('andares', () => {
+  const floors: Floor[] = [
+    { id: 'empresa', name: 'Empresa', color: '#7aa2f7', order: 1, createdAt: 0 },
+    { id: 'pessoal', name: 'Pessoal', color: '#9ece6a', order: 2, createdAt: 0 },
+  ];
+  const rooms: Room[] = [
+    { id: 'r1', name: 'api', path: '/api', createdAt: 0, floorId: 'empresa' },
+    { id: 'r2', name: 'site', path: '/site', createdAt: 0, floorId: 'pessoal' },
+  ];
+
+  it('salas e agentes de cada andar; o térreo não tem salas', () => {
+    const agents = [agent('a', { roomId: 'r1' }), agent('b', { roomId: 'r2' })];
+    expect(roomsOnFloor(rooms, 'empresa').map((r) => r.id)).toEqual(['r1']);
+    expect(roomsOnFloor(rooms, TERREO)).toEqual([]);
+    expect(agentsOnFloor(agents, rooms, 'pessoal').map((a) => a.id)).toEqual(['b']);
+    expect(floorOfAgent(agents[0], rooms)).toBe('empresa');
+  });
+
+  it('bolinha do elevador: quantos precisam de você em cada andar', () => {
+    const agents = [
+      agent('a', { roomId: 'r1', status: 'done', attentionAt: 1 }),
+      agent('b', { roomId: 'r1', status: 'waiting', attentionAt: 2 }),
+      agent('c', { roomId: 'r2', status: 'working' }),
+    ];
+    expect(Object.fromEntries(attentionByFloor(agents, rooms))).toEqual({ empresa: 2 });
+  });
+
+  it('o foco automático só olha o andar em que você está', () => {
+    const agents = [agent('atual', { roomId: 'r1' }), agent('outro', { roomId: 'r2', status: 'done', attentionAt: 1 })];
+    // Quem terminou está em outro andar: no andar da empresa, o foco fica onde está.
+    expect(focus(agentsOnFloor(agents, rooms, 'empresa'), 'atual')).toBeUndefined();
+    expect(focus(agentsOnFloor(agents, rooms, 'pessoal'), undefined)).toBe('outro');
+  });
+
+  it('elevador: térreo embaixo, andares pela ordem, e para nas pontas', () => {
+    expect(elevatorStops(floors)).toEqual([TERREO, 'empresa', 'pessoal']);
+    expect(nextStop(floors, TERREO, 1)).toBe('empresa');
+    expect(nextStop(floors, 'pessoal', 1)).toBe('pessoal');
+    expect(nextStop(floors, 'empresa', -1)).toBe(TERREO);
+    expect(nextStop(floors, 'apagado', 1)).toBe('empresa');
   });
 });

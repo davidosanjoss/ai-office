@@ -1,6 +1,6 @@
 // Regras de decisão da interface, sem DOM, para poderem ser testadas.
 
-import type { Agent } from '../shared/types.ts';
+import type { Agent, Floor, Room } from '../shared/types.ts';
 
 /** Depois da última tecla, quanto esperar antes de trocar de terminal sozinho. */
 export const TYPING_GRACE_MS = 3500;
@@ -66,4 +66,46 @@ export function exitedMessage(a: Agent): string {
 
 export function resumeLabel(a: Agent): string {
   return a.kind === 'shell' ? 'Reabrir terminal' : 'Retomar conversa';
+}
+
+// ---------- andares ----------
+
+/** Id do térreo na navegação: ele não é um Floor salvo, é a entrada do prédio. */
+export const TERREO = 'terreo';
+
+export function roomsOnFloor(rooms: Room[], floorId: string): Room[] {
+  return floorId === TERREO ? [] : rooms.filter((r) => r.floorId === floorId);
+}
+
+export function agentsOnFloor(agents: Agent[], rooms: Room[], floorId: string): Agent[] {
+  const ids = new Set(roomsOnFloor(rooms, floorId).map((r) => r.id));
+  return agents.filter((a) => ids.has(a.roomId));
+}
+
+/** Andar de um agente (pela sala dele). */
+export function floorOfAgent(agent: Agent | undefined, rooms: Room[]): string | undefined {
+  return agent ? rooms.find((r) => r.id === agent.roomId)?.floorId : undefined;
+}
+
+/** Quantos agentes precisam de você em cada andar: a bolinha no botão do elevador. */
+export function attentionByFloor(agents: Agent[], rooms: Room[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const a of attentionQueue(agents)) {
+    const f = floorOfAgent(a, rooms);
+    if (f) out.set(f, (out.get(f) ?? 0) + 1);
+  }
+  return out;
+}
+
+/** Ordem do elevador, de baixo para cima: térreo e depois os andares pela ordem. */
+export function elevatorStops(floors: Floor[]): string[] {
+  return [TERREO, ...[...floors].sort((a, b) => a.order - b.order).map((f) => f.id)];
+}
+
+/** Próxima parada subindo (+1) ou descendo (-1); fica onde está nas pontas. */
+export function nextStop(floors: Floor[], current: string, dir: 1 | -1): string {
+  const stops = elevatorStops(floors);
+  const i = stops.indexOf(current);
+  if (i < 0) return stops[Math.min(1, stops.length - 1)];
+  return stops[Math.max(0, Math.min(stops.length - 1, i + dir))];
 }

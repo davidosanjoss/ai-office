@@ -4,6 +4,7 @@ Um escritório em pixel art para gerenciar várias sessões do Claude Code ao me
 
 - Um **prédio de escritório** visto de cima: térreo com **recepção** (e secretária) e **copa**, a rua na frente, e **cada projeto é uma sala** encostada no prédio. **Cada agente é um funcionário** sentado numa mesa.
 - Em volta do prédio aparecem vagas com **+**: clique numa, escolha o repositório, e a sala nova nasce ali, liberando novas vagas em volta dela.
+- **Andares por empresa:** cada andar é um contexto (a sua empresa, projetos pessoais, freelance…), com as próprias salas e a própria copa. O **painel do elevador** no canto do mapa mostra os andares e quantos agentes precisam de você em cada um; o térreo é a entrada, com a recepção.
 - **Arraste o mapa** para navegar e use a **rodinha** para o zoom (ou os botões + − ⌖ no canto). Quando o foco automático abre um agente de outra sala, a câmera vai até ela.
 - O funcionário mostra o que está fazendo: digita quando trabalha, **levanta a mão** quando precisa de aprovação, **comemora** quando termina, e os subagentes aparecem como ajudantes ao lado da mesa.
 - Abas de **terminal comum** (`>_`): o seu shell aberto na pasta do projeto, sem Claude, para git, `npm run dev` etc.
@@ -54,6 +55,7 @@ Ou, no Chrome/Edge, menu ⋮ → *Transmitir, salvar e compartilhar* → *Instal
 |---|---|
 | `Alt+1` … `Alt+9` | Ir para a aba N da sala |
 | `Alt+T` | Abrir um terminal comum na sala |
+| `Alt+PageUp` / `Alt+PageDown` | Subir / descer um andar |
 | `Alt+N` | Ir para o próximo agente que terminou ou pede aprovação |
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar no terminal |
 

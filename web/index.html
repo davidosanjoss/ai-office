@@ -22,6 +22,7 @@
     </header>
 
     <section id="office">
+      <nav id="elevator" aria-label="Andares"></nav>
       <div class="map-controls">
         <button id="map-zoom-in" title="Aproximar (rodinha do mouse)">+</button>
         <button id="map-zoom-out" title="Afastar">−</button>
@@ -87,6 +88,7 @@
         </label>
         <datalist id="projects"></datalist>
         <label>Nome (opcional) <input name="name" autocomplete="off" /></label>
+        <label>Andar <select name="floor" id="room-floor"></select></label>
         <p class="error" hidden></p>
         <menu>
           <button value="ok" class="btn">Criar sala</button>
@@ -108,6 +110,24 @@
         <menu>
           <button value="ok" class="btn">Contratar</button>
           <button value="cancel" formnovalidate class="btn ghost">Cancelar</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-floor">
+      <form method="dialog">
+        <h2 id="dlg-floor-title">Novo andar</h2>
+        <p class="muted">Cada andar é uma empresa ou contexto: a sua empresa, projetos pessoais, freelance…</p>
+        <label>Nome <input name="name" required autocomplete="off" placeholder="Ex.: Freelance" /></label>
+        <fieldset class="colors">
+          <legend>Cor</legend>
+          <div id="floor-colors"></div>
+        </fieldset>
+        <p class="error" hidden></p>
+        <menu>
+          <button value="ok" class="btn">Salvar</button>
+          <button value="cancel" formnovalidate class="btn ghost">Cancelar</button>
+          <button type="button" id="floor-delete" class="btn danger" hidden>Apagar andar</button>
         </menu>
       </form>
     </dialog>
