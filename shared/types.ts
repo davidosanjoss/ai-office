@@ -42,6 +42,8 @@ export interface Agent {
   cwd: string;
   /** Branch do worktree, quando o agente tem um. */
   worktreeBranch?: string;
+  /** PR aberto pelo escritório para a branch do worktree. */
+  worktreePr?: string;
   sessionId: string;
   status: AgentStatus;
   activity: string;
@@ -130,6 +132,28 @@ export interface GitInfo {
   branchFiles?: FileChange[];
   commits?: { hash: string; subject: string; when: string }[];
   worktrees?: { path: string; branch: string }[];
+}
+
+/** Situação do worktree de um agente em relação à branch da sala, para as ações do painel de git. */
+export interface WorktreeStatus {
+  branch: string;
+  /** Branch em que a pasta da sala está, para onde o trabalho volta. Ausente com HEAD solto. */
+  target?: string;
+  /** Commits do worktree que a branch da sala não tem. */
+  ahead: number;
+  /** Commits da branch da sala que o worktree não tem. */
+  behind: number;
+  /** Arquivos não commitados no worktree: não vão no merge nem no PR. */
+  dirty: number;
+  /** Arquivos que dariam conflito ao trazer para a sala; ausente se não deu para prever. */
+  conflicts?: string[];
+  /** O repositório tem o remoto `origin`. */
+  remote: boolean;
+  /** `origin/<branch>` está no mesmo commit do worktree. */
+  pushed: boolean;
+  pr?: string;
+  /** Título e descrição sugeridos para o PR, a partir dos commits. */
+  suggestion: { title: string; body: string };
 }
 
 export interface FileDiff {

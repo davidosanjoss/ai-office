@@ -10,16 +10,18 @@ const exec = promisify(execFile);
 const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const MAX_DIFF = 2 * 1024 * 1024;
 
-async function git(cwd: string, args: string[]): Promise<string> {
+export async function git(cwd: string, args: string[]): Promise<string> {
   // quotePath=false: caminhos com acento vêm como texto, não como "\303\241".
   const { stdout } = await exec('git', ['-C', cwd, '-c', 'core.quotePath=false', ...args], {
     maxBuffer: 16 * 1024 * 1024,
     windowsHide: true,
+    // Nunca abre prompt de senha: sem credencial, o push falha com mensagem em vez de travar.
+    env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
   });
   return stdout;
 }
 
-async function ok(cwd: string, args: string[]): Promise<string | undefined> {
+export async function ok(cwd: string, args: string[]): Promise<string | undefined> {
   try {
     return (await git(cwd, args)).trim();
   } catch {

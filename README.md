@@ -12,7 +12,7 @@ Um escritório em pixel art para gerenciar várias sessões do Claude Code ao me
 - Cada agente tem o próprio **terminal** (o Claude Code de verdade, com sua conta), em **abas** por sala.
 - Quando um agente termina ou pede aprovação, o escritório **abre o terminal de quem terminou primeiro**, assim que você não estiver digitando em outro.
 - Barra lateral com **git** (branch, arquivos modificados, commits) e o **feed de atividade**.
-- Opção de colocar cada agente num **git worktree** com branch própria, para vários agentes mexerem no mesmo repo sem conflito.
+- Opção de colocar cada agente num **git worktree** com branch própria, para vários agentes mexerem no mesmo repo sem conflito. Quando ele termina, o painel de git **abre o PR** (push + `gh pr create`, com título e descrição sugeridos pelos commits), **traz o trabalho para a branch da sala** (merge local, que avisa antes se daria conflito) e **encerra o worktree** (a branch só pode ser apagada se o trabalho já estiver na sala ou no GitHub).
 
 Tudo roda localmente: o servidor escuta só em `127.0.0.1`.
 
@@ -23,6 +23,7 @@ A arte (funcionários, móveis, piso, árvores) foi gerada no [PixelLab](https:/
 - [Node.js](https://nodejs.org) 20 ou mais novo
 - [Claude Code](https://docs.claude.com/claude-code) instalado e logado (o comando `claude` precisa funcionar no terminal)
 - Git (opcional, para o painel de git e os worktrees)
+- [GitHub CLI](https://cli.github.com) (`gh`, opcional, para abrir PRs dos worktrees; rode `gh auth login` uma vez)
 
 Funciona em Linux, macOS e Windows. Não precisa de compilador: o terminal usa binários prontos.
 

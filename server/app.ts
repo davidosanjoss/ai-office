@@ -15,6 +15,7 @@ import {
   removeAgent,
   resize,
   resumeAgent,
+  stopAgent,
   writeInput,
 } from './agents.ts';
 import { discoverProjects } from './discover.ts';
@@ -22,10 +23,11 @@ import { fileDiff, gitInfo } from './git.ts';
 import { handleHook } from './hooks.ts';
 import { IncidentError, addParticipants, closeIncident, incidentAt, leaveIncidents, openIncident, sendMessage, shareMessage } from './incidents.ts';
 import { pickFolder } from './picker.ts';
+import { WorktreeError, mergeWorktree, openPr, removeWorktree, worktreeStatus } from './worktree.ts';
 import { PORT } from './platform.ts';
 import { DEFAULT_FLOOR, store } from './store.ts';
 import { FLOOR_COLORS, MAX_WAR_ROOMS, autoPlace, canPlace, isValidCell } from '../shared/building.ts';
-import type { Floor, Room } from '../shared/types.ts';
+import type { Agent, Floor, Room } from '../shared/types.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
@@ -244,6 +246,44 @@ export async function buildApp(opts: { port?: number } = {}) {
     removeAgent(req.params.id);
     return { ok: true };
   });
+
+  // ---------- worktree de um agente: PR, merge na sala e encerrar ----------
+
+  /** Acha o agente e a sala dele; erros de regra (conflito, sem origin...) viram 400 com a mensagem. */
+  const worktreeRoute =
+    (fn: (agent: Agent, room: Room, req: any) => unknown) =>
+    async (req: any, reply: any) => {
+      const agent = store.agents.get(req.params.id);
+      const room = agent && store.rooms.get(agent.roomId);
+      if (!agent || !room) return reply.code(404).send({ error: 'Agente não encontrado' });
+      try {
+        return await fn(agent, room, req);
+      } catch (err) {
+        if (err instanceof WorktreeError) return reply.code(400).send({ error: err.message });
+        throw err;
+      }
+    };
+
+  app.get('/api/agents/:id/worktree', worktreeRoute((agent, room) => worktreeStatus(agent, room)));
+  app.post('/api/agents/:id/worktree/merge', worktreeRoute((agent, room) => mergeWorktree(agent, room)));
+  app.post(
+    '/api/agents/:id/worktree/pr',
+    worktreeRoute(async (agent, room, req) => {
+      const pr = await openPr(agent, room, String(req.body?.title ?? ''), String(req.body?.body ?? ''));
+      store.patchAgent(agent.id, { worktreePr: pr.url });
+      return pr;
+    }),
+  );
+  /** Encerra a sessão do agente, remove a pasta do worktree e, se pedido, a branch. O agente sai do escritório. */
+  app.post(
+    '/api/agents/:id/worktree/remove',
+    worktreeRoute(async (agent, room, req) => {
+      await removeWorktree(agent, room, !!req.body?.deleteBranch, () => stopAgent(agent.id));
+      leaveIncidents(agent.id);
+      removeAgent(agent.id);
+      return { ok: true };
+    }),
+  );
 
   // ---------- sala de guerra ----------
 
