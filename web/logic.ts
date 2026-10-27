@@ -1,6 +1,6 @@
 // Regras de decisão da interface, sem DOM, para poderem ser testadas.
 
-import type { Agent, Floor, Incident, IncidentMessage, Room, WorktreeStatus } from '../shared/types.ts';
+import type { Agent, Floor, Incident, IncidentMessage, MemoryStatus, Room, WorktreeStatus } from '../shared/types.ts';
 import { canDeleteBranch } from '../shared/worktree.ts';
 
 /** Depois da última tecla, quanto esperar antes de trocar de terminal sozinho. */
@@ -266,4 +266,37 @@ export function worktreeActions(st: WorktreeStatus): {
 export function deleteBranchOption(st: WorktreeStatus): { allowed: boolean; hint: string } {
   if (canDeleteBranch(st)) return { allowed: true, hint: st.ahead === 0 && st.target ? `O trabalho já está em ${st.target}.` : 'A branch está no origin.' };
   return { allowed: false, hint: `Ela tem commits que não estão em ${st.target ?? 'a sala'} nem no origin.` };
+}
+
+/** Como o indicador da memória (ai-memory) aparece no topo e o que o diálogo oferece. */
+export function memoryView(st: MemoryStatus | undefined): {
+  label: string;
+  tone: 'on' | 'off' | 'warn' | 'busy';
+  /** O que falta, em português, para a memória funcionar. */
+  problems: string[];
+  canInstall: boolean;
+  canUninstall: boolean;
+  /** No Windows: mostrar os comandos para colar no PowerShell. */
+  showSteps: boolean;
+} {
+  if (!st) return { label: 'Memória', tone: 'off', problems: [], canInstall: false, canUninstall: false, showSteps: false };
+  const busy = !!st.job && !st.job.done;
+  const on = st.running && st.hooks && st.mcp;
+  const any = st.running || st.hooks || st.mcp;
+  const problems = on
+    ? []
+    : [
+        !st.running ? 'O servidor do ai-memory não está respondendo.' : '',
+        !st.hooks ? 'As sessões do Claude não estão sendo guardadas (faltam os hooks).' : '',
+        !st.mcp ? 'O Claude não consegue consultar a memória (falta o MCP).' : '',
+      ].filter(Boolean);
+  const label = busy ? (st.job!.kind === 'instalar' ? 'Memória: instalando…' : 'Memória: removendo…') : on ? 'Memória: ligada' : any ? 'Memória: incompleta' : 'Memória: desligada';
+  return {
+    label,
+    tone: busy ? 'busy' : on ? 'on' : any ? 'warn' : 'off',
+    problems,
+    canInstall: st.autoInstall && !busy && !on,
+    canUninstall: st.autoInstall && !busy && any,
+    showSteps: !st.autoInstall && !on,
+  };
 }

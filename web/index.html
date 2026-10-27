@@ -15,6 +15,7 @@
       <button id="btn-add-room" class="btn">+ Sala</button>
       <button id="btn-inbox" class="inbox" hidden></button>
       <div id="counters" class="counters"></div>
+      <button id="btn-memory" class="memory off" title="Memória dos agentes (ai-memory)">Memória</button>
       <div class="spacer"></div>
       <label class="toggle" title="Quando um agente termina ou pede aprovação, abre o terminal dele assim que você parar de digitar">
         <input type="checkbox" id="opt-autofocus" checked /> Abrir quem terminar
@@ -192,6 +193,47 @@
         <menu>
           <button value="ok" class="btn">Encerrar</button>
           <button value="cancel" formnovalidate class="btn ghost">Cancelar</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-memory">
+      <form method="dialog">
+        <h2>Memória dos agentes</h2>
+        <p class="muted">
+          O <a href="https://github.com/akitaonrails/ai-memory" target="_blank" rel="noopener">ai-memory</a> guarda o que os agentes aprendem em cada
+          projeto e entrega um resumo no começo de cada sessão. Funciona sem chave de API.
+        </p>
+        <ul id="mem-checks" class="mem-checks"></ul>
+        <p class="mem-data">Dados: <code id="mem-dir"></code> <button type="button" id="mem-open" class="btn small ghost">Abrir pasta</button></p>
+        <div id="mem-plan" class="mem-plan" hidden>
+          <p>Instalar faz, nesta ordem:</p>
+          <ol>
+            <li>baixa a imagem do ai-memory <span id="mem-version"></span> no Docker (~200 MB);</li>
+            <li>cria a pasta dos dados, com um token para ninguém mais ler a memória;</li>
+            <li>sobe o servidor, só para esta máquina (<code>127.0.0.1:49374</code>), religando sozinho com o computador;</li>
+            <li>instala o comando <code>ai-memory</code> (conferido pelo checksum) e liga hooks e MCP no Claude Code.</li>
+          </ol>
+          <p class="mem-warn">Os hooks valem para <b>todas</b> as sessões do Claude nesta máquina, não só as do escritório.</p>
+        </div>
+        <div id="mem-no-docker" hidden>
+          <p class="mem-warn">O Docker não foi encontrado. <a href="https://docs.docker.com/get-docker/" target="_blank" rel="noopener">Instale o Docker</a> e abra este diálogo de novo.</p>
+        </div>
+        <div id="mem-steps" hidden>
+          <p>No Windows, o escritório ainda não instala sozinho. Com o <b>Docker Desktop</b> aberto, cole no PowerShell:</p>
+          <pre id="mem-steps-text" class="mem-pre"></pre>
+          <button type="button" id="mem-copy" class="btn small ghost">Copiar</button>
+        </div>
+        <div id="mem-progress" hidden>
+          <p id="mem-step" class="mem-step"></p>
+          <details id="mem-log-box"><summary>Detalhes</summary><pre id="mem-log" class="mem-pre"></pre></details>
+        </div>
+        <p id="mem-web" class="muted" hidden></p>
+        <p class="error" hidden></p>
+        <menu>
+          <button type="button" id="mem-install" class="btn">Instalar</button>
+          <button type="button" id="mem-uninstall" class="btn ghost">Desinstalar</button>
+          <button value="cancel" class="btn ghost">Fechar</button>
         </menu>
       </form>
     </dialog>

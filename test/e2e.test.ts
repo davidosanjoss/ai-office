@@ -3,7 +3,10 @@
 // (defina CHROME_PATH para escolher um).
 
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import puppeteer, { type Browser, type Page } from 'puppeteer-core';
@@ -274,6 +277,42 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForSelector('#dlg-worktree-end:not([open])');
     expect(fs.existsSync(a.cwd)).toBe(false);
     expect(execFileSync('git', ['-C', room.path, 'branch', '--list', a.worktreeBranch!]).toString()).toBe('');
+  });
+
+  it.skipIf(process.platform === 'win32')('memória: o indicador mostra desligada, e instalar pelo diálogo liga', async () => {
+    // ai-memory falso: /healthz responde quando o container do Docker falso está rodando.
+    const tmp = process.env.AI_OFFICE_TMP!;
+    const running = () => {
+      const f = path.join(tmp, 'docker-state.json');
+      return fs.existsSync(f) && JSON.parse(fs.readFileSync(f, 'utf8')).containers['ai-memory']?.running;
+    };
+    const health = http.createServer((req, res) => {
+      res.statusCode = req.url === '/healthz' && running() ? 200 : 503;
+      res.end();
+    });
+    await new Promise<void>((r) => health.listen(0, '127.0.0.1', r));
+    process.env.AI_OFFICE_MEMORY_URL = `http://127.0.0.1:${(health.address() as AddressInfo).port}`;
+    const release = process.env.AI_OFFICE_MEMORY_RELEASE!;
+    fs.mkdirSync(release, { recursive: true });
+    const body = fs.readFileSync(path.resolve('test/fixtures/fake-ai-memory.mjs'));
+    fs.writeFileSync(path.join(release, 'ai-memory-wrapper'), body);
+    fs.writeFileSync(path.join(release, 'ai-memory-wrapper.sha256'), createHash('sha256').update(body).digest('hex'));
+    try {
+      await page.click('#btn-memory');
+      await page.waitForSelector('#dlg-memory[open]');
+      await page.waitForFunction(() => document.querySelector('#btn-memory')?.textContent === 'Memória: desligada');
+      expect(await page.$$eval('#mem-checks li.ok', (els) => els.length)).toBe(0);
+      expect(await page.$eval('#mem-plan', (e) => (e as HTMLElement).hidden)).toBe(false);
+
+      await page.click('#mem-install');
+      await page.waitForFunction(() => document.querySelector('#btn-memory')?.textContent === 'Memória: ligada', { timeout: 15000 });
+      await page.waitForFunction(() => document.querySelectorAll('#mem-checks li.ok').length === 3);
+      expect(await page.$eval('#mem-step', (e) => e.textContent)).toContain('Pronto');
+      expect(await page.$eval('#mem-install', (e) => (e as HTMLElement).hidden)).toBe(true);
+      await page.click('#dlg-memory button[value=cancel]');
+    } finally {
+      health.close();
+    }
   });
 
   it('arrastar o mapa move a câmera e não conta como clique', async () => {

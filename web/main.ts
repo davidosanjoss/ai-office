@@ -1,4 +1,5 @@
-import type { ActivityEvent, Agent, ClientMsg, DiffScope, FileChange, FileDiff, Floor, GitInfo, Incident, OfficeState, Room, ServerMsg, WorktreeStatus } from '../shared/types.ts';
+import type { ActivityEvent, Agent, ClientMsg, DiffScope, FileChange, FileDiff, Floor, GitInfo, Incident, MemoryStatus, OfficeState, Room, ServerMsg, WorktreeStatus } from '../shared/types.ts';
+import { windowsSteps } from '../shared/memory.ts';
 import { FLOOR_COLORS, type Cell } from '../shared/building.ts';
 import { countChanges, parseDiff, renderDiff } from './diff.ts';
 import * as logic from './logic.ts';
@@ -57,6 +58,10 @@ function handle(msg: ServerMsg) {
       if (!selectedRoom || !state.rooms.some((r) => r.id === selectedRoom)) selectedRoom = floorRooms()[0]?.id;
       renderAll();
       refreshGit();
+      break;
+    case 'memory':
+      memory = msg.memory;
+      renderMemory();
       break;
     case 'floor':
       upsert(state.floors, msg.floor);
@@ -608,6 +613,95 @@ formDialog($<HTMLDialogElement>('#dlg-close-incident'), async (data) => {
   if (!incident) return;
   await api('POST', `/api/incidents/${incident.id}/close`, { resolution: data.get('resolution') });
 });
+
+// ---------- memória dos agentes (ai-memory) ----------
+
+let memory: MemoryStatus | undefined;
+
+async function refreshMemory() {
+  try {
+    memory = (await api('GET', '/api/memory')) as MemoryStatus;
+    renderMemory();
+  } catch {}
+}
+
+/** Indicador do topo e, se aberto, o diálogo. O progresso da instalação chega pelo WebSocket. */
+function renderMemory() {
+  const view = logic.memoryView(memory);
+  const btn = $('#btn-memory');
+  btn.textContent = view.label;
+  btn.className = `memory ${view.tone}`;
+  const dlg = $<HTMLDialogElement>('#dlg-memory');
+  if (!memory || !dlg.open) return;
+  const st = memory;
+  const checks: [boolean, string][] = [
+    [st.running, `Servidor no ar (${st.url})`],
+    [st.hooks, 'Sessões do Claude sendo guardadas (hooks)'],
+    [st.mcp, 'Claude consultando a memória (MCP)'],
+  ];
+  $('#mem-checks').innerHTML = checks.map(([ok, text]) => `<li class="${ok ? 'ok' : ''}">${esc(text)}</li>`).join('');
+  $('#mem-dir').textContent = st.dataDir;
+  $('#mem-version').textContent = st.version;
+  $('#mem-plan').hidden = !view.canInstall || !st.docker;
+  $('#mem-no-docker').hidden = !st.autoInstall || st.docker || !view.canInstall;
+  $('#mem-steps').hidden = !view.showSteps;
+  if (view.showSteps) $('#mem-steps-text').textContent = windowsSteps(st.version);
+  const job = st.job;
+  $('#mem-progress').hidden = !job;
+  if (job) {
+    $('#mem-step').textContent = job.error ? `Não deu certo: ${job.error}` : job.step;
+    $('#mem-step').classList.toggle('error', !!job.error);
+    $('#mem-log').textContent = job.log.join('\n');
+    if (job.error) $<HTMLDetailsElement>('#mem-log-box').open = true;
+  }
+  const web = $('#mem-web');
+  web.hidden = !st.running;
+  web.innerHTML = `Para ver a memória no navegador: <a href="${esc(st.url)}/web" target="_blank" rel="noopener">${esc(st.url)}/web</a> (qualquer usuário; a senha é o conteúdo de <code>auth-tokens/default</code> na pasta dos dados).`;
+  $<HTMLButtonElement>('#mem-install').hidden = !view.canInstall;
+  $<HTMLButtonElement>('#mem-install').disabled = !st.docker;
+  $<HTMLButtonElement>('#mem-install').textContent = st.hooks || st.mcp ? 'Instalar de novo' : 'Instalar';
+  $<HTMLButtonElement>('#mem-uninstall').hidden = !view.canUninstall;
+}
+
+/** Erros das ações do diálogo aparecem nele, embaixo. */
+async function memoryAction(fn: () => Promise<unknown>) {
+  const error = $('#dlg-memory .error');
+  error.hidden = true;
+  try {
+    await fn();
+  } catch (err) {
+    error.textContent = (err as Error).message;
+    error.hidden = false;
+  }
+}
+
+$('#btn-memory').addEventListener('click', async () => {
+  $<HTMLDialogElement>('#dlg-memory').showModal();
+  $('#dlg-memory .error').hidden = true;
+  renderMemory();
+  await refreshMemory();
+});
+$('#mem-install').addEventListener('click', () =>
+  memoryAction(async () => {
+    memory = { ...memory!, job: (await api('POST', '/api/memory/install')) as MemoryStatus['job'] };
+    renderMemory();
+  }),
+);
+$('#mem-uninstall').addEventListener('click', async () => {
+  const dlg = $<HTMLDialogElement>('#dlg-memory');
+  dlg.close();
+  const ok = await confirmDialog('Desinstalar o ai-memory?', 'Tira os hooks e o MCP do Claude Code e remove o container. Os dados continuam na pasta, para uma instalação futura.');
+  dlg.showModal();
+  if (!ok) return renderMemory();
+  await memoryAction(async () => {
+    memory = { ...memory!, job: (await api('POST', '/api/memory/uninstall')) as MemoryStatus['job'] };
+    renderMemory();
+  });
+});
+$('#mem-open').addEventListener('click', () => memoryAction(() => api('POST', '/api/memory/open')));
+$('#mem-copy').addEventListener('click', () => navigator.clipboard?.writeText($('#mem-steps-text').textContent ?? ''));
+refreshMemory();
+setInterval(() => !document.hidden && refreshMemory(), 60_000);
 
 // ---------- contadores e lista do escritório ----------
 
