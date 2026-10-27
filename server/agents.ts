@@ -227,6 +227,7 @@ function spawn(agent: Agent, resume: boolean) {
   let output = '';
 
   proc.onData((data) => {
+    ready.add(proc);
     if (output.length < 20_000) output += data;
     appendScrollback(agent.id, data);
     store.output(agent.id, data);
@@ -299,8 +300,34 @@ export function isBusy(id: string): boolean {
   return proc.process !== shell && !proc.process.endsWith(`/${shell}`);
 }
 
+/** Terminais que já mostraram alguma saída: no Windows, só esses o ConPTY encerra com segurança. */
+const ready = new WeakSet<object>();
+
+type Killable = { kill(): void; onData(cb: (d: string) => void): { dispose(): void } };
+
+/**
+ * Encerra o terminal. No Windows, um terminal recém-aberto ainda está conectando o ConPTY, e
+ * encerrá-lo nesse meio pode derrubar o servidor: espera a primeira saída (até 3 s) antes.
+ */
+export function killWhenReady(proc: Killable, isReady: boolean, windows = isWindows, waitMs = 3000) {
+  if (!windows || isReady) return proc.kill();
+  let done = false;
+  const go = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    sub.dispose();
+    try {
+      proc.kill();
+    } catch {}
+  };
+  const timer = setTimeout(go, waitMs);
+  const sub = proc.onData(() => setTimeout(go, 50));
+}
+
 export function killAgent(id: string) {
-  running.get(id)?.kill();
+  const proc = running.get(id);
+  if (proc) killWhenReady(proc, ready.has(proc));
 }
 
 /** Encerra a sessão e espera o processo sair (até 5 s), para a pasta dele poder ser apagada. */
@@ -313,7 +340,7 @@ export function stopAgent(id: string): Promise<void> {
       clearTimeout(timer);
       resolve();
     });
-    proc.kill();
+    killWhenReady(proc, ready.has(proc));
   });
 }
 

@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit",
     "dev:web": "vite",
     "app": "tsx server/launch.ts",
-    "test": "vite build --logLevel warn && vitest run --reporter=verbose",
+    "test": "vite build --logLevel warn && vitest run",
     "test:watch": "vitest",
     "service:install": "tsx server/service.ts install",
     "service:uninstall": "tsx server/service.ts uninstall",
