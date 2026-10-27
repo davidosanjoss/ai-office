@@ -11,7 +11,7 @@ Escritório em pixel art (navegador) que gerencia várias sessões do Claude Cod
 
 ## Fluxo
 
-- A `main` é protegida: toda mudança entra por Pull Request, com o CI verde (Linux e Windows) e 1 aprovação. Trabalhe numa branch `tipo/descricao` (`feat/`, `fix/`, `arte/`, `docs/`, `teste/`, `infra/`) e nunca tente subir direto na `main`.
+- A `main` é protegida (rulesets do GitHub): toda mudança entra por Pull Request, com o CI verde (Linux e Windows) e 1 aprovação; só o admin pode fazer o merge do próprio PR sem aprovação, nunca sem CI nem por push direto. Trabalhe numa branch `tipo/descricao` (`feat/`, `fix/`, `arte/`, `docs/`, `teste/`, `infra/`) e nunca tente subir direto na `main`.
 - O CONTRIBUTING.md descreve o passo a passo para pessoas.
 
 ## Cuidados
