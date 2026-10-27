@@ -17,6 +17,9 @@ import {
   floorOfAgent,
   nextStop,
   roomsOnFloor,
+  directoryTree,
+  normalize,
+  officeCounters,
 } from '../web/logic.ts';
 
 const agent = (id: string, patch: Partial<Agent> = {}): Agent => ({
@@ -172,5 +175,56 @@ describe('andares', () => {
     expect(nextStop(floors, 'pessoal', 1)).toBe('pessoal');
     expect(nextStop(floors, 'empresa', -1)).toBe(TERREO);
     expect(nextStop(floors, 'apagado', 1)).toBe('empresa');
+  });
+});
+
+describe('barra lateral e contadores', () => {
+  const floors: Floor[] = [
+    { id: 'empresa', name: 'Empresa', color: '#7aa2f7', order: 1, createdAt: 0 },
+    { id: 'freela', name: 'Freelance', color: '#9ece6a', order: 2, createdAt: 0 },
+  ];
+  const rooms: Room[] = [
+    { id: 'r1', name: 'gateway', path: '/g', createdAt: 0, floorId: 'empresa' },
+    { id: 'r2', name: 'filas', path: '/f', createdAt: 0, floorId: 'empresa' },
+    { id: 'r3', name: 'site-cliente', path: '/s', createdAt: 0, floorId: 'freela' },
+  ];
+  const agents = [
+    agent('Vitória', { roomId: 'r1', status: 'working', subagents: 2, activity: 'Editando proxy.ts' }),
+    agent('Bruno', { roomId: 'r2', status: 'done', attentionAt: 1, activity: 'Terminou!' }),
+    agent('Carla', { roomId: 'r3', status: 'exited' }),
+    agent('Terminal 1', { roomId: 'r1', kind: 'shell', status: 'idle' }),
+  ];
+
+  it('contadores do topo', () => {
+    expect(officeCounters(rooms, agents)).toEqual({ salas: 3, agentes: 3, trabalhando: 1, ajudantes: 2, terminais: 1, precisam: 1 });
+  });
+
+  it('sem busca: todos os andares, salas em ordem alfabética, terminais comuns de fora', () => {
+    const tree = directoryTree(floors, rooms, agents);
+    expect(tree.map((f) => f.floor.id)).toEqual(['empresa', 'freela']);
+    expect(tree[0].rooms.map((r) => r.room.name)).toEqual(['filas', 'gateway']);
+    expect(tree[0].rooms[1].agents.map((a) => a.name)).toEqual(['Vitória']);
+  });
+
+  it('busca por agente, sem acento: mostra só o caminho até ele', () => {
+    const tree = directoryTree(floors, rooms, agents, 'vitoria');
+    expect(tree.map((f) => f.floor.id)).toEqual(['empresa']);
+    expect(tree[0].rooms.map((r) => r.room.name)).toEqual(['gateway']);
+  });
+
+  it('busca pelo que o agente está fazendo', () => {
+    expect(directoryTree(floors, rooms, agents, 'proxy')[0].rooms[0].agents[0].name).toBe('Vitória');
+  });
+
+  it('achar o andar ou a sala mostra tudo o que tem dentro', () => {
+    expect(directoryTree(floors, rooms, agents, 'freela')[0].rooms[0].agents.map((a) => a.name)).toEqual(['Carla']);
+    expect(directoryTree(floors, rooms, agents, 'filas')[0].rooms[0].agents.map((a) => a.name)).toEqual(['Bruno']);
+  });
+
+  it('busca sem resultado: árvore vazia; andar sem salas aparece sem busca', () => {
+    expect(directoryTree(floors, rooms, agents, 'nada-a-ver')).toEqual([]);
+    const vazio: Floor = { id: 'novo', name: 'Novo', color: '#fff', order: 3, createdAt: 0 };
+    expect(directoryTree([...floors, vazio], rooms, agents).at(-1)).toEqual({ floor: vazio, rooms: [] });
+    expect(normalize('Ação')).toBe('acao');
   });
 });

@@ -10,9 +10,11 @@
   </head>
   <body>
     <header class="topbar">
+      <button id="btn-directory" class="icon menu" title="Mostrar ou esconder a lista de salas e agentes">☰</button>
       <div class="brand">AI Office</div>
       <button id="btn-add-room" class="btn">+ Sala</button>
       <button id="btn-inbox" class="inbox" hidden></button>
+      <div id="counters" class="counters"></div>
       <div class="spacer"></div>
       <label class="toggle" title="Quando um agente termina ou pede aprovação, abre o terminal dele assim que você parar de digitar">
         <input type="checkbox" id="opt-autofocus" checked /> Abrir quem terminar
@@ -21,8 +23,27 @@
       <span id="conn" class="conn off" title="Conexão com o servidor"></span>
     </header>
 
+    <div id="app">
+    <!-- Lista do escritório: andares → salas → agentes, com busca. -->
+    <aside id="directory">
+      <input id="dir-search" type="search" placeholder="Buscar agente, sala ou andar" autocomplete="off" />
+      <div id="dir-tree"></div>
+    </aside>
+
+    <div id="main-col">
     <section id="office">
       <nav id="elevator" aria-label="Andares"></nav>
+      <!-- Atividade flutuando sobre o mapa, embaixo; dá para recolher. -->
+      <section id="activity-float">
+        <header>
+          <button id="activity-toggle" class="icon" title="Recolher ou abrir a atividade">▾</button>
+          <h3>Atividade</h3>
+          <span class="seg">
+            <button data-scope="room" class="on">Sala</button><button data-scope="all">Todas</button>
+          </span>
+        </header>
+        <ol id="activity"></ol>
+      </section>
       <div class="map-controls">
         <button id="map-zoom-in" title="Aproximar (rodinha do mouse)">+</button>
         <button id="map-zoom-out" title="Afastar">−</button>
@@ -60,21 +81,14 @@
 
       <aside id="sidebar">
         <div id="room-info"></div>
-        <section class="panel">
+        <section class="panel grow">
           <h3>Git <button id="btn-git-refresh" class="icon" title="Atualizar">↻</button></h3>
           <div id="git"></div>
         </section>
-        <section class="panel grow">
-          <h3>
-            Atividade
-            <span class="seg">
-              <button data-scope="room" class="on">Sala</button><button data-scope="all">Todas</button>
-            </span>
-          </h3>
-          <ol id="activity"></ol>
-        </section>
       </aside>
     </main>
+    </div>
+    </div>
 
     <dialog id="dlg-room">
       <form method="dialog">

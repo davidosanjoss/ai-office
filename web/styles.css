@@ -212,7 +212,7 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-#elevator .floor-badge {
+.floor-badge {
   min-width: 16px;
   padding: 0 4px;
   border-radius: 8px;
@@ -859,6 +859,230 @@ dialog menu {
 
 @media (max-width: 900px) {
   #sidebar {
+    display: none;
+  }
+}
+
+/* ---------- layout: lista à esquerda, mapa e terminais à direita ---------- */
+
+#app {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+#main-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+body.dir-hidden #directory {
+  display: none;
+}
+.icon.menu {
+  font-size: 16px;
+}
+#sidebar .panel.grow {
+  overflow: auto;
+  display: block;
+}
+
+/* ---------- contadores do topo ---------- */
+
+.counters {
+  display: flex;
+  gap: 2px;
+  margin-left: 6px;
+}
+.counter {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 58px;
+  padding: 2px 8px;
+  border-left: 1px solid var(--line);
+  line-height: 1.1;
+}
+.counter b {
+  font: 15px var(--pixel);
+  color: var(--text);
+}
+.counter span {
+  font-size: 10px;
+  color: var(--muted);
+}
+.counter.trabalhando b {
+  color: var(--working);
+}
+.counter.precisam b {
+  color: var(--waiting);
+}
+
+/* ---------- lista do escritório ---------- */
+
+#directory {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--bg-2);
+  min-height: 0;
+}
+#dir-search {
+  margin: 8px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+}
+#dir-tree {
+  flex: 1;
+  overflow: auto;
+  padding: 0 6px 12px;
+}
+.dir-floor {
+  margin-top: 8px;
+}
+.dir-floor-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 4px 6px;
+  border: 0;
+  border-left: 4px solid var(--floor-color, var(--accent));
+  border-radius: 3px;
+  background: var(--panel);
+  cursor: pointer;
+  font: 11px var(--pixel);
+  color: var(--text);
+  text-align: left;
+}
+.dir-floor-head.current {
+  background: #2d3a5f;
+}
+.dir-floor-head .floor-badge {
+  margin-left: auto;
+}
+.dir-room {
+  margin: 4px 0 0 8px;
+}
+.dir-room-head {
+  display: block;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 3px;
+  background: none;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+.dir-room-head:hover,
+.dir-room-head.current {
+  color: var(--text);
+  background: var(--panel);
+}
+.dir-agent {
+  display: grid;
+  grid-template-columns: 30px 1fr 8px;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.dir-agent:hover {
+  background: var(--panel);
+}
+.dir-agent.current {
+  background: #2d3a5f;
+}
+.dir-agent .avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 4px;
+  background-color: #2a2f45;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+}
+.dir-agent .who {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.dir-agent .who b {
+  font-size: 12px;
+  font-weight: 600;
+}
+.dir-agent .who small {
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dir-agent .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.dir-empty {
+  color: var(--muted);
+  font-size: 11px;
+  padding: 2px 8px 2px 14px;
+}
+
+/* ---------- atividade flutuando sobre o mapa ---------- */
+
+#activity-float {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  width: min(640px, 62%);
+  max-height: 42%;
+  display: flex;
+  flex-direction: column;
+  z-index: 1;
+  background: rgba(26, 27, 38, 0.9);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+#activity-float header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+}
+#activity-float h3 {
+  flex: 1;
+  margin: 0;
+  font: 12px var(--pixel);
+  color: var(--muted);
+}
+#activity-float #activity {
+  padding: 0 10px 6px;
+}
+#activity-float.collapsed #activity {
+  display: none;
+}
+#activity-float.collapsed #activity-toggle {
+  transform: rotate(-90deg);
+}
+
+@media (max-width: 1100px) {
+  #directory {
+    display: none;
+  }
+  .counter span {
     display: none;
   }
 }

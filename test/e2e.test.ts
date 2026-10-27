@@ -312,6 +312,34 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await waitFor(async () => (await current()) === geral.id, 5000, 'voltou pelo botão');
   });
 
+  it('lista do escritório: mostra os agentes por andar, busca sem acento e clicar abre o terminal', async () => {
+    const ana = byName('Ana')!;
+    await page.waitForSelector(`#dir-tree .dir-agent[data-agent="${ana.id}"]`);
+    // Busca: só sobra o caminho até quem bate.
+    await page.type('#dir-search', 'ANA');
+    await page.waitForFunction(() => [...document.querySelectorAll('#dir-tree .dir-agent b')].every((b) => b.textContent === 'Ana'));
+    await page.click(`#dir-tree .dir-agent[data-agent="${ana.id}"]`);
+    await page.waitForFunction(() => document.querySelector('#tabs .tab.active')?.textContent?.includes('Ana'));
+    // Limpa a busca.
+    await page.click('#dir-search', { count: 3 });
+    await page.keyboard.press('Backspace');
+    await page.waitForFunction(() => document.querySelectorAll('#dir-tree .dir-agent').length > 1);
+  });
+
+  it('contadores do topo batem com o escritório', async () => {
+    const salas = await page.$eval('#counters .counter.salas b', (b) => b.textContent);
+    expect(Number(salas)).toBe(store.rooms.size);
+    const agentes = await page.$eval('#counters .counter.agentes b', (b) => b.textContent);
+    expect(Number(agentes)).toBe(agents().filter((a) => a.kind !== 'shell').length);
+  });
+
+  it('a atividade flutua sobre o mapa e dá para recolher', async () => {
+    await page.click('#activity-toggle');
+    await page.waitForSelector('#activity-float.collapsed');
+    await page.click('#activity-toggle');
+    await page.waitForSelector('#activity-float:not(.collapsed)');
+  });
+
   it('regressão: o piso de madeira é só madeira (a metadata do PixelLab vinha com os cantos trocados)', async () => {
     const grassPixels = await page.evaluate(async () => {
       const img = new Image();
