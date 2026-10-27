@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Um PR novo cancela a rodada antiga do mesmo PR.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  testes:
+    name: testes (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Um sistema quebrar não esconde o resultado do outro.
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      # Os testes ponta a ponta usam o Chrome que já vem instalado nas máquinas do GitHub.
+      - run: npm test

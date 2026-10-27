@@ -82,6 +82,8 @@ navegador (escritório + xterm.js)  ⇄  WebSocket  ⇄  servidor Node (Fastify 
 
 ## Desenvolvimento
 
+Quer ajudar? Veja o [CONTRIBUTING.md](CONTRIBUTING.md): issues, branches, testes e Pull Requests.
+
 ```bash
 npm run dev:server   # servidor com reload (porta 7420)
 npm run dev:web      # frontend com HMR em http://localhost:5173

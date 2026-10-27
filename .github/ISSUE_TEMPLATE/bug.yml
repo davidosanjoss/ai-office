@@ -1,0 +1,42 @@
+name: 🐛 Bug
+description: Algo não funciona como deveria
+labels: [bug]
+body:
+  - type: textarea
+    id: oque
+    attributes:
+      label: O que aconteceu
+      description: E o que você esperava que acontecesse.
+    validations:
+      required: true
+  - type: textarea
+    id: passos
+    attributes:
+      label: Como reproduzir
+      placeholder: |
+        1. Abri uma sala em…
+        2. Contratei um agente…
+        3. Cliquei em…
+    validations:
+      required: true
+  - type: dropdown
+    id: sistema
+    attributes:
+      label: Sistema
+      options:
+        - Linux
+        - Windows
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: versoes
+    attributes:
+      label: Versões
+      description: Saída de `node -v`, `claude --version` e a versão do AI Office (package.json).
+      placeholder: node v22.11.0, Claude Code 2.1.310, AI Office 0.2.0
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs ou prints
+      description: Erros do terminal onde o servidor roda (ou `journalctl --user -u ai-office`), do console do navegador, screenshots.

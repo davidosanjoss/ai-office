@@ -9,6 +9,11 @@ Escritório em pixel art (navegador) que gerencia várias sessões do Claude Cod
 - Nunca aponte testes para o `~/.claude` ou `~/.ai-office` reais. Use `test/setup.ts` (pastas temporárias) e o Claude falso em `test/fixtures/fake-claude.mjs`. Se precisar de um comportamento novo do Claude real nos testes, ensine o falso a imitá-lo.
 - Regras de decisão da interface ficam em `web/logic.ts` (puras, testadas em `test/web-logic.test.ts`), não espalhadas em `web/main.ts`.
 
+## Fluxo
+
+- A `main` é protegida: toda mudança entra por Pull Request, com o CI verde (Linux e Windows) e 1 aprovação. Trabalhe numa branch `tipo/descricao` (`feat/`, `fix/`, `arte/`, `docs/`, `teste/`, `infra/`) e nunca tente subir direto na `main`.
+- O CONTRIBUTING.md descreve o passo a passo para pessoas.
+
 ## Cuidados
 
 - O servidor dá acesso a shell: escuta só em `127.0.0.1` e checa Host/Origin em `server/app.ts`. Não afrouxe isso.

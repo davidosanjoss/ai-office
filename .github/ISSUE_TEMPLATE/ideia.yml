@@ -1,0 +1,22 @@
+name: 💡 Ideia
+description: Uma melhoria ou funcionalidade nova
+labels: [ideia]
+body:
+  - type: textarea
+    id: problema
+    attributes:
+      label: Qual problema isso resolve
+      description: O que fica chato ou impossível hoje.
+    validations:
+      required: true
+  - type: textarea
+    id: proposta
+    attributes:
+      label: Como poderia ser
+      description: Do jeito que você imagina. Desenho, print ou referência ajudam.
+    validations:
+      required: true
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: Alternativas que você pensou
