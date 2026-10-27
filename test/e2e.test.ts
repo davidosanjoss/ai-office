@@ -277,6 +277,41 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     expect(created.pos).toEqual(cell);
   });
 
+  it('regressão: atualizar um agente não recria os botões do elevador (o clique caía num botão trocado)', async () => {
+    const before = await page.$('#elevator .floor.add');
+    const a = agents().find((x) => x.kind !== 'shell')!;
+    // Qualquer mudança de agente que não mexe no painel: antes, o painel inteiro era recriado.
+    store.patchAgent(a.id, { activity: `atividade ${Date.now()}` });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await before!.evaluate((el) => el.isConnected)).toBe(true);
+  });
+
+  it('andares: cria pelo elevador, sobe e desce com Alt+PageUp/PageDown, e o térreo não tem vagas', async () => {
+    const current = () => page.$eval('#elevator .floor.current', (b) => (b as HTMLElement).dataset.floor ?? '');
+    await page.click('#elevator .floor.add');
+    await page.waitForSelector('#dlg-floor[open]');
+    await page.type('#dlg-floor input[name=name]', 'Freelance');
+    await page.keyboard.press('Enter');
+    const freela = await waitFor(() => [...store.floors.values()].find((f) => f.name === 'Freelance'), 5000, 'andar criado');
+    // Criar o andar já leva até ele.
+    await waitFor(async () => (await current()) === freela.id, 5000, 'elevador no andar novo');
+
+    const geral = [...store.floors.values()].sort((a, b) => a.order - b.order)[0];
+    await page.keyboard.down('Alt');
+    await page.keyboard.press('PageDown');
+    await page.keyboard.up('Alt');
+    await waitFor(async () => (await current()) === geral.id, 5000, 'desceu para o primeiro andar');
+
+    await page.keyboard.down('Alt');
+    await page.keyboard.press('PageDown');
+    await page.keyboard.up('Alt');
+    await waitFor(async () => (await current()) === 'terreo', 5000, 'desceu para o térreo');
+
+    // Clicar no botão do andar também leva até ele.
+    await page.click(`#elevator .floor[data-floor="${geral.id}"]`);
+    await waitFor(async () => (await current()) === geral.id, 5000, 'voltou pelo botão');
+  });
+
   it('regressão: o piso de madeira é só madeira (a metadata do PixelLab vinha com os cantos trocados)', async () => {
     const grassPixels = await page.evaluate(async () => {
       const img = new Image();

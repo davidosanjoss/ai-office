@@ -6,7 +6,7 @@
 // suavização; os textos são desenhados depois, já na escala da tela, para ficarem legíveis.
 // A arte vem do PixelLab (web/sprites.ts); paredes, balcões, rua e balões são desenhados aqui.
 
-import { FIXED_ROOMS, type Cell, type FixedRoom, freeCells } from '../shared/building.ts';
+import { type Cell, type FixedRoom, type FloorKind, fixedRooms, freeCells } from '../shared/building.ts';
 import type { Agent, AgentStatus, Room } from '../shared/types.ts';
 import { RECEPCIONISTA, Sprites, characterFor } from './sprites.ts';
 import {
@@ -115,7 +115,14 @@ export function slotOrigin(room: Rect, i: number): { x: number; y: number } {
 }
 
 /** Onde cada coisa fica no mundo: salas nas vagas, as fixas no térreo e os "+" nas vagas livres. */
-export function layoutBuilding(rooms: Room[], agents: Agent[]): BuildingLayout {
+/** O andar que está na tela: o térreo (entrada) ou um andar de empresa, com a cor dele. */
+export interface FloorView {
+  id: string;
+  kind: FloorKind;
+  color: string;
+}
+
+export function layoutBuilding(rooms: Room[], agents: Agent[], kind: FloorKind = 'andar'): BuildingLayout {
   const placed: PlacedRoom[] = rooms
     .filter((r) => r.pos)
     .map((room) => {
@@ -127,14 +134,14 @@ export function layoutBuilding(rooms: Room[], agents: Agent[]): BuildingLayout {
         overflow: Math.max(0, inRoom.length - MAX_VISIBLE_AGENTS),
       };
     });
-  const fixed = FIXED_ROOMS.map((f) => ({ ...f, rect: cellRect(f) }));
-  const free = freeCells(rooms).map((c) => ({ ...c, rect: cellRect(c) }));
+  const fixed = fixedRooms(kind).map((f) => ({ ...f, rect: cellRect(f) }));
+  const free = freeCells(rooms, kind).map((c) => ({ ...c, rect: cellRect(c) }));
   const box = (rects: Rect[]): Rect => {
     const all = rects.map(withCorridor);
     const x = Math.min(...all.map((r) => r.x));
     const y = Math.min(...all.map((r) => r.y));
     const right = Math.max(...all.map((r) => r.x + r.w));
-    const bottom = Math.max(...all.map((r) => r.y + r.h)) + STREET_H;
+    const bottom = Math.max(...all.map((r) => r.y + r.h)) + (kind === 'terreo' ? STREET_H : 0);
     return { x, y, w: right - x, h: bottom - y };
   };
   const built = [...placed.map((p) => p.rect), ...fixed.map((f) => f.rect)];
@@ -174,7 +181,8 @@ export interface OfficeCallbacks {
   onNewRoom(cell: Cell): void;
 }
 
-const CAM_KEY = 'officeCam';
+/** A câmera de cada andar fica salva separada: voltar a um andar volta à mesma vista. */
+const camKey = (floorId: string) => `officeCam:${floorId}`;
 
 export class Office {
   private canvas: HTMLCanvasElement;
@@ -183,6 +191,7 @@ export class Office {
   private pctx = this.pix.getContext('2d')!;
   private sprites = new Sprites();
   private layout: BuildingLayout = layoutBuilding([], []);
+  private floor: FloorView = { id: '', kind: 'andar', color: '#7aa2f7' };
   private hits: Hit[] = [];
   private hover?: Hit;
   private frame = 0;
@@ -204,13 +213,6 @@ export class Office {
     this.canvas = document.createElement('canvas');
     host.appendChild(this.canvas);
     this.ctx = this.canvas.getContext('2d')!;
-    try {
-      const saved = JSON.parse(localStorage.getItem(CAM_KEY) ?? 'null');
-      if (saved && [saved.x, saved.y, saved.z].every(Number.isFinite)) {
-        this.cam = saved;
-        this.userMoved = true;
-      }
-    } catch {}
     new ResizeObserver(() => this.resize()).observe(host);
     this.canvas.addEventListener('pointerdown', (e) => this.onDown(e));
     this.canvas.addEventListener('pointermove', (e) => this.onMove(e));
@@ -226,12 +228,30 @@ export class Office {
     requestAnimationFrame((t) => this.loop(t));
   }
 
-  update(rooms: Room[], agents: Agent[]) {
-    this.layout = layoutBuilding(rooms, agents);
+  /** Mostra um andar: só as salas dele e os agentes delas. */
+  update(floor: FloorView, rooms: Room[], agents: Agent[]) {
+    if (floor.id !== this.floor.id) this.enterFloor(floor);
+    this.floor = floor;
+    this.layout = layoutBuilding(rooms, agents, floor.kind);
     this.graph = buildGraph(this.builtCells(), GEO);
     this.syncWalkers(rooms, agents);
     if ((!this.cam || !this.userMoved) && this.cssW) this.fit();
     this.draw();
+  }
+
+  /** Trocou de andar: quem andava no outro some, e a câmera volta à vista salva deste andar. */
+  private enterFloor(floor: FloorView) {
+    this.walkers.clear();
+    this.hover = undefined;
+    this.cam = undefined;
+    this.userMoved = false;
+    try {
+      const saved = JSON.parse(localStorage.getItem(camKey(floor.id)) ?? 'null');
+      if (saved && [saved.x, saved.y, saved.z].every(Number.isFinite)) {
+        this.cam = saved;
+        this.userMoved = true;
+      }
+    } catch {}
   }
 
   // ---------- câmera ----------
@@ -244,7 +264,7 @@ export class Office {
     this.cam = c;
     this.canvas.dataset.cam = `${Math.round(c.x)},${Math.round(c.y)},${c.z}`;
     try {
-      localStorage.setItem(CAM_KEY, JSON.stringify(c));
+      if (this.floor.id) localStorage.setItem(camKey(this.floor.id), JSON.stringify(c));
     } catch {}
     this.resizePix();
     this.draw();
@@ -312,7 +332,7 @@ export class Office {
   // ---------- quem anda pelo prédio ----------
 
   private builtCells(): Cell[] {
-    return [...FIXED_ROOMS, ...this.layout.rooms.map((r) => r.room.pos!)];
+    return [...this.layout.fixed, ...this.layout.rooms.map((r) => r.room.pos!)];
   }
 
   /** Quem encerrou a sessão levanta da mesa e sai andando; quem voltou some do corredor. */
@@ -373,11 +393,11 @@ export class Office {
       w.restUntil = t + 5000;
       return;
     }
-    // A copa é o destino favorito.
-    const copa = FIXED_ROOMS.find((f) => f.id === 'copa')!;
+    // A copa do andar é o destino favorito.
+    const copa = this.layout.fixed.find((f) => f.id === 'copa');
     const roll = hash(`${w.agent.id}:${Math.round(t)}`);
-    const goCopa = roll % 3 === 0 && (w.cell.x !== copa.x || w.cell.y !== copa.y);
-    const target = goCopa ? copa : options[roll % options.length];
+    const goCopa = !!copa && roll % 3 === 0 && (w.cell.x !== copa.x || w.cell.y !== copa.y);
+    const target = goCopa && copa ? copa : options[roll % options.length];
     const route = routeBetween(this.graph, w.cell, target, GEO);
     if (!route.length) {
       w.restUntil = t + 5000;
@@ -386,10 +406,10 @@ export class Office {
     const b = cellRect(target);
     // Um lugar para ficar lá dentro: perto da mesa da copa, dos sofás da recepção ou da porta.
     const spot: Point =
-      target.x === copa.x && target.y === copa.y
+      copa && target.x === copa.x && target.y === copa.y
         ? { x: b.x + b.w / 2 - 10 + ((roll % 5) - 2) * 18, y: b.y + 200 }
-        : FIXED_ROOMS.some((f) => f.id === 'recepcao' && f.x === target.x && f.y === target.y)
-          ? { x: b.x + (roll % 2 ? 60 : b.w - 60), y: b.y + 200 }
+        : this.layout.fixed.some((f) => f.id === 'elevadores' && f.x === target.x && f.y === target.y)
+          ? { x: b.x + (roll % 2 ? 70 : b.w - 70), y: b.y + 190 }
           : { x: b.x + b.w / 2 + ((roll % 3) - 1) * 30, y: b.y + b.h - 30 };
     // Sai da posição atual direto até a porta da vaga onde está, depois segue o caminho.
     w.path = [...route, spot];
@@ -470,8 +490,10 @@ export class Office {
     this.hits = [];
 
     this.drawGround(view);
-    this.drawStreet(view);
-    this.drawTrees(view);
+    if (this.floor.kind === 'terreo') {
+      this.drawStreet(view);
+      this.drawTrees(view);
+    }
     for (const f of this.layout.free) if (overlaps(f.rect, view)) this.drawFreeCell(f);
     this.drawCorridors();
     for (const f of this.layout.fixed) if (overlaps(f.rect, view)) this.drawFixed(f);
@@ -495,6 +517,23 @@ export class Office {
 
   private drawGround(view: Rect) {
     const p = this.pctx;
+    if (this.floor.kind !== 'terreo') {
+      // Andares de cima: só céu em volta, com nuvens paradas nos mesmos lugares.
+      rect(p, view.x, view.y, view.w, view.h, this.skyBackground());
+      const step = 180;
+      for (let gy = Math.floor(view.y / step) - 1; gy * step < view.y + view.h; gy++) {
+        for (let gx = Math.floor(view.x / step) - 1; gx * step < view.x + view.w; gx++) {
+          if (hash(`n${gx}:${gy}`) % 4) continue;
+          const cx = gx * step + (hash(`${gx}n${gy}`) % 80);
+          const cy = gy * step + (hash(`${gy}n${gx}`) % 60);
+          const c = 'rgba(255,255,255,0.35)';
+          rect(p, cx, cy + 8, 60, 12, c);
+          rect(p, cx + 10, cy, 30, 10, c);
+          rect(p, cx + 30, cy + 4, 20, 6, c);
+        }
+      }
+      return;
+    }
     const grama = this.sprites.pisos.get('grama');
     if (!grama) {
       rect(p, view.x, view.y, view.w, view.h, '#2f6b33');
@@ -599,7 +638,7 @@ export class Office {
       if (!has(c.x - 1, c.y)) rect(p, e.x, e.y, 4, e.h, wall);
       if (!has(c.x + 1, c.y)) rect(p, e.x + e.w - 4, e.y, 4, e.h, wall);
       if (c.y === 0 || !has(c.x, c.y - 1)) {
-        const isEntrance = c.y === 0 && FIXED_ROOMS.some((f) => f.id === 'recepcao' && f.x === c.x);
+        const isEntrance = c.y === 0 && this.layout.fixed.some((f) => f.id === 'recepcao' && f.x === c.x);
         if (isEntrance) {
           // entrada principal: vão na parede e capacho
           const dw = 72;
@@ -674,7 +713,35 @@ export class Office {
 
   private drawFixed(f: FixedRoom & { rect: Rect }) {
     if (f.id === 'recepcao') this.drawReception(f.rect);
+    else if (f.id === 'elevadores') this.drawElevators(f.rect);
     else this.drawKitchen(f.rect);
+  }
+
+  /** Hall dos elevadores: duas portas de metal com o painel do andar em cima, banco e plantas. */
+  private drawElevators(r: Rect) {
+    const p = this.pctx;
+    this.tileFloor({ x: r.x, y: r.y + WALL_H, w: r.w, h: r.h - WALL_H }, 'corredor', '#8e94a3');
+    this.drawShell(r, shade(this.floor.color, 0.45), { door: 120 });
+    for (const dx of [70, r.w - 70 - 72]) {
+      const x = r.x + dx;
+      const y = r.y + 4;
+      // moldura e portas
+      rect(p, x - 4, y, 80, 70, '#4a4f63');
+      rect(p, x, y + 6, 72, 64, '#9aa3b8');
+      rect(p, x + 35, y + 6, 2, 64, '#5b6078');
+      rect(p, x + 4, y + 10, 2, 56, '#c3cad9');
+      rect(p, x + 40, y + 10, 2, 56, '#c3cad9');
+      // indicador do andar, na cor dele
+      rect(p, x + 24, y - 2, 24, 7, '#1f2335');
+      rect(p, x + 27, y, 18, 3, this.frame % 20 < 10 ? this.floor.color : shade(this.floor.color, 0.6));
+      // botões de chamar
+      rect(p, x + 76, y + 30, 5, 10, '#2a2f45');
+      rect(p, x + 77, y + 31, 3, 3, '#e0af68');
+      rect(p, x + 77, y + 36, 3, 3, '#e0af68');
+    }
+    this.obj('banco', r.x + r.w / 2 - 40, r.y + 150);
+    this.obj('vaso-grande', r.x + 10, r.y + r.h - 70);
+    this.obj('vaso-grande', r.x + r.w - 58, r.y + r.h - 70);
   }
 
   /** Entrada: porta para o corredor, balcão com a recepcionista, sofás de espera, estante e plantas. */
@@ -746,9 +813,9 @@ export class Office {
   private drawRoom(pr: PlacedRoom) {
     const p = this.pctx;
     const { rect: r, room } = pr;
-    const hue = hash(room.id) % 360;
     this.woodFloor({ x: r.x, y: r.y + WALL_H, w: r.w, h: r.h - WALL_H });
-    this.drawShell(r, `hsl(${hue} 22% 38%)`);
+    // As salas de um andar têm a parede na cor dele, cada uma num tom um pouco diferente.
+    this.drawShell(r, shade(this.floor.color, 0.42 + ((hash(room.id) % 5) - 2) * 0.03));
 
     // placa com o nome (o texto entra no passe de texto)
     const signW = 150;
@@ -866,6 +933,13 @@ export class Office {
     this.hits.push({ x: sx + 2, y: sy + 8, w: SLOT_W - 4, h: SLOT_H - 10, kind: 'agent', id: a.id });
   }
 
+  private skyBackground() {
+    const h = new Date().getHours();
+    if (h >= 7 && h < 17) return '#8ec5ea';
+    if (h >= 17 && h < 19) return '#e9a777';
+    return '#1d2340';
+  }
+
   private skyColor() {
     const h = new Date().getHours();
     if (h >= 7 && h < 17) return '#7dcfff';
@@ -942,7 +1016,8 @@ export class Office {
       }
     }
 
-    if (!this.layout.rooms.length) {
+    // Dica de primeira sala: só nos andares de empresa (o térreo não recebe salas).
+    if (!this.layout.rooms.length && this.floor.kind !== 'terreo') {
       const b = this.layout.bounds;
       const s = this.toScreen(b.x + b.w / 2, b.y - 10);
       this.label('Clique num + para abrir a sala do seu primeiro projeto', s.x, s.y, 13, '#ffffff', 'rgba(26,27,38,0.85)');
@@ -994,6 +1069,16 @@ export class Office {
 /** Cada um anda numa "faixa" do corredor, para dois no mesmo caminho não ficarem sobrepostos. */
 function laneOf(id: string) {
   return ((hash(id) % 5) - 2) * 5;
+}
+
+/** Mistura a cor com o roxo escuro das paredes: factor 1 é a cor pura, 0 é o escuro. */
+export function shade(hex: string, factor: number): string {
+  const n = parseInt(hex.slice(1), 16);
+  const mix = (c: number, d: number) => Math.round(d + (c - d) * Math.max(0, Math.min(1, factor)));
+  const r = mix((n >> 16) & 255, 0x2a);
+  const g = mix((n >> 8) & 255, 0x24);
+  const b = mix(n & 255, 0x38);
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
 
 function overlaps(a: Rect, b: Rect) {

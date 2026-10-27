@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Agent, Room } from '../shared/types.ts';
+import type { Agent, Floor, Room } from '../shared/types.ts';
 import { killAll } from '../server/agents.ts';
 import { buildApp } from '../server/app.ts';
 import { store } from '../server/store.ts';
@@ -310,5 +310,67 @@ describe('terminal comum', () => {
     ws.type(sh.id, 'exit\r');
     await waitFor(() => ws.messages.some((m) => m.t === 'agentRemoved' && m.id === sh.id), 5000, 'aba fechar');
     expect(agentState(sh.id)).toBeUndefined();
+  });
+});
+
+describe('andares', () => {
+  const novoAndar = async (name: string, color?: string) => {
+    const { status, data } = await api<Floor>('POST', '/api/floors', { name, color });
+    expect(status).toBe(200);
+    return data;
+  };
+
+  it('o prédio já começa com um andar, para a primeira sala ter onde ficar', () => {
+    expect(store.floors.size).toBeGreaterThanOrEqual(1);
+  });
+
+  it('cria, renomeia e troca a cor de um andar; nome é obrigatório e cor inválida é ignorada', async () => {
+    const f = await novoAndar('Freelance', '#9ece6a');
+    expect(f).toMatchObject({ name: 'Freelance', color: '#9ece6a' });
+    expect(f.order).toBe(Math.max(...[...store.floors.values()].map((x) => x.order)));
+    const { data } = await api<Floor>('PATCH', `/api/floors/${f.id}`, { name: 'Freela', color: 'red; background:url(x)' });
+    expect(data).toMatchObject({ name: 'Freela', color: '#9ece6a' });
+    expect((await api('POST', '/api/floors', { name: '  ' })).status).toBe(400);
+  });
+
+  it('cada andar tem a própria planta: a mesma vaga pode ter uma sala em cada andar', async () => {
+    const a = await novoAndar('Empresa');
+    const b = await novoAndar('Pessoal');
+    const r1 = await api<Room>('POST', '/api/rooms', { path: tempDir('p1'), floorId: a.id, pos: { x: -1, y: 0 } });
+    const r2 = await api<Room>('POST', '/api/rooms', { path: tempDir('p2'), floorId: b.id, pos: { x: -1, y: 0 } });
+    expect(r1.status).toBe(200);
+    expect(r2.status).toBe(200);
+    expect(r2.data).toMatchObject({ floorId: b.id, pos: { x: -1, y: 0 } });
+    // No mesmo andar, a vaga já está ocupada.
+    expect((await api('POST', '/api/rooms', { path: tempDir('p3'), floorId: a.id, pos: { x: -1, y: 0 } })).status).toBe(400);
+  });
+
+  it('sala em andar que não existe dá erro', async () => {
+    expect((await api('POST', '/api/rooms', { path: tempDir('x'), floorId: 'nao-existe' })).status).toBe(400);
+  });
+
+  it('mover sala de andar leva junto os agentes, que continuam trabalhando', async () => {
+    const de = await novoAndar('Origem');
+    const para = await novoAndar('Destino');
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: tempDir('mover'), floorId: de.id });
+    const a = await hire(room);
+    await waitStatus(a.id, 'idle');
+    const { status, data: moved } = await api<Room>('POST', `/api/rooms/${room.id}/move`, { floorId: para.id });
+    expect(status).toBe(200);
+    expect(moved.floorId).toBe(para.id);
+    expect(moved.pos).toBeDefined();
+    expect(agentState(a.id)!.status).toBe('idle');
+    expect((await api('POST', `/api/rooms/${room.id}/move`, { floorId: 'nao-existe' })).status).toBe(400);
+  });
+
+  it('só apaga andar vazio', async () => {
+    const f = await novoAndar('Temporário');
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: tempDir('tmp'), floorId: f.id });
+    const cheio = await api('DELETE', `/api/floors/${f.id}`);
+    expect(cheio.status).toBe(400);
+    expect(cheio.data.error).toMatch(/mova ou feche/);
+    await api('DELETE', `/api/rooms/${room.id}`);
+    expect((await api('DELETE', `/api/floors/${f.id}`)).status).toBe(200);
+    expect(store.floors.has(f.id)).toBe(false);
   });
 });
