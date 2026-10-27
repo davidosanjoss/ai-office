@@ -66,15 +66,16 @@ out(`FAKE CLAUDE mode=${resumeId ? 'resume' : 'new'} session=${sessionId}\r\n`);
 out(`child=${process.env.CLAUDE_CODE_CHILD_SESSION ?? 'none'} hooks=${settingsFile ? 'yes' : 'no'}\r\n`);
 // Consulta de atributos do terminal, como o Claude real faz: o xterm responde sozinho.
 out('\x1b[c');
-hook('SessionStart', { source: resumeId ? 'resume' : 'startup' });
-out('> ');
 
+// Começa a ler o teclado ANTES de avisar que está pronto, como o Claude real. No Windows
+// (ConPTY), o que é digitado antes do modo raw ser ligado se perde.
 let line = '';
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.setEncoding('utf8');
-process.stdin.on('data', (data) => {
-  // Respostas automáticas do terminal (ESC ...) não são digitação.
-  if (data.startsWith('\x1b')) return;
+process.stdin.on('data', (raw) => {
+  // Respostas automáticas do terminal (ESC [ ... ) não são digitação. Remove só elas: no Windows
+  // a resposta e o que foi digitado podem chegar juntos no mesmo pedaço.
+  const data = raw.replace(/\x1b\[[0-9;?<>=]*[ -\/]*[@-~]/g, '').replace(/\x1b./g, '');
   for (const ch of data) {
     if (ch === '\r' || ch === '\n') {
       out('\r\n');
@@ -89,6 +90,9 @@ process.stdin.on('data', (data) => {
     }
   }
 });
+
+hook('SessionStart', { source: resumeId ? 'resume' : 'startup' });
+out('> ');
 
 function run(cmd) {
   if (cmd === '/exit') {

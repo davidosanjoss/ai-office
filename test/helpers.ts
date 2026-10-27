@@ -62,7 +62,12 @@ export class WsClient {
     ws.on('message', (raw) => {
       const msg = JSON.parse(raw.toString()) as ServerMsg;
       this.messages.push(msg);
-      if (msg.t === 'out') this.output.set(msg.id, (this.output.get(msg.id) ?? '') + msg.data);
+      if (msg.t === 'out') {
+        this.output.set(msg.id, (this.output.get(msg.id) ?? '') + msg.data);
+        // Responde como um terminal de verdade (o xterm do navegador faz isso sozinho): no Windows
+        // o ConPTY pergunta a posição do cursor ao abrir e segura a entrada até ter resposta.
+        if (msg.data.includes('\x1b[6n')) this.send({ t: 'in', id: msg.id, data: '\x1b[1;1R' });
+      }
       if (msg.t === 'replay') this.output.set(msg.id, msg.data);
     });
   }

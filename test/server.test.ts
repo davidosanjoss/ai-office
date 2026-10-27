@@ -121,7 +121,8 @@ describe('ciclo de vida de um agente', () => {
     const a = await hire(room);
     expect(a.status).toBe('starting');
     await waitOutput(a.id, 'FAKE CLAUDE mode=new');
-    expect(ws.out(a.id)).toContain('hooks=yes');
+    // A saída chega em pedaços (no Windows, bem picada): espera a linha, não confere na hora.
+    await waitOutput(a.id, 'hooks=yes');
     await waitStatus(a.id, 'idle');
     expect(store.activity.some((e) => e.agentId === a.id && e.text.includes('entrou na sala'))).toBe(true);
   });
@@ -223,7 +224,7 @@ describe('retomar conversa', () => {
     await api('POST', `/api/agents/${a.id}/resume`);
     // Antes: `claude --resume` saía com "No conversation found" e o agente voltava a "exited".
     await waitStatus(a.id, 'idle');
-    expect(ws.out(a.id).split('FAKE CLAUDE mode=new').length - 1).toBe(2);
+    await waitFor(() => ws.out(a.id).split('FAKE CLAUDE mode=new').length - 1 === 2, 8000, 'as duas sessões novas na saída');
     expect(ws.out(a.id)).not.toContain('No conversation found');
     expect(store.activity.some((e) => e.agentId === a.id && e.text.includes('começando uma nova'))).toBe(true);
   });
