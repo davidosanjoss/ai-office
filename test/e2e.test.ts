@@ -184,7 +184,9 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await waitStatus(b.id, 'exited');
     await page.click('#btn-resume');
     await waitStatus(b.id, 'idle');
-    await waitFor(async () => (await screen()).split('mode=new').length - 1 >= 2, 5000, 'segunda sessão nova');
+    // Só a parte visível do terminal: no Windows o ConPTY limpa a tela quando o processo novo
+    // começa, então a sessão antiga não aparece aqui (a contagem das duas está no teste do servidor).
+    await waitScreen('mode=new');
     expect(await screen()).not.toContain('No conversation found');
   });
 
