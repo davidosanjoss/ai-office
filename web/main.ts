@@ -1,4 +1,4 @@
-import type { ActivityEvent, Agent, ClientMsg, DiffScope, FileChange, FileDiff, Floor, GitInfo, Incident, OfficeState, Room, ServerMsg } from '../shared/types.ts';
+import type { ActivityEvent, Agent, ClientMsg, DiffScope, FileChange, FileDiff, Floor, GitInfo, Incident, OfficeState, Room, ServerMsg, WorktreeStatus } from '../shared/types.ts';
 import { FLOOR_COLORS, type Cell } from '../shared/building.ts';
 import { countChanges, parseDiff, renderDiff } from './diff.ts';
 import * as logic from './logic.ts';
@@ -904,6 +904,10 @@ function gitBase(): string {
 }
 
 let lastGit: { base: string; info: GitInfo } | undefined;
+/** Situação do worktree do agente selecionado, quando ele tem um (botões de PR, merge e encerrar). */
+let lastWorktree: WorktreeStatus | undefined;
+/** Erro da última ação do worktree, mostrado na seção até a próxima ação. */
+let worktreeError = '';
 
 async function refreshGit() {
   const box = $('#git');
@@ -911,13 +915,20 @@ async function refreshGit() {
   if (!base) {
     box.replaceChildren();
     lastGit = undefined;
+    lastWorktree = undefined;
     return;
   }
+  const agent = state.agents.find((a) => a.id === selectedAgent);
   try {
-    const info = (await (await fetch(`${base}/git`)).json()) as GitInfo;
+    const [info, wt] = await Promise.all([
+      fetch(`${base}/git`).then((r) => r.json() as Promise<GitInfo>),
+      agent?.worktreeBranch ? fetch(`${base}/worktree`).then((r) => (r.ok ? (r.json() as Promise<WorktreeStatus>) : undefined)) : undefined,
+    ]);
     // Você pode ter trocado de agente enquanto a resposta vinha.
     if (base !== gitBase()) return;
+    if (lastGit?.base !== base) worktreeError = '';
     lastGit = { base, info };
+    lastWorktree = wt;
     renderGit(info);
   } catch {
     if (base === gitBase()) box.textContent = 'Não foi possível ler o git.';
@@ -960,6 +971,7 @@ function renderGit(info: GitInfo) {
   };
   box.innerHTML = `
     <div class="branch">⎇ ${esc(info.branch ?? '?')} <span class="muted">${sync}</span></div>
+    ${lastWorktree ? worktreeSection(lastWorktree) : ''}
     <div class="git-section">
       <h4>Não commitado <span class="count">${files.length}</span>${files.length ? `<span class="nums">${total(files)}</span>` : ''}</h4>
       ${files.length ? fileRows(files, 'working') : '<div class="muted empty">Nada modificado</div>'}
@@ -978,9 +990,83 @@ function renderGit(info: GitInfo) {
     </details>`;
 }
 
+/** Seção do worktree: onde a branch está em relação à sala e os botões de PR, merge e encerrar. */
+function worktreeSection(st: WorktreeStatus): string {
+  const ui = logic.worktreeActions(st);
+  const button = (action: string, b: logic.WorktreeButton, cls = '') =>
+    `<button class="btn small ${cls}" data-wt="${action}"${b.disabled ? ` disabled title="${esc(b.disabled)}"` : ''}>${esc(b.label)}</button>`;
+  return `<div class="git-section worktree">
+      <h4>Worktree <span class="count">${esc(ui.summary)}</span></h4>
+      ${st.pr ? `<a class="wt-pr" href="${esc(st.pr)}" target="_blank" rel="noopener">PR aberto ↗</a>` : ''}
+      ${ui.warnings.map((w) => `<p class="wt-warn">${esc(w)}</p>`).join('')}
+      <div class="wt-actions">${button('pr', ui.pr)}${button('merge', ui.merge)}${button('remove', ui.remove, 'ghost')}</div>
+      ${worktreeError ? `<p class="error">${esc(worktreeError)}</p>` : ''}
+    </div>`;
+}
+
 $('#git').addEventListener('click', (e) => {
+  const wt = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-wt]');
+  if (wt) return worktreeAction(wt.dataset.wt!, wt);
   const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button.file');
   if (btn) openDiff(btn.dataset.scope as DiffScope, btn.dataset.path!);
+});
+
+async function worktreeAction(action: string, btn: HTMLButtonElement) {
+  const st = lastWorktree;
+  const agent = state.agents.find((a) => a.id === selectedAgent);
+  if (!st || !agent) return;
+  const dlgPr = $<HTMLDialogElement>('#dlg-pr');
+  if (action === 'pr' && !st.pr) {
+    dlgPr.querySelector<HTMLElement>('.error')!.hidden = true;
+    $('#pr-info').textContent = `Sobe ${st.branch} para o origin e abre o PR com o GitHub CLI (gh).${st.dirty ? ' Arquivos não commitados ficam de fora.' : ''}`;
+    dlgPr.querySelector<HTMLInputElement>('[name=title]')!.value = st.suggestion.title;
+    dlgPr.querySelector<HTMLTextAreaElement>('[name=body]')!.value = st.suggestion.body;
+    dlgPr.showModal();
+    return;
+  }
+  if (action === 'remove') {
+    const dlg = $<HTMLDialogElement>('#dlg-worktree-end');
+    const opt = logic.deleteBranchOption(st);
+    dlg.querySelector<HTMLElement>('.error')!.hidden = true;
+    $('#wt-end-title').textContent = `Encerrar o worktree de ${agent.name}?`;
+    $('#wt-end-text').textContent = `${agent.status !== 'exited' ? 'A sessão é encerrada e ' : ''}${agent.name} sai do escritório. A pasta do worktree é apagada; o histórico da conversa continua em ~/.claude.`;
+    $('#wt-end-branch').textContent = st.branch;
+    $('#wt-end-hint').textContent = opt.hint;
+    const box = dlg.querySelector<HTMLInputElement>('[name=deleteBranch]')!;
+    box.checked = false;
+    box.disabled = !opt.allowed;
+    dlg.showModal();
+    return;
+  }
+  if (action === 'merge') {
+    const ok = await confirmDialog(
+      `Trazer ${st.branch} para ${st.target}?`,
+      `Faz o merge dos ${st.ahead} commit(s) na pasta da sala, na branch ${st.target}. Nada é enviado para o GitHub.`,
+    );
+    if (!ok) return;
+  }
+  // Merge, ou enviar commits novos para o PR já aberto.
+  worktreeError = '';
+  btn.disabled = true;
+  btn.textContent = action === 'merge' ? 'Trazendo…' : 'Enviando…';
+  try {
+    if (action === 'merge') await api('POST', `/api/agents/${agent.id}/worktree/merge`);
+    else await api('POST', `/api/agents/${agent.id}/worktree/pr`, {});
+  } catch (err) {
+    worktreeError = (err as Error).message;
+  }
+  await refreshGit();
+}
+
+formDialog($<HTMLDialogElement>('#dlg-pr'), async (data) => {
+  const { url } = (await api('POST', `/api/agents/${selectedAgent}/worktree/pr`, { title: data.get('title'), body: data.get('body') })) as { url: string };
+  worktreeError = '';
+  await refreshGit();
+  window.open(url, '_blank', 'noopener');
+});
+
+formDialog($<HTMLDialogElement>('#dlg-worktree-end'), async (data) => {
+  await api('POST', `/api/agents/${selectedAgent}/worktree/remove`, { deleteBranch: data.get('deleteBranch') === 'on' });
 });
 
 // ---------- visualizador de diff ----------
@@ -1076,6 +1162,8 @@ function formDialog(dlg: HTMLDialogElement, onSubmit: (data: FormData) => Promis
     if (submitter?.value !== 'ok') return;
     e.preventDefault();
     error.hidden = true;
+    // Pode demorar (ex.: subir a branch e abrir o PR): o botão fica desligado para não enviar duas vezes.
+    submitter.disabled = true;
     try {
       await onSubmit(new FormData(form));
       dlg.close();
@@ -1083,6 +1171,8 @@ function formDialog(dlg: HTMLDialogElement, onSubmit: (data: FormData) => Promis
     } catch (err) {
       error.textContent = (err as Error).message;
       error.hidden = false;
+    } finally {
+      submitter.disabled = false;
     }
   });
 }
@@ -1193,7 +1283,7 @@ async function fireAgent(a: Agent) {
   const running = a.status !== 'exited';
   const ok = await confirmDialog(
     `Demitir ${a.name}?`,
-    `${running ? 'A sessão será encerrada. ' : ''}O histórico da conversa continua em ~/.claude.${a.worktreeBranch ? ` O worktree (${a.worktreeBranch}) não é apagado.` : ''}`,
+    `${running ? 'A sessão será encerrada. ' : ''}O histórico da conversa continua em ~/.claude.${a.worktreeBranch ? ` O worktree (${a.worktreeBranch}) não é apagado; para apagar, use "Encerrar worktree" no painel de git.` : ''}`,
   );
   if (ok) await api('DELETE', `/api/agents/${a.id}`);
 }

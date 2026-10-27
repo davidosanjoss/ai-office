@@ -1,6 +1,7 @@
 // Regras de decisão da interface, sem DOM, para poderem ser testadas.
 
-import type { Agent, Floor, Incident, IncidentMessage, Room } from '../shared/types.ts';
+import type { Agent, Floor, Incident, IncidentMessage, Room, WorktreeStatus } from '../shared/types.ts';
+import { canDeleteBranch } from '../shared/worktree.ts';
 
 /** Depois da última tecla, quanto esperar antes de trocar de terminal sozinho. */
 export const TYPING_GRACE_MS = 3500;
@@ -211,4 +212,58 @@ export function canShare(m: IncidentMessage, incident: Incident): boolean {
 export function canRemoveWarRoom(floor: Floor | undefined, slot: number, incidents: Incident[]): boolean {
   const n = warRoomsOf(floor);
   return !!floor && n > 1 && slot === n - 1 && !incidentAt(incidents, floor.id, slot);
+}
+
+/** Um botão do worktree: o texto e, quando não dá para usar, o motivo (vira a dica do botão). */
+export interface WorktreeButton {
+  label: string;
+  disabled?: string;
+}
+
+/** O que os botões do worktree mostram, e por que cada um está desligado. */
+export function worktreeActions(st: WorktreeStatus): {
+  pr: WorktreeButton;
+  merge: WorktreeButton;
+  remove: WorktreeButton;
+  summary: string;
+  warnings: string[];
+} {
+  const target = st.target ?? 'a sala';
+  const commits = (n: number) => `${n} commit${n === 1 ? '' : 's'}`;
+  const pr: WorktreeButton = st.pr
+    ? { label: 'Enviar para o PR', disabled: st.pushed ? 'O PR já tem todos os commits' : undefined }
+    : {
+        label: 'Abrir PR',
+        disabled: !st.remote ? 'O repositório não tem o remoto "origin"' : !st.ahead && !st.pushed ? `Nenhum commit novo em relação a ${target}` : undefined,
+      };
+  const merge: WorktreeButton = {
+    label: `Trazer para ${target}`,
+    disabled: !st.target
+      ? 'A pasta da sala não está numa branch'
+      : !st.ahead
+        ? `${st.target} já tem todos os commits`
+        : st.conflicts?.length
+          ? `Daria conflito em ${st.conflicts.join(', ')}`
+          : undefined,
+  };
+  const remove: WorktreeButton = {
+    label: 'Encerrar worktree',
+    disabled: st.dirty ? 'Tem arquivo não commitado no worktree' : undefined,
+  };
+  const summary = !st.target
+    ? 'Sala sem branch'
+    : st.ahead
+      ? `${commits(st.ahead)} a mais que ${st.target}${st.behind ? `, ${commits(st.behind)} atrás` : ''}`
+      : `Tudo já está em ${st.target}`;
+  const warnings = [
+    st.dirty ? `${st.dirty} arquivo(s) não commitado(s) ficam de fora do merge e do PR.` : '',
+    st.conflicts?.length ? `Conflito com ${target} em: ${st.conflicts.join(', ')}. Peça ao agente para trazer ${target} para a branch dele e resolver.` : '',
+  ].filter(Boolean);
+  return { pr, merge, remove, summary, warnings };
+}
+
+/** Texto da opção de apagar a branch ao encerrar: só liga se o trabalho tem outra cópia. */
+export function deleteBranchOption(st: WorktreeStatus): { allowed: boolean; hint: string } {
+  if (canDeleteBranch(st)) return { allowed: true, hint: st.ahead === 0 && st.target ? `O trabalho já está em ${st.target}.` : 'A branch está no origin.' };
+  return { allowed: false, hint: `Ela tem commits que não estão em ${st.target ?? 'a sala'} nem no origin.` };
 }

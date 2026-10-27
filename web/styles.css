@@ -528,6 +528,35 @@ dialog select {
   font-size: 11px;
   padding: 2px 0;
 }
+/* Worktree do agente: situação e botões de PR, merge e encerrar */
+.git-section.worktree {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.wt-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.wt-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.wt-warn {
+  margin: 2px 0;
+  font-size: 11px;
+  color: var(--waiting);
+}
+.wt-pr {
+  font-size: 11px;
+  color: var(--accent);
+}
+.git-section.worktree .error {
+  font-size: 11px;
+  margin-top: 4px;
+}
 .add {
   color: var(--done);
 }

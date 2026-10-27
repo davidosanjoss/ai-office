@@ -35,6 +35,11 @@ export function claudeBin(): string | undefined {
   return process.env.AI_OFFICE_CLAUDE_BIN || which('claude');
 }
 
+/** GitHub CLI, para abrir PRs. Configurável para os testes usarem um falso. */
+export function ghBin(): string | undefined {
+  return process.env.AI_OFFICE_GH_BIN || which('gh');
+}
+
 /** Shell do usuário para as abas de terminal comum. */
 export function defaultShell(): string {
   if (process.env.AI_OFFICE_SHELL) return process.env.AI_OFFICE_SHELL;

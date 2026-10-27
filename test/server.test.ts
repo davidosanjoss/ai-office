@@ -1,11 +1,12 @@
 // Integração: servidor real (HTTP + WebSocket), processos reais em PTY e o Claude falso,
 // com os hooks passando pelo mesmo office-hook.mjs da produção.
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Agent, Floor, Incident, Room } from '../shared/types.ts';
+import type { Agent, Floor, Incident, Room, WorktreeStatus } from '../shared/types.ts';
 import { killAll } from '../server/agents.ts';
 import { buildApp } from '../server/app.ts';
 import { store } from '../server/store.ts';
@@ -280,6 +281,152 @@ describe('worktree', () => {
     const res = await api('POST', '/api/agents', { roomId: room.id, worktree: true });
     expect(res.status).toBe(400);
     expect(res.data.error).toMatch(/worktree/);
+  });
+});
+
+describe('worktree: PR, trazer para a sala e encerrar', () => {
+  const git = (dir: string, ...args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: 'pipe' }).toString().trim();
+  const commit = (dir: string, file: string, text: string, msg: string) => {
+    fs.writeFileSync(path.join(dir, file), text);
+    git(dir, 'add', '.');
+    git(dir, 'commit', '-q', '-m', msg);
+  };
+  const status = async (a: Agent) => (await api<WorktreeStatus>('GET', `/api/agents/${a.id}/worktree`)).data;
+  const ghCalls = () => {
+    const file = path.join(process.env.AI_OFFICE_TMP!, 'gh-calls.jsonl');
+    return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').map((l) => JSON.parse(l)) : [];
+  };
+  async function setup(name: string, withOrigin = false) {
+    const room = await newRoom(name, true);
+    if (withOrigin) {
+      const bare = tempDir(`${name}-origin`);
+      git(bare, 'init', '-q', '--bare', '-b', 'main');
+      git(room.path, 'remote', 'add', 'origin', bare);
+      git(room.path, 'push', '-q', 'origin', 'main');
+    }
+    const a = await hire(room, { worktree: true });
+    await waitStatus(a.id, 'idle');
+    return { room, a };
+  }
+
+  it('mostra quantos commits o worktree tem a mais e sugere o PR a partir deles', async () => {
+    const { a } = await setup('wt-status');
+    commit(a.cwd, 'login.ts', 'x\n', 'Tela de login');
+    commit(a.cwd, 'logout.ts', 'y\n', 'Botão de sair');
+    fs.writeFileSync(path.join(a.cwd, 'rascunho.txt'), 'oi');
+    expect(await status(a)).toMatchObject({
+      branch: a.worktreeBranch,
+      target: 'main',
+      ahead: 2,
+      behind: 0,
+      dirty: 1,
+      conflicts: [],
+      remote: false,
+      pushed: false,
+      suggestion: { title: 'Tela de login', body: 'Commits:\n\n- Tela de login\n- Botão de sair' },
+    });
+  });
+
+  it('traz o trabalho para a branch da sala', async () => {
+    const { room, a } = await setup('wt-merge');
+    commit(a.cwd, 'novo.ts', 'oi\n', 'Arquivo novo');
+    const res = await api('POST', `/api/agents/${a.id}/worktree/merge`);
+    expect(res.status, JSON.stringify(res.data)).toBe(200);
+    expect(res.data).toEqual({ target: 'main' });
+    expect(fs.readFileSync(path.join(room.path, 'novo.ts'), 'utf8')).toBe('oi\n');
+    expect((await status(a)).ahead).toBe(0);
+    // Sem nada novo, não há o que trazer.
+    expect((await api('POST', `/api/agents/${a.id}/worktree/merge`)).data.error).toMatch(/Nada para trazer/);
+  });
+
+  it('com conflito previsto, avisa os arquivos e não mexe na sala', async () => {
+    const { room, a } = await setup('wt-conflito');
+    commit(a.cwd, 'README.md', 'versão do agente\n', 'Agente mudou o README');
+    commit(room.path, 'README.md', 'versão da main\n', 'Main mudou o README');
+    const head = git(room.path, 'rev-parse', 'HEAD');
+    expect((await status(a)).conflicts).toEqual(['README.md']);
+    const res = await api('POST', `/api/agents/${a.id}/worktree/merge`);
+    expect(res.status).toBe(400);
+    expect(res.data.error).toMatch(/conflito em: README\.md/);
+    expect(git(room.path, 'rev-parse', 'HEAD')).toBe(head);
+    expect(git(room.path, 'status', '--porcelain')).toBe('');
+  });
+
+  it('abre o PR: sobe a branch e chama o gh com a base certa', async () => {
+    const { room, a } = await setup('wt-pr', true);
+    commit(a.cwd, 'api.ts', 'x\n', 'Nova rota');
+    const before = ghCalls().length;
+    const res = await api('POST', `/api/agents/${a.id}/worktree/pr`, { title: 'Nova rota', body: 'Descrição' });
+    expect(res.status, JSON.stringify(res.data)).toBe(200);
+    expect(res.data.url).toBe('https://github.com/teste/repo/pull/7');
+    const call = ghCalls()[before];
+    expect(call.args).toEqual(['pr', 'create', '--head', a.worktreeBranch, '--title', 'Nova rota', '--body', 'Descrição', '--base', 'main']);
+    expect(git(room.path, 'ls-remote', '--heads', 'origin', a.worktreeBranch!)).toContain(a.worktreeBranch);
+    expect(agentState(a.id)?.worktreePr).toBe(res.data.url);
+    expect(await status(a)).toMatchObject({ pushed: true, pr: res.data.url });
+
+    // Com o PR aberto, o botão só sobe os commits novos.
+    commit(a.cwd, 'api.ts', 'y\n', 'Ajuste');
+    const again = await api('POST', `/api/agents/${a.id}/worktree/pr`, {});
+    expect(again.data.url).toBe(res.data.url);
+    expect(ghCalls().length).toBe(before + 1);
+    expect((await status(a)).pushed).toBe(true);
+  });
+
+  it('PR que já existia: devolve o endereço dele', async () => {
+    const { a } = await setup('wt-pr-existe', true);
+    commit(a.cwd, 'a.ts', 'x\n', 'algo');
+    const res = await api('POST', `/api/agents/${a.id}/worktree/pr`, { title: 'JA-EXISTE', body: '' });
+    expect(res.data.url).toBe('https://github.com/teste/repo/pull/3');
+  });
+
+  it('erros claros: sem origin e gh sem login', async () => {
+    const { a } = await setup('wt-pr-sem-origin');
+    expect((await api('POST', `/api/agents/${a.id}/worktree/pr`, { title: 't' })).data.error).toMatch(/origin/);
+    const { a: b } = await setup('wt-pr-sem-login', true);
+    const res = await api('POST', `/api/agents/${b.id}/worktree/pr`, { title: 'SEM-LOGIN' });
+    expect(res.status).toBe(400);
+    expect(res.data.error).toMatch(/A branch subiu, mas o PR não foi aberto.*gh auth login/);
+  });
+
+  it('agente sem worktree não tem essas ações', async () => {
+    const room = await newRoom('wt-nenhum', true);
+    const a = await hire(room);
+    expect((await api('GET', `/api/agents/${a.id}/worktree`)).status).toBe(400);
+  });
+
+  it('encerrar: recusa com arquivo não commitado e não apaga branch com trabalho que só existe nela', async () => {
+    const { room, a } = await setup('wt-encerrar-recusa');
+    fs.writeFileSync(path.join(a.cwd, 'rascunho.txt'), 'oi');
+    let res = await api('POST', `/api/agents/${a.id}/worktree/remove`, {});
+    expect(res.data.error).toMatch(/não commitado/);
+    git(a.cwd, 'add', '.');
+    git(a.cwd, 'commit', '-q', '-m', 'rascunho');
+    res = await api('POST', `/api/agents/${a.id}/worktree/remove`, { deleteBranch: true });
+    expect(res.data.error).toMatch(/não foi apagada/);
+    // Nada foi tocado: o agente continua trabalhando, com a pasta e a branch.
+    expect(agentState(a.id)?.status).not.toBe('exited');
+    expect(fs.existsSync(a.cwd)).toBe(true);
+    expect(git(room.path, 'branch', '--list', a.worktreeBranch!)).toContain(a.worktreeBranch);
+  });
+
+  it('encerrar: o agente sai, a pasta some e a branch fica, a não ser que você peça', async () => {
+    const { room, a } = await setup('wt-encerrar');
+    commit(a.cwd, 'x.ts', 'x\n', 'trabalho');
+    const res = await api('POST', `/api/agents/${a.id}/worktree/remove`, {});
+    expect(res.status, JSON.stringify(res.data)).toBe(200);
+    expect(store.agents.has(a.id)).toBe(false);
+    expect(fs.existsSync(a.cwd)).toBe(false);
+    expect(git(room.path, 'branch', '--list', a.worktreeBranch!)).toContain(a.worktreeBranch);
+
+    // Trabalho já trazido para a sala: a branch pode ir junto.
+    const b = await hire(room, { worktree: true });
+    await waitStatus(b.id, 'idle');
+    commit(b.cwd, 'y.ts', 'y\n', 'mais trabalho');
+    await api('POST', `/api/agents/${b.id}/worktree/merge`);
+    expect((await api('POST', `/api/agents/${b.id}/worktree/remove`, { deleteBranch: true })).status).toBe(200);
+    expect(git(room.path, 'branch', '--list', b.worktreeBranch!)).toBe('');
+    expect(fs.readFileSync(path.join(room.path, 'y.ts'), 'utf8')).toBe('y\n');
   });
 });
 

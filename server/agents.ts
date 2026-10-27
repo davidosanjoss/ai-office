@@ -294,6 +294,20 @@ export function killAgent(id: string) {
   running.get(id)?.kill();
 }
 
+/** Encerra a sessão e espera o processo sair (até 5 s), para a pasta dele poder ser apagada. */
+export function stopAgent(id: string): Promise<void> {
+  const proc = running.get(id);
+  if (!proc) return Promise.resolve();
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, 5000);
+    proc.onExit(() => {
+      clearTimeout(timer);
+      resolve();
+    });
+    proc.kill();
+  });
+}
+
 export function removeAgent(id: string) {
   killAgent(id);
   running.delete(id);

@@ -196,6 +196,36 @@
       </form>
     </dialog>
 
+    <dialog id="dlg-pr">
+      <form method="dialog">
+        <h2>Abrir PR</h2>
+        <p class="muted" id="pr-info"></p>
+        <label>Título <input name="title" autocomplete="off" required /></label>
+        <label>Descrição <textarea name="body" rows="7"></textarea></label>
+        <p class="error" hidden></p>
+        <menu>
+          <button value="ok" class="btn">Subir e abrir PR</button>
+          <button value="cancel" formnovalidate class="btn ghost">Cancelar</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-worktree-end">
+      <form method="dialog">
+        <h2 id="wt-end-title">Encerrar worktree</h2>
+        <p class="muted" id="wt-end-text"></p>
+        <label class="check">
+          <input type="checkbox" name="deleteBranch" />
+          <span>Apagar também a branch <code id="wt-end-branch"></code><br /><small id="wt-end-hint"></small></span>
+        </label>
+        <p class="error" hidden></p>
+        <menu>
+          <button value="ok" class="btn danger">Encerrar</button>
+          <button value="cancel" formnovalidate class="btn ghost" autofocus>Cancelar</button>
+        </menu>
+      </form>
+    </dialog>
+
     <dialog id="dlg-confirm">
       <form method="dialog">
         <h2 id="confirm-title"></h2>

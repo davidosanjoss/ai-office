@@ -2,6 +2,7 @@
 // como você faria, com o servidor real e o Claude falso. Pula se não houver navegador
 // (defina CHROME_PATH para escolher um).
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
@@ -236,6 +237,42 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.keyboard.press('Escape');
     await page.waitForSelector('#diff-view[hidden]');
     expect(await page.$eval('#terminals', (e) => getComputedStyle(e).display)).not.toBe('none');
+  });
+
+  it('worktree: o painel de git traz o trabalho do agente para a main e encerra o worktree', async () => {
+    const room = [...store.rooms.values()].find((r) => r.path.includes('e2e-repo'))!;
+    const before = new Set(agents().map((a) => a.id));
+    await page.click('#tabs .tab.add[title="Contratar agente"]');
+    await page.waitForSelector('#dlg-agent[open]');
+    await page.type('#dlg-agent input[name=name]', 'Wanda');
+    await page.click('#dlg-agent input[name=worktree]');
+    await page.keyboard.press('Enter');
+    const a = await waitFor(() => agents().find((x) => !before.has(x.id)), 8000, 'agente com worktree');
+    await waitScreen('FAKE CLAUDE');
+
+    const git = (...args: string[]) => execFileSync('git', ['-C', a.cwd, ...args], { stdio: 'pipe' });
+    fs.writeFileSync(path.join(a.cwd, 'wt-e2e.ts'), 'export const w = 1;\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'Trabalho da Wanda');
+    await page.click('#btn-git-refresh');
+    await page.waitForSelector('#git button[data-wt=merge]:not([disabled])', { timeout: 8000 });
+    expect(await page.$eval('#git .worktree h4', (e) => e.textContent)).toContain('1 commit a mais que main');
+
+    await page.click('#git button[data-wt=merge]');
+    await page.waitForSelector('#dlg-confirm[open]');
+    await page.click('#dlg-confirm button[value=ok]');
+    await page.waitForFunction(() => document.querySelector('#git .worktree h4')?.textContent?.includes('Tudo já está em main'), { timeout: 8000 });
+    expect(fs.readFileSync(path.join(room.path, 'wt-e2e.ts'), 'utf8')).toBe('export const w = 1;\n');
+
+    await page.click('#git button[data-wt=remove]');
+    await page.waitForSelector('#dlg-worktree-end[open]');
+    expect(await page.$eval('#dlg-worktree-end input[name=deleteBranch]', (e) => (e as HTMLInputElement).disabled)).toBe(false);
+    await page.click('#dlg-worktree-end input[name=deleteBranch]');
+    await page.click('#dlg-worktree-end button[value=ok]');
+    await waitFor(() => !store.agents.has(a.id), 8000, 'agente sair');
+    await page.waitForSelector('#dlg-worktree-end:not([open])');
+    expect(fs.existsSync(a.cwd)).toBe(false);
+    expect(execFileSync('git', ['-C', room.path, 'branch', '--list', a.worktreeBranch!]).toString()).toBe('');
   });
 
   it('arrastar o mapa move a câmera e não conta como clique', async () => {
