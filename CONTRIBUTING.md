@@ -44,5 +44,6 @@ As regras completas estão no [`CLAUDE.md`](CLAUDE.md) (o Claude Code lê esse a
 
 - Preencha o modelo: o que muda, como testar e o checklist.
 - Escreva `Fecha #123` na descrição para a issue fechar sozinha no merge.
-- O **CI** roda os testes no Linux e no Windows. O merge só libera com o CI verde e **1 aprovação** de outra pessoa.
+- O **CI** roda os testes no Linux e no Windows. O merge só libera com o **CI verde** e **1 aprovação** de outra pessoa (o GitHub não deixa ninguém aprovar o próprio PR).
+- O dono do repositório pode fazer o merge dos próprios PRs sem aprovação, mas também só por PR e com o CI verde.
 - Revisando o PR de alguém? Baixe e teste: `gh pr checkout 123`.
