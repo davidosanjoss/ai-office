@@ -645,9 +645,13 @@ describe('sala de guerra', () => {
 
   it('mensagens seguidas esperam o agente terminar a anterior, e todas chegam na ordem', async () => {
     const before = replies(bruno.id).length;
+    const beforeNovo = replies(novo.id).length;
     await api('POST', `/api/incidents/${incident.id}/messages`, { text: 'primeira pergunta' });
     await api('POST', `/api/incidents/${incident.id}/messages`, { text: 'segunda pergunta' });
     await waitReplies(bruno.id, before + 2);
+    // As perguntas foram para todos: espera o outro agente também, senão a resposta dele
+    // chega durante o próximo teste (aconteceu no CI do Windows).
+    await waitReplies(novo.id, beforeNovo + 2);
     const out = ws.out(bruno.id);
     expect(out.indexOf('segunda pergunta')).toBeGreaterThan(out.indexOf('primeira pergunta'));
     expect(replies(bruno.id).slice(-2).map((m) => m.text)).toEqual([
@@ -657,9 +661,10 @@ describe('sala de guerra', () => {
   });
 
   it('a resposta vem do campo do hook quando o Claude manda; transcript fora do ~/.claude é ignorado', async () => {
-    const n = inc().messages.length;
+    const n = replies(bruno.id).length;
     await api('POST', '/api/hook', { event: 'Stop', agentId: bruno.id, payload: { transcript_path: '/etc/passwd' } });
-    expect(inc().messages.length).toBe(n);
+    // Conta só as respostas do Bruno: outro agente da sala pode responder no meio.
+    expect(replies(bruno.id).length).toBe(n);
     await api('POST', '/api/hook', { event: 'Stop', agentId: bruno.id, payload: { last_assistant_message: 'Achei: timeout de 5s' } });
     expect(inc().messages.at(-1)).toMatchObject({ kind: 'agente', agentId: bruno.id, text: 'Achei: timeout de 5s' });
   });
