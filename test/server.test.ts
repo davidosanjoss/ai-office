@@ -291,6 +291,8 @@ describe('worktree: PR, trazer para a sala e encerrar', () => {
     git(dir, 'add', '.');
     git(dir, 'commit', '-q', '-m', msg);
   };
+  // O git do Windows (core.autocrlf) grava os arquivos que chegam pelo merge com \r\n.
+  const read = (file: string) => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
   const status = async (a: Agent) => (await api<WorktreeStatus>('GET', `/api/agents/${a.id}/worktree`)).data;
   const ghCalls = () => {
     const file = path.join(process.env.AI_OFFICE_TMP!, 'gh-calls.jsonl');
@@ -333,7 +335,7 @@ describe('worktree: PR, trazer para a sala e encerrar', () => {
     const res = await api('POST', `/api/agents/${a.id}/worktree/merge`);
     expect(res.status, JSON.stringify(res.data)).toBe(200);
     expect(res.data).toEqual({ target: 'main' });
-    expect(fs.readFileSync(path.join(room.path, 'novo.ts'), 'utf8')).toBe('oi\n');
+    expect(read(path.join(room.path, 'novo.ts'))).toBe('oi\n');
     expect((await status(a)).ahead).toBe(0);
     // Sem nada novo, não há o que trazer.
     expect((await api('POST', `/api/agents/${a.id}/worktree/merge`)).data.error).toMatch(/Nada para trazer/);
@@ -426,7 +428,7 @@ describe('worktree: PR, trazer para a sala e encerrar', () => {
     await api('POST', `/api/agents/${b.id}/worktree/merge`);
     expect((await api('POST', `/api/agents/${b.id}/worktree/remove`, { deleteBranch: true })).status).toBe(200);
     expect(git(room.path, 'branch', '--list', b.worktreeBranch!)).toBe('');
-    expect(fs.readFileSync(path.join(room.path, 'y.ts'), 'utf8')).toBe('y\n');
+    expect(read(path.join(room.path, 'y.ts'))).toBe('y\n');
   });
 });
 

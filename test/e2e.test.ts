@@ -262,7 +262,8 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForSelector('#dlg-confirm[open]');
     await page.click('#dlg-confirm button[value=ok]');
     await page.waitForFunction(() => document.querySelector('#git .worktree h4')?.textContent?.includes('Tudo já está em main'), { timeout: 8000 });
-    expect(fs.readFileSync(path.join(room.path, 'wt-e2e.ts'), 'utf8')).toBe('export const w = 1;\n');
+    // O git do Windows (core.autocrlf) grava o arquivo que chega pelo merge com \r\n.
+    expect(fs.readFileSync(path.join(room.path, 'wt-e2e.ts'), 'utf8').replace(/\r\n/g, '\n')).toBe('export const w = 1;\n');
 
     await page.click('#git button[data-wt=remove]');
     await page.waitForSelector('#dlg-worktree-end[open]');
