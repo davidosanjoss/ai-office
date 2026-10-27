@@ -87,7 +87,7 @@ services:
 
 1. **Nada de dado no repositório.** Memória em `~/.ai-office/memoria`, configuração (incluindo chave de LLM, se houver) em `~/.ai-office/memoria.env`, e o estado do escritório já está em `~/.ai-office/state.json`. Tudo isso fica na pasta da pessoa, nunca dentro deste projeto.
 2. **Barreira no CI** (vira issue): um passo que falha se aparecer no git qualquer `state.json`, `*.sqlite`, `memoria/` ou `.env` com conteúdo. O `.gitignore` sozinho não basta, porque `git add -f` passa por cima dele.
-3. **Projetos que não devem ser lembrados:** o ai-memory tem um arquivo de marcação por repositório (`.ai-memory.toml`) com política de captura. Para um projeto sensível da empresa, dá para desligar a captura ou limitar o que entra. O escritório pode oferecer isso ao criar a sala.
+3. **Projetos que não devem ser lembrados:** o ai-memory tem um arquivo de marcação por repositório (`.ai-memory.toml`) com política de captura. Para um projeto sensível da empresa, dá para desligar a captura ou limitar o que entra. O escritório oferece isso nas Configurações e no painel da sala (ver Decisões).
 4. **Sem criptografia em repouso** no ai-memory (ele usa as permissões do sistema). A pasta `~/.ai-office/memoria` fica só para o seu usuário.
 
 **Windows (os seus amigos):** o caminho recomendado pelo ai-memory é o **Docker Desktop**, o "Scenario B" de `docs/windows.md`. O servidor fica no container, e o `ai-memory.exe` no Windows instala hooks e MCP para o Claude nativo. A pasta montada vira `%USERPROFILE%\.ai-office\memoria`. Rodar o ai-memory nativo no Windows ainda está marcado como **experimental** na tabela de suporte deles, então o Docker é a escolha segura. Um cuidado da documentação: no Windows nativo, manter o servidor no ar exige um *service wrapper*; uma tarefa agendada é encerrada no reboot. Com o Docker Desktop, o `restart: unless-stopped` resolve.
@@ -107,7 +107,8 @@ services:
 
 - `docker-compose.yml` no repositório (o de cima), mais um `npm run memoria:up` que sobe o container e roda `install-hooks` / `install-mcp` para o Claude Code.
 - A barreira no CI contra dados no git.
-- O escritório **detecta** se o ai-memory está no ar (`GET /api/v1` respondendo) e mostra um indicador discreto no topo. Sem ai-memory, tudo segue funcionando como hoje.
+- O escritório **detecta** se o ai-memory está no ar (`GET /api/v1` respondendo) e mostra um indicador no topo. Sem ai-memory, oferece instalar (ver Decisões) e, se você recusar, tudo segue funcionando como hoje.
+- A tela de **Configurações**, com a política de memória (guardar tudo por padrão) e a exceção por sala.
 
 ### Fase 2: a memória aparece no escritório (só leitura)
 
@@ -132,14 +133,25 @@ services:
 - O PTY do escritório roda `ai-memory run <ia>` em vez do binário direto, e a continuidade entre IAs vem de graça.
 - O estado ao vivo (digitando, mão levantada) depende dos hooks de cada IA. A tabela de suporte do ai-memory (`docs/support-matrix.md`) diz, IA por IA, quais eventos cada uma entrega; é por ela que se decide quais IAs entram primeiro.
 
-## Pontos em aberto (decidir antes da fase 1)
+## Decisões
 
-1. **Indicador sem ai-memory.** O escritório funciona igual sem ele. Então só mostra o indicador quando ele existe, ou também oferece instalar?
-2. **Política padrão para projetos da empresa.** Capturar tudo, ou perguntar ao criar a sala de um andar marcado como "empresa"?
+1. **Sem ai-memory, o escritório oferece instalar.**
+   - O indicador no topo mostra "memória desligada" com um botão **Instalar**.
+   - Antes de rodar, o botão mostra o que vai acontecer: baixar a imagem, criar `~/.ai-office/memoria`, subir o container e instalar hooks e MCP do Claude Code. Avisa também que os hooks valem para todas as sessões do Claude na máquina.
+   - Só roda depois da confirmação. Se o Docker não estiver instalado, mostra o link de instalação em vez de tentar.
+   - Dá para recusar, e o escritório continua funcionando como hoje.
+2. **Por padrão, o ai-memory guarda tudo**, inclusive projetos da empresa.
+3. **Uma tela de Configurações na interface** permite trocar isso:
+   - **Política padrão de memória:** guardar tudo (padrão), perguntar ao criar cada sala, ou não guardar.
+   - **Exceção por sala:** no painel da sala, "esta sala não é lembrada". O escritório grava a política no `.ai-memory.toml` do projeto. Como esse arquivo fica dentro do repositório do projeto, a tela avisa e oferece colocá-lo no `.gitignore` dele.
+   - **Ligar e desligar o ai-memory** e ver onde ficam os dados.
+
+   As configurações ficam em `~/.ai-office/config.json`, fora do repositório, como o resto.
 
 ## Issues sugeridas a partir deste estudo
 
-- **Fase 1:** compose do ai-memory com dados em `~/.ai-office/memoria`, `npm run memoria:up` e indicador no topo.
+- **Fase 1:** compose do ai-memory com dados em `~/.ai-office/memoria`, `npm run memoria:up`, indicador no topo com o botão Instalar.
+- **Configurações:** tela de configurações (`~/.ai-office/config.json`), com a política de memória e a exceção por sala.
 - **Barreira no CI** contra dados pessoais no git.
 - **Fase 2:** badge de caixa de entrada e resumo do projeto na sala.
 - **Fase 3** vira parte da [#10](https://github.com/davidosanjoss/ai-office/issues/10) (sala de guerra).
