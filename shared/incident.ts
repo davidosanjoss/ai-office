@@ -36,6 +36,47 @@ export function parseMentions(text: string, people: Participant[]): { to: string
   return { to: people.filter((p) => to.has(p.id)).map((p) => p.id), unknown };
 }
 
+/** Uma sugestão do auto-complete: o que vai depois do @ e como aparece na lista. */
+export interface MentionSuggestion {
+  key: string;
+  label: string;
+  hint: string;
+}
+
+/**
+ * A menção que está sendo digitada no cursor: onde começa o @ e o que já foi escrito depois dele.
+ * Undefined fora de uma menção (inclusive no meio de um e-mail, como no parseMentions).
+ */
+export function mentionQuery(text: string, caret: number): { start: number; query: string } | undefined {
+  const m = /(^|\s)@([\p{L}\p{N}._-]*)$/u.exec(text.slice(0, caret));
+  return m ? { start: caret - m[2].length - 1, query: m[2] } : undefined;
+}
+
+/**
+ * Quem pode ser chamado com @: cada agente e cada projeto da sala, com a mesma chave que o
+ * parseMentions aceita. Primeiro os que começam com o que foi digitado, depois os que contêm.
+ */
+export function mentionSuggestions(people: Participant[], query: string): MentionSuggestion[] {
+  const items = new Map<string, MentionSuggestion>();
+  for (const p of people) {
+    const key = mentionKey(p.project);
+    const n = people.filter((x) => x.project === p.project).length;
+    items.set(key, { key, label: p.project, hint: `projeto · ${n} agente${n === 1 ? '' : 's'}` });
+  }
+  // Agente com o mesmo nome do projeto: a menção já chama o projeto todo.
+  for (const p of people) if (!items.has(mentionKey(p.name))) items.set(mentionKey(p.name), { key: mentionKey(p.name), label: p.name, hint: p.project });
+  const q = mentionKey(query);
+  const all = [...items.values()].sort((a, b) => Number(a.hint.startsWith('projeto')) - Number(b.hint.startsWith('projeto')) || a.label.localeCompare(b.label));
+  return [...all.filter((s) => s.key.startsWith(q)), ...all.filter((s) => !s.key.startsWith(q) && s.key.includes(q))];
+}
+
+/** Troca a menção pela escolhida, com um espaço depois, e diz onde o cursor fica. */
+export function applyMention(text: string, start: number, caret: number, key: string): { text: string; caret: number } {
+  const rest = text.slice(caret);
+  const insert = `@${key}${rest.startsWith(' ') ? '' : ' '}`;
+  return { text: text.slice(0, start) + insert + rest, caret: start + insert.length + (rest.startsWith(' ') ? 1 : 0) };
+}
+
 const who = (p: Participant) => `${p.name} (projeto ${p.project})`;
 
 /** Tamanho máximo do que é digitado no terminal de um agente; o resto fica no registro. */

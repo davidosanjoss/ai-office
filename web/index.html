@@ -91,7 +91,8 @@
           </header>
           <ol id="war-chat"></ol>
           <form id="war-form" autocomplete="off">
-            <textarea id="war-input" rows="2" placeholder="Mensagem para todos. Use @nome ou @projeto para um só. Enter envia, Shift+Enter quebra a linha."></textarea>
+            <ul id="war-mentions" class="mentions" role="listbox" hidden></ul>
+            <textarea id="war-input" rows="2" placeholder="Mensagem para todos. Digite @ para chamar um agente ou projeto. Enter envia, Shift+Enter quebra a linha."></textarea>
             <button class="btn small" type="submit">Enviar</button>
           </form>
           <p id="war-error" class="error" hidden></p>

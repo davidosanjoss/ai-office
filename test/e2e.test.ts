@@ -441,15 +441,27 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     const incident = await waitFor(() => [...store.incidents.values()].find((i) => i.title === '503 na API'), 5000, 'incidente aberto');
     expect(incident.participants).toEqual([zeca.id]);
 
-    // As abas são os participantes, e a resposta ao convite aparece no chat.
+    // As abas são os participantes e o terminal comum da sala de guerra, que já abre sozinho.
     await page.waitForFunction(() => document.querySelector('#tabs .tab.active')?.textContent?.includes('Zeca'));
-    await page.waitForFunction(
-      () => [...document.querySelectorAll('#war-chat .msg.agente')].some((li) => li.textContent?.includes('feito: [Sala de guerra]')),
-      { timeout: 10_000 },
-    );
+    await page.waitForFunction(() => [...document.querySelectorAll('#tabs .tab')].some((t) => t.textContent?.includes('Terminal 1')));
+    // A resposta ao convite vira um card com quem respondeu e o botão, sem o texto (ele está no terminal).
+    await page.waitForSelector('#war-chat .msg.agente', { timeout: 10_000 });
+    const card = await page.$eval('#war-chat .msg.agente', (li) => ({ text: li.textContent ?? '', body: !!li.querySelector('.msg-text'), open: li.querySelector('.msg-open')?.textContent }));
+    expect(card.open).toContain('Zeca');
+    expect(card.body).toBe(false);
+    expect(card.text).not.toContain('feito:');
+
+    // Digitar @ sugere quem está na sala; Tab completa.
+    await page.focus('#war-input');
+    await page.keyboard.type('@ze');
+    await page.waitForSelector('#war-mentions:not([hidden]) li.active');
+    expect(await page.$eval('#war-mentions li.active b', (e) => e.textContent)).toBe('@zeca');
+    await page.keyboard.press('Tab');
+    expect(await page.$eval('#war-input', (e) => (e as HTMLTextAreaElement).value)).toBe('@zeca ');
+    expect(await page.$eval('#war-mentions', (e) => (e as HTMLElement).hidden)).toBe(true);
 
     // Enter envia; a mensagem aparece no chat e chega no terminal do agente.
-    await page.type('#war-input', '@zeca olha o timeout');
+    await page.keyboard.type('olha o timeout');
     await page.keyboard.press('Enter');
     await page.waitForFunction(() => [...document.querySelectorAll('#war-chat .msg.voce')].some((li) => li.textContent?.includes('olha o timeout')));
     expect(await page.$eval('#war-input', (e) => (e as HTMLTextAreaElement).value)).toBe('');

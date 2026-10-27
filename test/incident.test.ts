@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_TYPED, type Participant, invitation, oneLine, parseMentions, recordMarkdown, sharedMessage, userMessage } from '../shared/incident.ts';
+import { MAX_TYPED, type Participant, applyMention, invitation, mentionQuery, mentionSuggestions, oneLine, parseMentions, recordMarkdown, sharedMessage, userMessage } from '../shared/incident.ts';
 import type { Incident } from '../shared/types.ts';
 import { lastAssistantText } from '../server/incidents.ts';
 
@@ -128,5 +128,34 @@ describe('resposta do agente lida do transcript', () => {
   it('linhas quebradas ou de outros tipos não atrapalham', () => {
     const jsonl = ['{quebrada', JSON.stringify({ type: 'summary' }), line('assistant', [{ type: 'text', text: 'ok' }]), '{"type":"assis'].join('\n');
     expect(lastAssistantText(jsonl)).toBe('ok');
+  });
+});
+
+describe('auto-complete das menções no chat', () => {
+  it('acha a menção no cursor, e não no meio de um e-mail', () => {
+    expect(mentionQuery('oi @vit', 7)).toEqual({ start: 3, query: 'vit' });
+    expect(mentionQuery('@', 1)).toEqual({ start: 0, query: '' });
+    expect(mentionQuery('fulano@emp', 10)).toBeUndefined();
+    expect(mentionQuery('@vit olha', 9)).toBeUndefined();
+  });
+
+  it('sugere agentes e projetos com a chave que o servidor aceita, sem ligar para acento', () => {
+    const all = mentionSuggestions(people, '');
+    expect(all.map((s) => s.key)).toEqual(['ana-2', 'bruno', 'vitoria', 'filas', 'gateway']);
+    expect(all.find((s) => s.key === 'filas')).toEqual({ key: 'filas', label: 'filas', hint: 'projeto · 2 agentes' });
+    expect(mentionSuggestions(people, 'VIT').map((s) => s.label)).toEqual(['Vitória']);
+    // Quem começa com o texto vem antes de quem só contém.
+    expect(mentionSuggestions(people, 'a').map((s) => s.key)).toEqual(['ana-2', 'vitoria', 'filas', 'gateway']);
+    // Toda sugestão é uma menção válida.
+    for (const s of all) expect(parseMentions(`@${s.key}`, people).unknown).toEqual([]);
+  });
+
+  it('agente com o nome do projeto aparece uma vez só', () => {
+    expect(mentionSuggestions([{ id: 'x', name: 'Filas', project: 'filas' }], '').map((s) => s.key)).toEqual(['filas']);
+  });
+
+  it('completar troca o que foi digitado e põe o cursor depois do espaço', () => {
+    expect(applyMention('oi @vi tudo bem', 3, 6, 'vitoria')).toEqual({ text: 'oi @vitoria tudo bem', caret: 12 });
+    expect(applyMention('@fi', 0, 3, 'filas')).toEqual({ text: '@filas ', caret: 7 });
   });
 });

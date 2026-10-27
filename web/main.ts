@@ -1,4 +1,5 @@
 import type { ActivityEvent, Agent, ClientMsg, DiffScope, FileChange, FileDiff, Floor, GitInfo, Incident, MemoryStatus, OfficeState, Room, ServerMsg, WorktreeStatus } from '../shared/types.ts';
+import { type MentionSuggestion, type Participant, applyMention, mentionQuery, mentionSuggestions } from '../shared/incident.ts';
 import { windowsSteps } from '../shared/memory.ts';
 import { FLOOR_COLORS, type Cell } from '../shared/building.ts';
 import { countChanges, parseDiff, renderDiff } from './diff.ts';
@@ -208,8 +209,8 @@ function selectAgent(id?: string) {
 
 /** Abas da tela: os participantes da sala de guerra selecionada, ou os agentes da sala. */
 function currentTabs(): Agent[] {
-  if (selectedWar !== undefined) return logic.incidentAgents(currentIncident(), state.agents);
-  return roomAgents(selectedRoom);
+  if (selectedWar !== undefined) return logic.warTabs(currentIncident(), state.agents);
+  return logic.roomTabs(state.agents, selectedRoom);
 }
 
 function currentIncident(): Incident | undefined {
@@ -357,7 +358,12 @@ function renderTabs() {
     call.textContent = '+';
     call.title = 'Chamar mais gente para a sala de guerra';
     call.addEventListener('click', () => openIncidentDialog('call'));
-    nav.append(call);
+    const shell = document.createElement('button');
+    shell.className = 'tab add';
+    shell.textContent = '>_';
+    shell.title = 'Novo terminal da sala de guerra (Alt+T)';
+    shell.addEventListener('click', () => openWarShell(currentIncident()!.id));
+    nav.append(call, shell);
   } else if (selectedRoom && selectedWar === undefined) {
     const add = document.createElement('button');
     add.className = 'tab add';
@@ -485,10 +491,22 @@ function renderWarPanel() {
       const time = document.createElement('time');
       time.textContent = new Date(m.ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
       head.append(who, time);
-      const text = document.createElement('div');
-      text.className = 'msg-text';
-      text.textContent = m.text;
-      li.append(head, text);
+      // Resposta de agente: só o card. O texto você lê no terminal dele (e fica no registro).
+      if (m.kind === 'agente') {
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'msg-open';
+        open.title = 'Abrir o terminal para ler a resposta';
+        open.textContent = who.textContent;
+        open.addEventListener('click', () => m.agentId && selectAgent(m.agentId));
+        who.replaceChildren(open);
+        li.append(head);
+      } else {
+        const text = document.createElement('div');
+        text.className = 'msg-text';
+        text.textContent = m.text;
+        li.append(head, text);
+      }
       if (incident && logic.canShare(m, incident)) {
         const share = document.createElement('button');
         share.className = 'btn small ghost share';
@@ -528,7 +546,75 @@ $('#war-form').addEventListener('submit', async (e) => {
   if (!incident || !text) return;
   if (await warAction(() => api('POST', `/api/incidents/${incident.id}/messages`, { text }))) warInput.value = '';
 });
+// ---------- auto-complete das menções (@agente, @projeto) ----------
+
+const mentionBox = $('#war-mentions');
+let mentionItems: MentionSuggestion[] = [];
+let mentionIndex = 0;
+
+function warPeople(): Participant[] {
+  return logic.incidentAgents(currentIncident(), state.agents).map((a) => ({ id: a.id, name: a.name, project: state.rooms.find((r) => r.id === a.roomId)?.name ?? '?' }));
+}
+
+function updateMentions() {
+  const q = mentionQuery(warInput.value, warInput.selectionStart ?? 0);
+  mentionItems = q ? mentionSuggestions(warPeople(), q.query) : [];
+  mentionIndex = Math.min(mentionIndex, Math.max(0, mentionItems.length - 1));
+  mentionBox.hidden = !mentionItems.length;
+  mentionBox.replaceChildren(
+    ...mentionItems.map((m, i) => {
+      const li = document.createElement('li');
+      li.className = i === mentionIndex ? 'active' : '';
+      li.setAttribute('role', 'option');
+      li.innerHTML = '<b></b><small></small>';
+      li.firstElementChild!.textContent = `@${m.key}`;
+      li.lastElementChild!.textContent = m.label === m.key ? m.hint : `${m.label} · ${m.hint}`;
+      // mousedown: escolhe antes de o campo perder o foco.
+      li.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        pickMention(i);
+      });
+      return li;
+    }),
+  );
+}
+
+function pickMention(i: number) {
+  const q = mentionQuery(warInput.value, warInput.selectionStart ?? 0);
+  const item = mentionItems[i];
+  if (!q || !item) return;
+  const done = applyMention(warInput.value, q.start, warInput.selectionStart ?? 0, item.key);
+  warInput.value = done.text;
+  warInput.setSelectionRange(done.caret, done.caret);
+  mentionIndex = 0;
+  updateMentions();
+}
+
+warInput.addEventListener('input', () => {
+  mentionIndex = 0;
+  updateMentions();
+});
+warInput.addEventListener('click', updateMentions);
+warInput.addEventListener('blur', () => (mentionBox.hidden = true));
 warInput.addEventListener('keydown', (e) => {
+  if (!mentionBox.hidden && mentionItems.length) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      mentionIndex = (mentionIndex + (e.key === 'ArrowDown' ? 1 : -1) + mentionItems.length) % mentionItems.length;
+      updateMentions();
+      return;
+    }
+    if ((e.key === 'Enter' && !e.shiftKey && !e.isComposing) || e.key === 'Tab') {
+      e.preventDefault();
+      pickMention(mentionIndex);
+      return;
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      mentionBox.hidden = true;
+      return;
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
     e.preventDefault();
     $<HTMLFormElement>('#war-form').requestSubmit();
@@ -1358,6 +1444,12 @@ function confirmDialog(title: string, text: string): Promise<boolean> {
   return new Promise((resolve) => dlg.addEventListener('close', () => resolve(dlg.returnValue === 'ok'), { once: true }));
 }
 
+async function openWarShell(incidentId: string) {
+  const shell = (await api('POST', `/api/incidents/${incidentId}/shells`)) as Agent;
+  upsert(state.agents, shell);
+  selectAgent(shell.id);
+}
+
 async function openShell(roomId: string) {
   const shell = (await api('POST', '/api/shells', { roomId })) as Agent;
   upsert(state.agents, shell);
@@ -1432,11 +1524,15 @@ window.addEventListener(
   (e) => {
     if (!e.altKey || e.ctrlKey || e.metaKey) return;
     if (/^Digit[1-9]$/.test(e.code)) {
-      const a = roomAgents(selectedRoom)[Number(e.code.slice(5)) - 1];
+      // As abas que estão na tela: as da sala de guerra, quando ela está selecionada.
+      const a = currentTabs()[Number(e.code.slice(5)) - 1];
       if (a) {
         e.preventDefault();
         selectAgent(a.id);
       }
+    } else if (e.code === 'KeyT' && currentIncident()) {
+      e.preventDefault();
+      openWarShell(currentIncident()!.id);
     } else if (e.code === 'KeyT' && selectedRoom) {
       e.preventDefault();
       openShell(selectedRoom);

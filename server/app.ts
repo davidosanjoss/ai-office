@@ -21,7 +21,7 @@ import {
 import { discoverProjects } from './discover.ts';
 import { fileDiff, gitInfo } from './git.ts';
 import { handleHook } from './hooks.ts';
-import { IncidentError, addParticipants, closeIncident, incidentAt, leaveIncidents, openIncident, sendMessage, shareMessage } from './incidents.ts';
+import { IncidentError, addParticipants, closeIncident, incidentAt, leaveIncidents, openIncident, openWarShell, sendMessage, shareMessage } from './incidents.ts';
 import { MemoryError, memoryEvents, memoryStatus, openDataDir, startInstall, startUninstall } from './memory.ts';
 import { pickFolder } from './picker.ts';
 import { WorktreeError, mergeWorktree, openPr, removeWorktree, worktreeStatus } from './worktree.ts';
@@ -323,6 +323,7 @@ export async function buildApp(opts: { port?: number } = {}) {
   app.post('/api/incidents/:id/participants', incidentRoute((req) => addParticipants(req.params.id, req.body?.roomIds, req.body?.agentIds)));
   app.post('/api/incidents/:id/messages', incidentRoute((req) => sendMessage(req.params.id, req.body?.text)));
   app.post('/api/incidents/:id/messages/:msg/share', incidentRoute((req) => shareMessage(req.params.id, Number(req.params.msg))));
+  app.post('/api/incidents/:id/shells', incidentRoute((req) => openWarShell(req.params.id)));
   app.post('/api/incidents/:id/close', incidentRoute((req) => closeIncident(req.params.id, String(req.body?.resolution ?? ''))));
 
   if (fs.existsSync(DIST)) {

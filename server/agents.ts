@@ -74,28 +74,37 @@ export function isRunning(id: string): boolean {
   return running.has(id);
 }
 
-function shellName(roomId: string): string {
-  const used = new Set([...store.agents.values()].filter((a) => a.roomId === roomId && a.kind === 'shell').map((a) => a.name));
+function shellName(roomId: string, incidentId?: string): string {
+  // Os terminais da sala de guerra contam à parte dos da sala do projeto onde abrem.
+  const used = new Set(
+    [...store.agents.values()]
+      .filter((a) => a.kind === 'shell' && (incidentId ? a.incidentId === incidentId : a.roomId === roomId && !a.incidentId))
+      .map((a) => a.name),
+  );
   let n = 1;
   while (used.has(`Terminal ${n}`)) n++;
   return `Terminal ${n}`;
 }
 
-/** Abre uma aba de terminal comum (o seu shell) na pasta da sala, sem Claude. */
-export function createShell(roomId: string): Agent {
+/**
+ * Abre uma aba de terminal comum (o seu shell) na pasta da sala, sem Claude. Com `incidentId`,
+ * o terminal é da sala de guerra: aparece nas abas dela e fecha quando o incidente é encerrado.
+ */
+export function createShell(roomId: string, opts: { incidentId?: string } = {}): Agent {
   const room = store.rooms.get(roomId);
   if (!room) throw new Error('Sala não encontrada');
   const agent: Agent = {
     id: randomUUID().slice(0, 8),
     kind: 'shell',
     roomId,
-    name: shellName(roomId),
+    name: shellName(roomId, opts.incidentId),
     cwd: room.path,
     sessionId: '',
     status: 'idle',
     activity: path.basename(defaultShell()),
     subagents: 0,
     createdAt: Date.now(),
+    ...(opts.incidentId ? { incidentId: opts.incidentId, forIncident: true } : {}),
   };
   store.putAgent(agent);
   spawn(agent, false);
