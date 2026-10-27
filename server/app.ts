@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import fastifyStatic from '@fastify/static';
 import fastifyWebsocket from '@fastify/websocket';
 import Fastify from 'fastify';
-import type { ClientMsg, ServerMsg } from '../shared/types.ts';
+import type { ClientMsg, MemoryStatus, ServerMsg } from '../shared/types.ts';
 import {
   createAgent,
   createShell,
@@ -22,6 +22,7 @@ import { discoverProjects } from './discover.ts';
 import { fileDiff, gitInfo } from './git.ts';
 import { handleHook } from './hooks.ts';
 import { IncidentError, addParticipants, closeIncident, incidentAt, leaveIncidents, openIncident, sendMessage, shareMessage } from './incidents.ts';
+import { MemoryError, memoryEvents, memoryStatus, openDataDir, startInstall, startUninstall } from './memory.ts';
 import { pickFolder } from './picker.ts';
 import { WorktreeError, mergeWorktree, openPr, removeWorktree, worktreeStatus } from './worktree.ts';
 import { PORT } from './platform.ts';
@@ -56,7 +57,9 @@ export async function buildApp(opts: { port?: number } = {}) {
   app.get('/ws', { websocket: true }, (socket) => {
     const send = (msg: ServerMsg) => socket.readyState === socket.OPEN && socket.send(JSON.stringify(msg));
     const onMsg = (msg: ServerMsg) => send(msg);
+    const onMemory = (memory: MemoryStatus) => send({ t: 'memory', memory });
     store.on('msg', onMsg);
+    memoryEvents.on('status', onMemory);
     send({ t: 'state', state: store.snapshot() });
 
     socket.on('message', (raw) => {
@@ -83,7 +86,10 @@ export async function buildApp(opts: { port?: number } = {}) {
         }
       }
     });
-    socket.on('close', () => store.off('msg', onMsg));
+    socket.on('close', () => {
+      store.off('msg', onMsg);
+      memoryEvents.off('status', onMemory);
+    });
   });
 
   app.post<{ Body: { event: string; agentId?: string; payload: Record<string, unknown> } }>('/api/hook', async (req) => {
@@ -246,6 +252,22 @@ export async function buildApp(opts: { port?: number } = {}) {
     removeAgent(req.params.id);
     return { ok: true };
   });
+
+  // ---------- ai-memory (memória dos agentes) ----------
+
+  const memoryRoute = (fn: () => unknown) => async (_req: unknown, reply: any) => {
+    try {
+      return await fn();
+    } catch (err) {
+      if (err instanceof MemoryError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
+  };
+  app.get('/api/memory', async () => memoryStatus());
+  /** Instala em segundo plano: responde na hora e o progresso chega pelo WebSocket. */
+  app.post('/api/memory/install', memoryRoute(() => startInstall()));
+  app.post('/api/memory/uninstall', memoryRoute(() => startUninstall()));
+  app.post('/api/memory/open', memoryRoute(() => (openDataDir(), { ok: true })));
 
   // ---------- worktree de um agente: PR, merge na sala e encerrar ----------
 

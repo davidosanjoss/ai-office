@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { Agent, Floor, Incident, IncidentMessage, Room } from '../shared/types.ts';
+import type { Agent, Floor, Incident, IncidentMessage, MemoryStatus, Room } from '../shared/types.ts';
 import {
   IDLE_RELEASE_MS,
   TYPING_GRACE_MS,
   attentionQueue,
   becameAttention,
   exitedMessage,
+  memoryView,
   nextAutoFocus,
   officeAgents,
   resumeLabel,
@@ -291,5 +292,45 @@ describe('sala de guerra', () => {
     expect(canRemoveWarRoom(three, 1, [])).toBe(false);
     expect(canRemoveWarRoom(three, 2, [{ ...incident, slot: 2 }])).toBe(false);
     expect(canRemoveWarRoom(floor, 0, [])).toBe(false);
+  });
+});
+
+describe('indicador da memória (ai-memory)', () => {
+  const st = (patch: Partial<MemoryStatus> = {}): MemoryStatus => ({
+    running: false,
+    hooks: false,
+    mcp: false,
+    url: 'http://127.0.0.1:49374',
+    dataDir: '/home/ana/.local/share/ai-memory',
+    version: '3.2.8',
+    autoInstall: true,
+    docker: true,
+    ...patch,
+  });
+
+  it('nada instalado: desligada, oferece instalar e diz o que falta', () => {
+    const v = memoryView(st());
+    expect(v).toMatchObject({ label: 'Memória: desligada', tone: 'off', canInstall: true, canUninstall: false, showSteps: false });
+    expect(v.problems).toHaveLength(3);
+  });
+
+  it('tudo no lugar: ligada, sem instalar de novo', () => {
+    expect(memoryView(st({ running: true, hooks: true, mcp: true }))).toMatchObject({ label: 'Memória: ligada', tone: 'on', canInstall: false, canUninstall: true, problems: [] });
+  });
+
+  it('servidor fora do ar com o Claude ligado: incompleta, e instalar de novo sobe o servidor', () => {
+    const v = memoryView(st({ hooks: true, mcp: true }));
+    expect(v).toMatchObject({ label: 'Memória: incompleta', tone: 'warn', canInstall: true, canUninstall: true });
+    expect(v.problems).toEqual(['O servidor do ai-memory não está respondendo.']);
+  });
+
+  it('instalando: nenhum botão até terminar', () => {
+    const v = memoryView(st({ job: { kind: 'instalar', step: 'x', done: false, log: [] } }));
+    expect(v).toMatchObject({ label: 'Memória: instalando…', tone: 'busy', canInstall: false, canUninstall: false });
+  });
+
+  it('Windows: sem botão de instalar, mostra o passo a passo', () => {
+    expect(memoryView(st({ autoInstall: false }))).toMatchObject({ canInstall: false, canUninstall: false, showSteps: true });
+    expect(memoryView(st({ autoInstall: false, running: true, hooks: true, mcp: true })).showSteps).toBe(false);
   });
 });

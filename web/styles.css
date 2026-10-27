@@ -121,6 +121,70 @@ button {
   animation: pulse 1.4s ease-in-out infinite;
 }
 
+/* Indicador da memória (ai-memory) no topo */
+.memory {
+  border-radius: 12px;
+  padding: 2px 10px;
+  cursor: pointer;
+  font-family: var(--pixel);
+  font-size: 11px;
+  background: transparent;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+.memory.on {
+  border-color: var(--done);
+  color: var(--done);
+}
+.memory.warn {
+  border-color: var(--waiting);
+  color: var(--waiting);
+}
+.memory.busy {
+  border-color: var(--working);
+  color: var(--working);
+  animation: pulse 1.4s ease-in-out infinite;
+}
+#dlg-memory {
+  max-width: 620px;
+}
+.mem-checks {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0;
+}
+.mem-checks li::before {
+  content: '✗ ';
+  color: var(--danger);
+}
+.mem-checks li.ok::before {
+  content: '✓ ';
+  color: var(--done);
+}
+.mem-data code {
+  word-break: break-all;
+}
+.mem-plan ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.mem-warn {
+  color: var(--waiting);
+}
+.mem-step {
+  color: var(--working);
+}
+.mem-pre {
+  max-height: 220px;
+  overflow: auto;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 6px 8px;
+  font: 11px 'JetBrains Mono', monospace;
+  white-space: pre;
+}
+
 @keyframes pulse {
   50% {
     filter: brightness(1.3);

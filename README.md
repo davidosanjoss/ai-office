@@ -13,6 +13,7 @@ Um escritório em pixel art para gerenciar várias sessões do Claude Code ao me
 - Quando um agente termina ou pede aprovação, o escritório **abre o terminal de quem terminou primeiro**, assim que você não estiver digitando em outro.
 - Barra lateral com **git** (branch, arquivos modificados, commits) e o **feed de atividade**.
 - Opção de colocar cada agente num **git worktree** com branch própria, para vários agentes mexerem no mesmo repo sem conflito. Quando ele termina, o painel de git **abre o PR** (push + `gh pr create`, com título e descrição sugeridos pelos commits), **traz o trabalho para a branch da sala** (merge local, que avisa antes se daria conflito) e **encerra o worktree** (a branch só pode ser apagada se o trabalho já estiver na sala ou no GitHub).
+- **Memória dos agentes** com o [ai-memory](https://github.com/akitaonrails/ai-memory) (opcional): o indicador no topo mostra se ela está ligada e instala com um clique (veja [Memória dos agentes](#memória-dos-agentes-ai-memory)).
 
 Tudo roda localmente: o servidor escuta só em `127.0.0.1`.
 
@@ -24,6 +25,7 @@ A arte (funcionários, móveis, piso, árvores) foi gerada no [PixelLab](https:/
 - [Claude Code](https://docs.claude.com/claude-code) instalado e logado (o comando `claude` precisa funcionar no terminal)
 - Git (opcional, para o painel de git e os worktrees)
 - [GitHub CLI](https://cli.github.com) (`gh`, opcional, para abrir PRs dos worktrees; rode `gh auth login` uma vez)
+- [Docker](https://docs.docker.com/get-docker/) (opcional, para a memória dos agentes)
 
 Funciona em Linux, macOS e Windows. Não precisa de compilador: o terminal usa binários prontos.
 
@@ -62,6 +64,25 @@ Ou, no Chrome/Edge, menu ⋮ → *Transmitir, salvar e compartilhar* → *Instal
 | `Ctrl+Shift+C` / `Ctrl+Shift+V` | Copiar / colar no terminal |
 
 O botão 🔔 ativa notificações do sistema para quando a aba estiver em segundo plano.
+
+### Memória dos agentes (ai-memory)
+
+Sem memória, cada sessão do Claude começa do zero. O [ai-memory](https://github.com/akitaonrails/ai-memory) guarda o que os agentes fazem em cada projeto (limpando dados sensíveis antes) e entrega um resumo no começo da próxima sessão. Funciona sem chave de API.
+
+Clique em **Memória** no topo. Em Linux e macOS, com o Docker instalado, o botão **Instalar**:
+
+1. baixa a imagem do ai-memory numa **versão fixa** (atualizar é uma decisão, não acontece sozinho);
+2. cria a pasta dos dados com um **token**: sem ele, qualquer página aberta no navegador leria a memória;
+3. sobe o servidor só para esta máquina (`127.0.0.1:49374`), religando sozinho com o computador;
+4. instala o comando `ai-memory` (conferido pelo checksum) e liga **hooks e MCP no Claude Code**.
+
+Os hooks valem para **todas** as sessões do Claude na máquina, não só as do escritório. **Desinstalar** tira hooks, MCP e o container e mantém os dados.
+
+Os dados ficam na pasta padrão do ai-memory, **fora deste repositório**: `~/.local/share/ai-memory` no Linux e `~/Library/Application Support/ai-memory` no macOS. O mesmo existe pelo terminal: `npm run memoria:up`, `npm run memoria:down` e `npm run memoria:status`.
+
+No **Windows**, o escritório mostra se a memória está ligada e, em vez de instalar sozinho, mostra os comandos do PowerShell (com o Docker Desktop) para colar.
+
+Se você usar o comando `ai-memory` direto no terminal (`ai-memory status`, `ai-memory search`…), defina `AI_MEMORY_DATA_DIR` com a pasta dos dados: sem ela, o wrapper do Docker procura um volume que não é o nosso. Para religar hooks e MCP, use o **Instalar** do escritório (ou `npm run memoria:up`), que já passa isso.
 
 ## Como funciona
 

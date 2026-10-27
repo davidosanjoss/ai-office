@@ -165,6 +165,36 @@ export interface FileDiff {
   truncated: boolean;
 }
 
+/** Situação do ai-memory (memória dos agentes), para o indicador do topo. */
+export interface MemoryStatus {
+  /** O servidor do ai-memory responde no `/healthz`. */
+  running: boolean;
+  /** Hooks do ai-memory instalados no Claude Code (capturam as sessões). */
+  hooks: boolean;
+  /** MCP do ai-memory registrado no Claude Code (as sessões consultam a memória). */
+  mcp: boolean;
+  url: string;
+  /** Pasta dos dados: a padrão do ai-memory, fora deste repositório. */
+  dataDir: string;
+  version: string;
+  /** Instalação pelo botão (Linux e macOS). No Windows, o escritório mostra o passo a passo. */
+  autoInstall: boolean;
+  /** Achou o comando `docker`. */
+  docker: boolean;
+  /** Instalação ou remoção em andamento (ou a última, com o erro). */
+  job?: MemoryJob;
+}
+
+export interface MemoryJob {
+  kind: 'instalar' | 'desinstalar';
+  /** Passo atual, em português, para mostrar no diálogo. */
+  step: string;
+  done: boolean;
+  error?: string;
+  /** Últimas linhas de saída dos comandos, para quando algo falha. */
+  log: string[];
+}
+
 // Mensagens WebSocket servidor → navegador
 export type ServerMsg =
   | { t: 'state'; state: OfficeState }
@@ -176,6 +206,7 @@ export type ServerMsg =
   | { t: 'roomRemoved'; id: string }
   | { t: 'incident'; incident: Incident }
   | { t: 'incidentRemoved'; id: string }
+  | { t: 'memory'; memory: MemoryStatus }
   | { t: 'activity'; event: ActivityEvent }
   | { t: 'out'; id: string; data: string }
   | { t: 'replay'; id: string; data: string };

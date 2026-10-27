@@ -14,7 +14,10 @@
     "test:watch": "vitest",
     "service:install": "tsx server/service.ts install",
     "service:uninstall": "tsx server/service.ts uninstall",
-    "service:status": "tsx server/service.ts status"
+    "service:status": "tsx server/service.ts status",
+    "memoria:up": "tsx server/memory-cli.ts up",
+    "memoria:down": "tsx server/memory-cli.ts down",
+    "memoria:status": "tsx server/memory-cli.ts status"
   },
   "keywords": [],
   "author": "",
