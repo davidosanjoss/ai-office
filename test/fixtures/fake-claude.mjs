@@ -72,9 +72,10 @@ out('\x1b[c');
 let line = '';
 if (process.stdin.isTTY) process.stdin.setRawMode(true);
 process.stdin.setEncoding('utf8');
-process.stdin.on('data', (data) => {
-  // Respostas automáticas do terminal (ESC ...) não são digitação.
-  if (data.startsWith('\x1b')) return;
+process.stdin.on('data', (raw) => {
+  // Respostas automáticas do terminal (ESC [ ... ) não são digitação. Remove só elas: no Windows
+  // a resposta e o que foi digitado podem chegar juntos no mesmo pedaço.
+  const data = raw.replace(/\x1b\[[0-9;?<>=]*[ -\/]*[@-~]/g, '').replace(/\x1b./g, '');
   for (const ch of data) {
     if (ch === '\r' || ch === '\n') {
       out('\r\n');
