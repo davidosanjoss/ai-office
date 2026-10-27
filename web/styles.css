@@ -1086,3 +1086,162 @@ body.dir-hidden #directory {
     display: none;
   }
 }
+
+/* ---------- sala de guerra ---------- */
+
+#war-panel {
+  gap: 8px;
+  /* Painel baixo: rola inteiro, mas o chat nunca some. */
+  overflow: auto;
+}
+#war-panel #war-title {
+  color: var(--danger);
+  font-size: 13px;
+  line-height: 1.4;
+  justify-content: flex-start;
+}
+#war-desc {
+  margin: 0;
+  font-size: 12px;
+  white-space: pre-wrap;
+  max-height: 4.2em;
+  overflow: auto;
+}
+.war-file {
+  margin: 4px 0 0;
+  font-size: 10px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: all;
+}
+#war-people {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+.war-person {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 11px;
+  cursor: pointer;
+}
+.war-person.current {
+  border-color: var(--accent);
+}
+.war-person .dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+#war-chat {
+  flex: 1;
+  min-height: 120px;
+  overflow: auto;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+#war-chat .msg {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bg);
+  border-left: 3px solid var(--line);
+  font-size: 12px;
+}
+#war-chat .msg.voce {
+  border-left-color: var(--accent);
+  background: #222a45;
+}
+#war-chat .msg.agente {
+  border-left-color: var(--done);
+}
+#war-chat .msg.repasse {
+  border-left-color: var(--waiting);
+  opacity: 0.8;
+}
+#war-chat .msg.sistema {
+  background: none;
+  border: 0;
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+#war-chat .msg.sistema .msg-head {
+  display: none;
+}
+.msg-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 3px;
+}
+.msg-head b {
+  font-weight: 600;
+}
+.msg-head time {
+  color: var(--muted);
+  font-size: 10px;
+}
+.msg-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.msg .share {
+  margin-top: 6px;
+}
+.msg.repasse .msg-text {
+  max-height: 4.5em;
+  overflow: hidden;
+}
+#war-form {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+}
+#war-input {
+  flex: 1;
+  resize: vertical;
+  min-height: 36px;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+}
+#war-error {
+  margin: 0;
+}
+.war-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+#incident-who {
+  max-height: 46vh;
+  overflow: auto;
+}
+#incident-who h4 {
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+#dlg-incident textarea,
+#dlg-close-incident textarea {
+  width: 100%;
+  resize: vertical;
+}

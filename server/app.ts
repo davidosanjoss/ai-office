@@ -20,10 +20,11 @@ import {
 import { discoverProjects } from './discover.ts';
 import { fileDiff, gitInfo } from './git.ts';
 import { handleHook } from './hooks.ts';
+import { IncidentError, addParticipants, closeIncident, incidentAt, leaveIncidents, openIncident, sendMessage, shareMessage } from './incidents.ts';
 import { pickFolder } from './picker.ts';
 import { PORT } from './platform.ts';
 import { DEFAULT_FLOOR, store } from './store.ts';
-import { FLOOR_COLORS, autoPlace, canPlace, isValidCell } from '../shared/building.ts';
+import { FLOOR_COLORS, MAX_WAR_ROOMS, autoPlace, canPlace, isValidCell } from '../shared/building.ts';
 import type { Floor, Room } from '../shared/types.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -112,12 +113,21 @@ export async function buildApp(opts: { port?: number } = {}) {
     return floor;
   });
 
-  app.patch<{ Params: { id: string }; Body: { name?: string; color?: string } }>('/api/floors/:id', async (req, reply) => {
+  app.patch<{ Params: { id: string }; Body: { name?: string; color?: string; warRooms?: number } }>('/api/floors/:id', async (req, reply) => {
     const floor = store.floors.get(req.params.id);
     if (!floor) return reply.code(404).send({ error: 'Andar não encontrado' });
     const name = req.body?.name === undefined ? floor.name : String(req.body.name).trim();
     if (!name) return reply.code(400).send({ error: 'Dê um nome ao andar' });
-    const updated = { ...floor, name, color: validColor(req.body?.color) ?? floor.color };
+    let warRooms = store.warRoomsOf(floor.id);
+    if (req.body?.warRooms !== undefined) {
+      const n = Number(req.body.warRooms);
+      if (!Number.isInteger(n) || n < 1 || n > MAX_WAR_ROOMS) return reply.code(400).send({ error: `Um andar tem de 1 a ${MAX_WAR_ROOMS} salas de guerra` });
+      for (let slot = n; slot < warRooms; slot++) {
+        if (incidentAt(floor.id, slot)) return reply.code(400).send({ error: 'Encerre o incidente antes de tirar essa sala de guerra' });
+      }
+      warRooms = n;
+    }
+    const updated = { ...floor, name, color: validColor(req.body?.color) ?? floor.color, warRooms };
     store.putFloor(updated);
     return updated;
   });
@@ -142,10 +152,10 @@ export async function buildApp(opts: { port?: number } = {}) {
     if (!floorId || !store.floors.has(floorId)) return reply.code(400).send({ error: 'Escolha um andar para a sala' });
     const rooms = store.roomsOn(floorId);
     const wanted = req.body.pos;
-    if (wanted !== undefined && !(isValidCell(wanted) && canPlace(rooms, wanted))) {
+    if (wanted !== undefined && !(isValidCell(wanted) && canPlace(rooms, wanted, 'andar', store.warRoomsOf(floorId)))) {
       return reply.code(400).send({ error: 'Essa vaga do andar não está livre' });
     }
-    const pos = wanted ? { x: wanted.x, y: wanted.y } : autoPlace(rooms);
+    const pos = wanted ? { x: wanted.x, y: wanted.y } : autoPlace(rooms, 'andar', store.warRoomsOf(floorId));
     const room: Room = { id: randomUUID().slice(0, 8), name: req.body.name?.trim() || path.basename(dir), path: dir, createdAt: Date.now(), floorId, pos };
     store.putRoom(room);
     return room;
@@ -158,13 +168,17 @@ export async function buildApp(opts: { port?: number } = {}) {
     const floorId = String(req.body?.floorId ?? '');
     if (!store.floors.has(floorId)) return reply.code(400).send({ error: 'Andar não encontrado' });
     if (room.floorId === floorId) return room;
-    const moved = { ...room, floorId, pos: autoPlace(store.roomsOn(floorId)) };
+    const moved = { ...room, floorId, pos: autoPlace(store.roomsOn(floorId), 'andar', store.warRoomsOf(floorId)) };
     store.putRoom(moved);
     return moved;
   });
 
   app.delete<{ Params: { id: string } }>('/api/rooms/:id', async (req) => {
-    for (const a of store.agents.values()) if (a.roomId === req.params.id) removeAgent(a.id);
+    for (const a of store.agents.values()) {
+      if (a.roomId !== req.params.id) continue;
+      leaveIncidents(a.id);
+      removeAgent(a.id);
+    }
     store.removeRoom(req.params.id);
     return { ok: true };
   });
@@ -226,9 +240,28 @@ export async function buildApp(opts: { port?: number } = {}) {
   });
 
   app.delete<{ Params: { id: string } }>('/api/agents/:id', async (req) => {
+    leaveIncidents(req.params.id);
     removeAgent(req.params.id);
     return { ok: true };
   });
+
+  // ---------- sala de guerra ----------
+
+  /** Erros de regra (sala ocupada, @ desconhecido...) viram 400 com a mensagem para você. */
+  const incidentRoute = (fn: (req: any) => unknown) => async (req: any, reply: any) => {
+    try {
+      return await fn(req);
+    } catch (err) {
+      if (err instanceof IncidentError) return reply.code(400).send({ error: err.message });
+      throw err;
+    }
+  };
+
+  app.post('/api/incidents', incidentRoute((req) => openIncident(req.body ?? {})));
+  app.post('/api/incidents/:id/participants', incidentRoute((req) => addParticipants(req.params.id, req.body?.roomIds, req.body?.agentIds)));
+  app.post('/api/incidents/:id/messages', incidentRoute((req) => sendMessage(req.params.id, req.body?.text)));
+  app.post('/api/incidents/:id/messages/:msg/share', incidentRoute((req) => shareMessage(req.params.id, Number(req.params.msg))));
+  app.post('/api/incidents/:id/close', incidentRoute((req) => closeIncident(req.params.id, String(req.body?.resolution ?? ''))));
 
   if (fs.existsSync(DIST)) {
     await app.register(fastifyStatic, { root: DIST });

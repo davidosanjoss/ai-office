@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import type { Agent, Floor, Room } from '../shared/types.ts';
+import type { Agent, Floor, Incident, Room } from '../shared/types.ts';
 import { killAll } from '../server/agents.ts';
 import { buildApp } from '../server/app.ts';
 import { store } from '../server/store.ts';
@@ -372,5 +372,171 @@ describe('andares', () => {
     await api('DELETE', `/api/rooms/${room.id}`);
     expect((await api('DELETE', `/api/floors/${f.id}`)).status).toBe(200);
     expect(store.floors.has(f.id)).toBe(false);
+  });
+});
+
+describe('sala de guerra', () => {
+  let floor: Floor;
+  let gateway: Room;
+  let filas: Room;
+  let bruno: Agent;
+  let incident: Incident;
+  /** O agente criado para o incidente, na sala do gateway. */
+  let novo: Agent;
+
+  const inc = () => store.incidents.get(incident.id)!;
+  const replies = (agentId: string) => inc().messages.filter((m) => m.kind === 'agente' && m.agentId === agentId);
+  const waitReplies = (agentId: string, n: number) =>
+    waitFor(() => replies(agentId).length >= n, 10_000, `${n} resposta(s) de ${agentId} no chat (tem ${replies(agentId).length})`);
+
+  beforeAll(async () => {
+    floor = (await api<Floor>('POST', '/api/floors', { name: 'Incidentes' })).data;
+    gateway = (await api<Room>('POST', '/api/rooms', { path: tempDir('gateway'), name: 'gateway', floorId: floor.id })).data;
+    filas = (await api<Room>('POST', '/api/rooms', { path: tempDir('filas'), name: 'filas', floorId: floor.id })).data;
+    bruno = await hire(filas, { name: 'Bruno' });
+    await waitStatus(bruno.id, 'idle');
+  });
+
+  it('a planta reserva a coluna do elevador: sala de projeto não vai para lá', async () => {
+    expect((await api('POST', '/api/rooms', { path: tempDir('x'), floorId: floor.id, pos: { x: 0, y: 1 } })).status).toBe(400);
+    expect(gateway.pos!.x).not.toBe(0);
+  });
+
+  it('abre o incidente: um agente novo no projeto escolhido e um que já trabalhava, cada um com o convite', async () => {
+    const { status, data } = await api<Incident>('POST', '/api/incidents', {
+      floorId: floor.id,
+      slot: 0,
+      title: '503 na API',
+      description: 'Pedidos falhando desde 10h',
+      roomIds: [gateway.id],
+      agentIds: [bruno.id],
+    });
+    expect(status, JSON.stringify(data)).toBe(200);
+    incident = data;
+    expect(incident.participants).toHaveLength(2);
+    novo = store.agents.get(incident.participants[0])!;
+    ws.send({ t: 'attach', id: novo.id });
+    expect(novo).toMatchObject({ roomId: gateway.id, incidentId: incident.id, forIncident: true });
+    expect(store.agents.get(bruno.id)).toMatchObject({ incidentId: incident.id });
+    expect(store.agents.get(bruno.id)?.forIncident).toBeUndefined();
+
+    // O convite é digitado no terminal de cada um; as respostas vão para o chat da sala.
+    await waitOutput(bruno.id, '[Sala de guerra] Você é Bruno (projeto filas)');
+    await waitOutput(novo.id, `Você é ${novo.name} (projeto gateway)`);
+    await waitReplies(bruno.id, 1);
+    await waitReplies(novo.id, 1);
+    expect(replies(bruno.id)[0].text).toContain('feito: [Sala de guerra] Você é Bruno');
+
+    // O registro tem o briefing e a linha do tempo.
+    const md = fs.readFileSync(incident.file, 'utf8');
+    expect(path.dirname(incident.file)).toBe(path.join(process.env.AI_OFFICE_DATA!, 'incidentes'));
+    expect(md).toContain('# Incidente: 503 na API');
+    expect(md).toContain('Pedidos falhando desde 10h');
+    expect(md).toContain('Modo investigação');
+    expect(md).toContain('feito: [Sala de guerra]');
+  });
+
+  it('não abre um segundo incidente na mesma sala, nem chama quem já está numa', async () => {
+    const again = await api('POST', '/api/incidents', { floorId: floor.id, slot: 0, title: 'outro', roomIds: [filas.id] });
+    expect(again.status).toBe(400);
+    expect((await api('PATCH', `/api/floors/${floor.id}`, { warRooms: 2 })).status).toBe(200);
+    const busy = await api<{ error: string }>('POST', '/api/incidents', { floorId: floor.id, slot: 1, title: 'outro', agentIds: [bruno.id] });
+    expect(busy.status).toBe(400);
+    expect(busy.data.error).toContain('Bruno já está numa sala de guerra');
+    // Sala de guerra que não existe, ninguém chamado, título vazio, projeto de outro andar.
+    expect((await api('POST', '/api/incidents', { floorId: floor.id, slot: 5, title: 'x', roomIds: [filas.id] })).status).toBe(400);
+    expect((await api('POST', '/api/incidents', { floorId: floor.id, slot: 1, title: 'x' })).status).toBe(400);
+    expect((await api('POST', '/api/incidents', { floorId: floor.id, slot: 1, title: ' ', roomIds: [filas.id] })).status).toBe(400);
+    const outro = (await api<Room>('POST', '/api/rooms', { path: tempDir('fora') })).data;
+    expect((await api('POST', '/api/incidents', { floorId: floor.id, slot: 1, title: 'x', roomIds: [outro.id] })).status).toBe(400);
+    // Só sobe até o limite, nunca abaixo de 1; a segunda (vazia) pode ser tirada.
+    expect((await api('PATCH', `/api/floors/${floor.id}`, { warRooms: 0 })).status).toBe(400);
+    expect((await api('PATCH', `/api/floors/${floor.id}`, { warRooms: 99 })).status).toBe(400);
+    expect((await api<Floor>('PATCH', `/api/floors/${floor.id}`, { warRooms: 1 })).data.warRooms).toBe(1);
+  });
+
+  it('a sala de guerra com incidente aberto não pode ser tirada do andar', async () => {
+    await api('PATCH', `/api/floors/${floor.id}`, { warRooms: 2 });
+    const second = await api<Incident>('POST', '/api/incidents', { floorId: floor.id, slot: 1, title: 'lentidão', roomIds: [filas.id] });
+    expect(second.status).toBe(200);
+    const blocked = await api<{ error: string }>('PATCH', `/api/floors/${floor.id}`, { warRooms: 1 });
+    expect(blocked.status).toBe(400);
+    expect(blocked.data.error).toContain('Encerre o incidente');
+    expect((await api('POST', `/api/incidents/${second.data.id}/close`, {})).status).toBe(200);
+    expect((await api<Floor>('PATCH', `/api/floors/${floor.id}`, { warRooms: 1 })).data.warRooms).toBe(1);
+  });
+
+  it('@projeto manda só para aquele projeto; @ de quem não está na sala é recusado', async () => {
+    const { status } = await api('POST', `/api/incidents/${incident.id}/messages`, { text: '@filas a fila encheu?' });
+    expect(status).toBe(200);
+    await waitOutput(bruno.id, 'Mensagem do usuário só para você: @filas a fila encheu?');
+    await waitReplies(bruno.id, 2);
+    expect(ws.out(novo.id)).not.toContain('a fila encheu?');
+    expect(inc().messages.find((m) => m.kind === 'voce')?.to).toEqual([bruno.id]);
+
+    const unknown = await api<{ error: string }>('POST', `/api/incidents/${incident.id}/messages`, { text: '@carlos olha isso' });
+    expect(unknown.status).toBe(400);
+    expect(unknown.data.error).toContain('@carlos');
+  });
+
+  it('repassar a resposta de um agente leva o texto para os outros, e só quando você pede', async () => {
+    const reply = replies(bruno.id).at(-1)!;
+    const before = replies(novo.id).length;
+    const { status } = await api('POST', `/api/incidents/${incident.id}/messages/${reply.id}/share`);
+    expect(status).toBe(200);
+    await waitOutput(novo.id, '[Sala de guerra] Bruno (projeto filas) disse: feito:');
+    await waitReplies(novo.id, before + 1);
+    // A resposta de quem recebeu o repasse não volta sozinha para o Bruno.
+    await new Promise((r) => setTimeout(r, 600));
+    expect(ws.out(bruno.id)).not.toContain(`${novo.name} (projeto gateway) disse`);
+    // Mensagem sua não é "resposta de agente": não dá para repassar.
+    const mine = inc().messages.find((m) => m.kind === 'voce')!;
+    expect((await api('POST', `/api/incidents/${incident.id}/messages/${mine.id}/share`)).status).toBe(400);
+  });
+
+  it('mensagens seguidas esperam o agente terminar a anterior, e todas chegam na ordem', async () => {
+    const before = replies(bruno.id).length;
+    await api('POST', `/api/incidents/${incident.id}/messages`, { text: 'primeira pergunta' });
+    await api('POST', `/api/incidents/${incident.id}/messages`, { text: 'segunda pergunta' });
+    await waitReplies(bruno.id, before + 2);
+    const out = ws.out(bruno.id);
+    expect(out.indexOf('segunda pergunta')).toBeGreaterThan(out.indexOf('primeira pergunta'));
+    expect(replies(bruno.id).slice(-2).map((m) => m.text)).toEqual([
+      expect.stringContaining('primeira pergunta'),
+      expect.stringContaining('segunda pergunta'),
+    ]);
+  });
+
+  it('a resposta vem do campo do hook quando o Claude manda; transcript fora do ~/.claude é ignorado', async () => {
+    const n = inc().messages.length;
+    await api('POST', '/api/hook', { event: 'Stop', agentId: bruno.id, payload: { transcript_path: '/etc/passwd' } });
+    expect(inc().messages.length).toBe(n);
+    await api('POST', '/api/hook', { event: 'Stop', agentId: bruno.id, payload: { last_assistant_message: 'Achei: timeout de 5s' } });
+    expect(inc().messages.at(-1)).toMatchObject({ kind: 'agente', agentId: bruno.id, text: 'Achei: timeout de 5s' });
+  });
+
+  it('chamar mais gente, e quem é demitido sai da sala', async () => {
+    const extra = await hire(filas, { name: 'Carla' });
+    await waitStatus(extra.id, 'idle');
+    expect((await api('POST', `/api/incidents/${incident.id}/participants`, { agentIds: [extra.id] })).status).toBe(200);
+    expect(inc().participants).toContain(extra.id);
+    await waitOutput(extra.id, '[Sala de guerra] Você é Carla');
+    await api('DELETE', `/api/agents/${extra.id}`);
+    expect(inc().participants).not.toContain(extra.id);
+    expect(inc().messages.at(-1)?.text).toBe('Carla saiu da sala');
+  });
+
+  it('encerrar: o registro vira post-mortem, o agente do incidente vai embora e o outro volta para a mesa', async () => {
+    const { status } = await api('POST', `/api/incidents/${incident.id}/close`, { resolution: 'Aumentamos os consumidores' });
+    expect(status).toBe(200);
+    expect(store.incidents.has(incident.id)).toBe(false);
+    expect(store.agents.has(novo.id)).toBe(false);
+    expect(store.agents.get(bruno.id)?.incidentId).toBeUndefined();
+    const md = fs.readFileSync(incident.file, 'utf8');
+    expect(md).toContain('## Post-mortem');
+    expect(md).toContain('Aumentamos os consumidores');
+    expect(ws.messages.some((m) => m.t === 'incidentRemoved' && m.id === incident.id)).toBe(true);
+    // Depois de encerrado, nada mais vai para o chat.
+    expect((await api('POST', `/api/incidents/${incident.id}/messages`, { text: 'oi' })).status).toBe(400);
   });
 });

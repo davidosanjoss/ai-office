@@ -102,7 +102,7 @@ export function createShell(roomId: string): Agent {
   return agent;
 }
 
-export async function createAgent(roomId: string, opts: { name?: string; worktree?: boolean }): Promise<Agent> {
+export async function createAgent(roomId: string, opts: { name?: string; worktree?: boolean; incidentId?: string }): Promise<Agent> {
   const room = store.rooms.get(roomId);
   if (!room) throw new Error('Sala não encontrada');
   const name = opts.name?.trim() || pickName(roomId);
@@ -126,13 +126,15 @@ export async function createAgent(roomId: string, opts: { name?: string; worktre
     worktreeBranch,
     sessionId: randomUUID(),
     status: 'starting',
-    activity: 'Chegando no escritório…',
+    activity: opts.incidentId ? 'Indo para a sala de guerra…' : 'Chegando no escritório…',
     subagents: 0,
     createdAt: Date.now(),
+    // Contratado para um incidente: vai direto para a sala de guerra e sai quando ela fecha.
+    ...(opts.incidentId ? { incidentId: opts.incidentId, forIncident: true } : {}),
   };
   store.putAgent(agent);
   spawn(agent, false);
-  store.log(id, `${name} entrou na sala`, 'system');
+  store.log(id, opts.incidentId ? `${name} foi chamado para a sala de guerra` : `${name} entrou na sala`, 'system');
   return agent;
 }
 

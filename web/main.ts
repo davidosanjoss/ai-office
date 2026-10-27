@@ -1,4 +1,4 @@
-import type { ActivityEvent, Agent, ClientMsg, DiffScope, FileChange, FileDiff, Floor, GitInfo, OfficeState, Room, ServerMsg } from '../shared/types.ts';
+import type { ActivityEvent, Agent, ClientMsg, DiffScope, FileChange, FileDiff, Floor, GitInfo, Incident, OfficeState, Room, ServerMsg } from '../shared/types.ts';
 import { FLOOR_COLORS, type Cell } from '../shared/building.ts';
 import { countChanges, parseDiff, renderDiff } from './diff.ts';
 import * as logic from './logic.ts';
@@ -9,7 +9,7 @@ import './styles.css';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
-const state: OfficeState = { floors: [], rooms: [], agents: [], activity: [] };
+const state: OfficeState = { floors: [], rooms: [], agents: [], activity: [], incidents: [] };
 /** Andar na tela: o id de um Floor, ou logic.TERREO. */
 let currentFloor: string = (() => {
   try {
@@ -20,6 +20,8 @@ let currentFloor: string = (() => {
 })();
 let selectedRoom: string | undefined;
 let selectedAgent: string | undefined;
+/** Sala de guerra selecionada no andar da tela: as abas viram os participantes e o painel vira o chat. */
+let selectedWar: number | undefined;
 let activityScope: 'room' | 'all' = 'room';
 let lastKeyAt = 0;
 let selectedAt = 0;
@@ -85,8 +87,16 @@ function handle(msg: ServerMsg) {
     case 'agentRemoved':
       state.agents = state.agents.filter((a) => a.id !== msg.id);
       terminals.remove(msg.id);
-      if (selectedAgent === msg.id) selectAgent(roomAgents(selectedRoom)[0]?.id);
+      if (selectedAgent === msg.id) selectAgent(currentTabs()[0]?.id);
       renderAll();
+      break;
+    case 'incident':
+      upsert(state.incidents, msg.incident);
+      renderAll(false);
+      break;
+    case 'incidentRemoved':
+      state.incidents = state.incidents.filter((i) => i.id !== msg.id);
+      renderAll(false);
       break;
     case 'activity':
       state.activity.push(msg.event);
@@ -116,6 +126,8 @@ const office = new Office($('#office'), {
   onAddAgent: (roomId) => openAgentDialog(roomId),
   onSelectRoom: (roomId) => selectRoom(roomId),
   onNewRoom: (cell) => openRoomDialog(cell),
+  onSelectWarRoom: (slot) => selectWar(slot),
+  onAddWarRoom: () => addWarRoom(),
 });
 
 $('#map-zoom-in').addEventListener('click', () => office.zoom(1));
@@ -144,6 +156,8 @@ function floorRooms(floorId = currentFloor) {
 function goToFloor(floorId: string) {
   if (floorId === currentFloor) return;
   currentFloor = floorId;
+  // A sala de guerra selecionada era a do outro andar.
+  selectedWar = undefined;
   try {
     localStorage.setItem('floor', floorId);
   } catch {}
@@ -151,8 +165,9 @@ function goToFloor(floorId: string) {
 }
 
 function selectRoom(roomId: string) {
-  if (selectedRoom === roomId) return;
+  if (selectedRoom === roomId && selectedWar === undefined) return;
   selectedRoom = roomId;
+  selectedWar = undefined;
   const floor = state.rooms.find((r) => r.id === roomId)?.floorId;
   if (floor && floor !== currentFloor) goToFloor(floor);
   const first = roomAgents(roomId).find((a) => a.status !== 'exited') ?? roomAgents(roomId)[0];
@@ -173,13 +188,52 @@ function selectAgent(id?: string) {
     // Agente de outro andar (pelas abas, avisos ou "aguardando"): o elevador leva até lá.
     const floor = logic.floorOfAgent(agent, state.rooms);
     if (floor && floor !== currentFloor) goToFloor(floor);
-    office.reveal(agent.roomId);
+    // Quem está num incidente está na sala de guerra: as abas e o painel são os de lá.
+    const incident = state.incidents.find((i) => i.id === agent.incidentId);
+    selectedWar = incident?.floorId === currentFloor ? incident.slot : undefined;
+    if (selectedWar !== undefined) office.revealWar(selectedWar);
+    else office.reveal(agent.roomId);
   }
   // Mesmo encerrado o terminal aparece: o que o processo mostrou ao sair fica visível.
   if (agent) terminals.show(agent.id);
   else terminals.hideAll();
   renderAll();
   refreshGit();
+}
+
+/** Abas da tela: os participantes da sala de guerra selecionada, ou os agentes da sala. */
+function currentTabs(): Agent[] {
+  if (selectedWar !== undefined) return logic.incidentAgents(currentIncident(), state.agents);
+  return roomAgents(selectedRoom);
+}
+
+function currentIncident(): Incident | undefined {
+  return selectedWar === undefined ? undefined : logic.incidentAt(state.incidents, currentFloor, selectedWar);
+}
+
+function selectWar(slot: number) {
+  selectedWar = slot;
+  selectedRoom = undefined;
+  const people = logic.incidentAgents(currentIncident(), state.agents);
+  const first = people.find((a) => a.status !== 'exited') ?? people[0];
+  if (first) selectAgent(first.id);
+  else {
+    if (selectedAgent) markSeen(selectedAgent);
+    selectedAgent = undefined;
+    terminals.hideAll();
+    renderAll();
+  }
+  office.revealWar(slot);
+}
+
+/** "+" em cima da última sala de guerra: o andar ganha mais uma. */
+async function addWarRoom() {
+  const floor = state.floors.find((f) => f.id === currentFloor);
+  if (!floor) return;
+  const n = logic.warRoomsOf(floor);
+  const updated = (await api('PATCH', `/api/floors/${floor.id}`, { warRooms: n + 1 })) as Floor;
+  upsert(state.floors, updated);
+  selectWar(n);
 }
 
 function markSeen(id: string) {
@@ -238,14 +292,17 @@ $('#btn-inbox').addEventListener('click', () => {
 
 function renderAll(full = true) {
   office.selectedAgent = selectedAgent;
-  office.selectedRoom = selectedRoom;
+  office.selectedRoom = selectedWar === undefined ? selectedRoom : undefined;
+  office.selectedWar = selectedWar;
   // Terminais comuns não são funcionários: só aparecem nas abas.
   const floor = state.floors.find((f) => f.id === currentFloor);
   office.update(
-    floor ? { id: floor.id, kind: 'andar', color: floor.color } : { id: logic.TERREO, kind: 'terreo', color: '#7aa2f7' },
+    floor ? { id: floor.id, kind: 'andar', color: floor.color, warRooms: logic.warRoomsOf(floor) } : { id: logic.TERREO, kind: 'terreo', color: '#7aa2f7' },
     floorRooms(),
     logic.officeAgents(logic.agentsOnFloor(state.agents, state.rooms, currentFloor)),
+    state.incidents,
   );
+  renderWarPanel();
   renderElevator();
   renderCounters();
   renderDirectory();
@@ -259,7 +316,7 @@ function renderAll(full = true) {
 function renderTabs() {
   const nav = $('#tabs');
   nav.replaceChildren();
-  for (const a of roomAgents(selectedRoom)) {
+  for (const a of currentTabs()) {
     const tab = document.createElement('button');
     tab.className = `tab ${a.id === selectedAgent ? 'active' : ''} ${a.status}`;
     tab.title = a.activity;
@@ -289,7 +346,14 @@ function renderTabs() {
     tab.addEventListener('click', () => selectAgent(a.id));
     nav.appendChild(tab);
   }
-  if (selectedRoom) {
+  if (selectedWar !== undefined && currentIncident()) {
+    const call = document.createElement('button');
+    call.className = 'tab add';
+    call.textContent = '+';
+    call.title = 'Chamar mais gente para a sala de guerra';
+    call.addEventListener('click', () => openIncidentDialog('call'));
+    nav.append(call);
+  } else if (selectedRoom && selectedWar === undefined) {
     const add = document.createElement('button');
     add.className = 'tab add';
     add.textContent = '+';
@@ -354,6 +418,196 @@ function renderRoomInfo() {
     office.reveal(moved.id);
   });
 }
+
+// ---------- sala de guerra ----------
+
+let warChatKey = '';
+
+function renderWarPanel() {
+  const floor = state.floors.find((f) => f.id === currentFloor);
+  const war = selectedWar !== undefined && !!floor;
+  $('#war-panel').hidden = !war;
+  $('#room-info').hidden = war;
+  $('#git-panel').hidden = war;
+  if (!war) {
+    warChatKey = '';
+    return;
+  }
+  const slot = selectedWar!;
+  const incident = currentIncident();
+  const n = logic.warRoomsOf(floor);
+  $('#war-title').textContent = incident ? incident.title : `Sala de guerra${n > 1 ? ` ${slot + 1}` : ''} · livre`;
+  $('#war-desc').textContent = incident
+    ? incident.description
+    : 'Abra um incidente quando um problema atravessar projetos deste andar: cada agente investiga no próprio repositório e vocês conversam aqui.';
+  $('#war-file').textContent = incident ? `Registro: ${incident.file}` : '';
+  $('#war-file').title = incident?.file ?? '';
+  $('#war-form').hidden = !incident;
+  $('#war-open').hidden = !!incident;
+  $('#war-call').hidden = !incident;
+  $('#war-close').hidden = !incident;
+  $('#war-remove').hidden = !logic.canRemoveWarRoom(floor, slot, state.incidents);
+
+  const people = $('#war-people');
+  people.replaceChildren(
+    ...logic.incidentAgents(incident, state.agents).map((a) => {
+      const b = document.createElement('button');
+      b.className = `war-person${a.id === selectedAgent ? ' current' : ''}`;
+      b.title = a.activity;
+      b.innerHTML = `<span class="dot" style="background:${STATUS_COLOR[a.status]}"></span><span></span>`;
+      b.lastElementChild!.textContent = `${a.name} · ${state.rooms.find((r) => r.id === a.roomId)?.name ?? '?'}`;
+      b.addEventListener('click', () => selectAgent(a.id));
+      return b;
+    }),
+  );
+
+  // O chat só é redesenhado quando chega mensagem: senão o botão de repassar some debaixo do clique.
+  const key = JSON.stringify([incident?.id, incident?.messages.at(-1)?.id, incident?.participants, state.agents.filter((a) => incident?.participants.includes(a.id)).map((a) => a.name)]);
+  if (key === warChatKey) return;
+  warChatKey = key;
+  const chat = $('#war-chat');
+  const atBottom = chat.scrollHeight - chat.scrollTop - chat.clientHeight < 40;
+  chat.replaceChildren(
+    ...(incident?.messages ?? []).map((m) => {
+      const li = document.createElement('li');
+      li.className = `msg ${m.kind}`;
+      li.dataset.msg = String(m.id);
+      const head = document.createElement('div');
+      head.className = 'msg-head';
+      const who = document.createElement('b');
+      const to = m.to.length && m.kind === 'voce' ? ` → ${m.to.map((id) => state.agents.find((a) => a.id === id)?.name ?? '?').join(', ')}` : '';
+      who.textContent = logic.chatAuthor(m, state.agents, state.rooms) + to;
+      const time = document.createElement('time');
+      time.textContent = new Date(m.ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+      head.append(who, time);
+      const text = document.createElement('div');
+      text.className = 'msg-text';
+      text.textContent = m.text;
+      li.append(head, text);
+      if (incident && logic.canShare(m, incident)) {
+        const share = document.createElement('button');
+        share.className = 'btn small ghost share';
+        share.textContent = 'Compartilhar com a sala';
+        share.title = 'Repassa esta resposta para os outros agentes';
+        share.addEventListener('click', async () => {
+          share.disabled = true;
+          await warAction(() => api('POST', `/api/incidents/${incident.id}/messages/${m.id}/share`));
+        });
+        li.append(share);
+      }
+      return li;
+    }),
+  );
+  if (atBottom || !incident) chat.scrollTop = chat.scrollHeight;
+}
+
+/** Ações do painel: o erro (ex.: "@fulano" que não está na sala) aparece embaixo do chat. */
+async function warAction(fn: () => Promise<unknown>) {
+  const error = $('#war-error');
+  error.hidden = true;
+  try {
+    await fn();
+    return true;
+  } catch (err) {
+    error.textContent = (err as Error).message;
+    error.hidden = false;
+    return false;
+  }
+}
+
+const warInput = $<HTMLTextAreaElement>('#war-input');
+$('#war-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const incident = currentIncident();
+  const text = warInput.value.trim();
+  if (!incident || !text) return;
+  if (await warAction(() => api('POST', `/api/incidents/${incident.id}/messages`, { text }))) warInput.value = '';
+});
+warInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+    e.preventDefault();
+    $<HTMLFormElement>('#war-form').requestSubmit();
+  }
+});
+$('#war-open').addEventListener('click', () => openIncidentDialog('open'));
+$('#war-call').addEventListener('click', () => openIncidentDialog('call'));
+$('#war-close').addEventListener('click', () => {
+  const dlg = $<HTMLDialogElement>('#dlg-close-incident');
+  dlg.querySelector<HTMLElement>('.error')!.hidden = true;
+  dlg.showModal();
+});
+$('#war-remove').addEventListener('click', async () => {
+  const floor = state.floors.find((f) => f.id === currentFloor);
+  if (!floor) return;
+  await warAction(async () => {
+    const updated = (await api('PATCH', `/api/floors/${floor.id}`, { warRooms: logic.warRoomsOf(floor) - 1 })) as Floor;
+    upsert(state.floors, updated);
+    selectWar(0);
+  });
+});
+
+const dlgIncident = $<HTMLDialogElement>('#dlg-incident');
+let incidentMode: 'open' | 'call' = 'open';
+/** Abrir um incidente (título, descrição e quem entra) ou chamar mais gente para o aberto. */
+function openIncidentDialog(mode: 'open' | 'call') {
+  incidentMode = mode;
+  $('#incident-heading').textContent = mode === 'open' ? 'Abrir incidente' : 'Chamar para a sala de guerra';
+  $('#incident-submit').textContent = mode === 'open' ? 'Abrir' : 'Chamar';
+  $('#incident-fields').hidden = mode !== 'open';
+  const rooms = floorRooms().sort((a, b) => a.name.localeCompare(b.name));
+  const agents = logic.incidentCandidates(state.agents, state.rooms, currentFloor);
+  const box = $('#incident-who');
+  box.replaceChildren();
+  const group = (title: string, items: HTMLElement[]) => {
+    if (!items.length) return;
+    const h = document.createElement('h4');
+    h.textContent = title;
+    box.append(h, ...items);
+  };
+  const check = (name: string, value: string, label: string, hint: string) => {
+    const l = document.createElement('label');
+    l.className = 'check';
+    l.innerHTML = `<input type="checkbox" name="${name}" /><span><b></b><br /><small></small></span>`;
+    l.querySelector('input')!.value = value;
+    l.querySelector('b')!.textContent = label;
+    l.querySelector('small')!.textContent = hint;
+    return l;
+  };
+  group('Projetos: entra um agente novo, na pasta do projeto', rooms.map((r) => check('room', r.id, r.name, r.path)));
+  group(
+    'Agentes que já estão trabalhando: levam o contexto que já têm',
+    agents.map((a) => check('agent', a.id, `${a.name} · ${state.rooms.find((r) => r.id === a.roomId)?.name ?? ''}`, a.activity)),
+  );
+  if (!rooms.length && !agents.length) box.innerHTML = '<p class="muted">Este andar ainda não tem projetos.</p>';
+  dlgIncident.querySelector<HTMLElement>('.error')!.hidden = true;
+  dlgIncident.showModal();
+}
+formDialog(dlgIncident, async (data) => {
+  const roomIds = data.getAll('room').map(String);
+  const agentIds = data.getAll('agent').map(String);
+  if (incidentMode === 'call') {
+    const incident = currentIncident();
+    if (!incident) throw new Error('O incidente já foi encerrado');
+    await api('POST', `/api/incidents/${incident.id}/participants`, { roomIds, agentIds });
+    return;
+  }
+  const slot = selectedWar ?? 0;
+  const incident = (await api('POST', '/api/incidents', {
+    floorId: currentFloor,
+    slot,
+    title: data.get('title'),
+    description: data.get('description'),
+    roomIds,
+    agentIds,
+  })) as Incident;
+  upsert(state.incidents, incident);
+  selectWar(slot);
+});
+formDialog($<HTMLDialogElement>('#dlg-close-incident'), async (data) => {
+  const incident = currentIncident();
+  if (!incident) return;
+  await api('POST', `/api/incidents/${incident.id}/close`, { resolution: data.get('resolution') });
+});
 
 // ---------- contadores e lista do escritório ----------
 

@@ -17,6 +17,8 @@ export interface Floor {
   /** Posição no prédio: 1 é o primeiro andar acima do térreo. */
   order: number;
   createdAt: number;
+  /** Quantas salas de guerra o andar tem (ausente = 1). */
+  warRooms?: number;
 }
 
 export interface Room {
@@ -48,6 +50,40 @@ export interface Agent {
   /** Quando entrou em 'done' ou 'waiting'; ordena a fila de atenção. */
   attentionAt?: number;
   exitCode?: number;
+  /** Incidente em que o agente está: ele fica na sala de guerra, e a mesa dele fica vazia. */
+  incidentId?: string;
+  /** Contratado só para o incidente: vai embora quando o incidente é encerrado. */
+  forIncident?: boolean;
+}
+
+/** Uma mensagem no chat da sala de guerra. */
+export interface IncidentMessage {
+  id: number;
+  ts: number;
+  /** 'voce': você escreveu; 'agente': resposta de um participante; 'repasse': você repassou a
+   * resposta de um agente para os outros; 'sistema': entrada, saída e avisos. */
+  kind: 'voce' | 'agente' | 'repasse' | 'sistema';
+  /** Agente que falou (respostas e repasses). */
+  agentId?: string;
+  /** Para quem foi (vazio = todos os participantes). */
+  to: string[];
+  text: string;
+}
+
+/** Um problema investigado na sala de guerra de um andar. */
+export interface Incident {
+  id: string;
+  floorId: string;
+  /** Qual sala de guerra do andar (0 é a de baixo). */
+  slot: number;
+  title: string;
+  description: string;
+  createdAt: number;
+  /** Agentes na sala, na ordem em que entraram. */
+  participants: string[];
+  messages: IncidentMessage[];
+  /** Registro em markdown (linha do tempo), que os agentes podem ler. */
+  file: string;
 }
 
 export interface ActivityEvent {
@@ -64,6 +100,7 @@ export interface OfficeState {
   rooms: Room[];
   agents: Agent[];
   activity: ActivityEvent[];
+  incidents: Incident[];
 }
 
 /** Um arquivo alterado. additions/deletions ausentes = binário. */
@@ -113,6 +150,8 @@ export type ServerMsg =
   | { t: 'floorRemoved'; id: string }
   | { t: 'room'; room: Room }
   | { t: 'roomRemoved'; id: string }
+  | { t: 'incident'; incident: Incident }
+  | { t: 'incidentRemoved'; id: string }
   | { t: 'activity'; event: ActivityEvent }
   | { t: 'out'; id: string; data: string }
   | { t: 'replay'; id: string; data: string };

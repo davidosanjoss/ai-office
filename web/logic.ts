@@ -1,6 +1,6 @@
 // Regras de decisão da interface, sem DOM, para poderem ser testadas.
 
-import type { Agent, Floor, Room } from '../shared/types.ts';
+import type { Agent, Floor, Incident, IncidentMessage, Room } from '../shared/types.ts';
 
 /** Depois da última tecla, quanto esperar antes de trocar de terminal sozinho. */
 export const TYPING_GRACE_MS = 3500;
@@ -167,4 +167,48 @@ export function directoryTree(floors: Floor[], rooms: Room[], agents: Agent[], q
     if (floorHit || list.length) out.push({ floor, rooms: list });
   }
   return out;
+}
+
+// ---------- sala de guerra ----------
+
+/** Quantas salas de guerra o andar tem (ausente = 1). */
+export function warRoomsOf(floor: Floor | undefined): number {
+  return floor?.warRooms ?? 1;
+}
+
+export function incidentAt(incidents: Incident[], floorId: string, slot: number): Incident | undefined {
+  return incidents.find((i) => i.floorId === floorId && i.slot === slot);
+}
+
+/** Participantes que ainda existem, na ordem em que entraram: são as abas da sala de guerra. */
+export function incidentAgents(incident: Incident | undefined, agents: Agent[]): Agent[] {
+  if (!incident) return [];
+  return incident.participants.map((id) => agents.find((a) => a.id === id)).filter((a): a is Agent => !!a);
+}
+
+/** Quem pode ser chamado para a sala de guerra: agentes do Claude do andar que não estão em outra. */
+export function incidentCandidates(agents: Agent[], rooms: Room[], floorId: string): Agent[] {
+  return agentsOnFloor(agents, rooms, floorId)
+    .filter((a) => a.kind !== 'shell' && !a.incidentId)
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Quem falou, como aparece no chat: "Você", "Ana · gateway", "Sala". */
+export function chatAuthor(m: IncidentMessage, agents: Agent[], rooms: Room[]): string {
+  if (m.kind === 'voce') return 'Você';
+  if (m.kind === 'sistema') return 'Sala';
+  const a = agents.find((x) => x.id === m.agentId);
+  const who = a ? `${a.name} · ${rooms.find((r) => r.id === a.roomId)?.name ?? '?'}` : 'Agente que saiu';
+  return m.kind === 'repasse' ? `Repasse de ${who}` : who;
+}
+
+/** O botão "compartilhar com a sala" só aparece na resposta de um agente, quando há mais alguém na sala. */
+export function canShare(m: IncidentMessage, incident: Incident): boolean {
+  return m.kind === 'agente' && !!m.agentId && incident.participants.some((id) => id !== m.agentId);
+}
+
+/** Só a sala de guerra de cima, vazia, pode ser tirada, e o andar fica sempre com pelo menos uma. */
+export function canRemoveWarRoom(floor: Floor | undefined, slot: number, incidents: Incident[]): boolean {
+  const n = warRoomsOf(floor);
+  return !!floor && n > 1 && slot === n - 1 && !incidentAt(incidents, floor.id, slot);
 }

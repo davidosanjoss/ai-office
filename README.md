@@ -5,6 +5,7 @@ Um escritório em pixel art para gerenciar várias sessões do Claude Code ao me
 - Um **prédio de escritório** visto de cima: térreo com **recepção** (e secretária) e **copa**, a rua na frente, e **cada projeto é uma sala** encostada no prédio. **Cada agente é um funcionário** sentado numa mesa.
 - Em volta do prédio aparecem vagas com **+**: clique numa, escolha o repositório, e a sala nova nasce ali, liberando novas vagas em volta dela.
 - **Andares por empresa:** cada andar é um contexto (a sua empresa, projetos pessoais, freelance…), com as próprias salas e a própria copa. O **painel do elevador** no canto do mapa mostra os andares e quantos agentes precisam de você em cada um; o térreo é a entrada, com a recepção.
+- **Sala de guerra**, em cima do elevador de cada andar, para problemas que atravessam projetos (ex.: um 503 que passa pelo gateway e pela fila). Clique nela, abra um incidente e escolha quem entra: um agente novo em cada projeto ou agentes que já estão trabalhando, com o contexto que têm. Eles vão andando até a mesa redonda e conversam com você num chat (`@nome` ou `@projeto` fala com um só). A resposta de um agente só vai para os outros quando você clica em **Compartilhar com a sala**. Ao encerrar, o registro vira post-mortem. Sem incidente, a luz fica apagada; o **+** em cima dela abre outra.
 - **Arraste o mapa** para navegar e use a **rodinha** para o zoom (ou os botões + − ⌖ no canto). Quando o foco automático abre um agente de outra sala, a câmera vai até ela.
 - O funcionário mostra o que está fazendo: digita quando trabalha, **levanta a mão** quando precisa de aprovação, **comemora** quando termina, e os subagentes aparecem como ajudantes ao lado da mesa.
 - Abas de **terminal comum** (`>_`): o seu shell aberto na pasta do projeto, sem Claude, para git, `npm run dev` etc.
@@ -73,7 +74,8 @@ navegador (escritório + xterm.js)  ⇄  WebSocket  ⇄  servidor Node (Fastify 
 - Cada agente é um processo `claude` num pseudo-terminal controlado pelo servidor. Fechar o navegador não encerra os agentes; encerrar o servidor encerra.
 - Os hooks entram só nas sessões abertas pelo escritório, via `--settings`. O seu `~/.claude/settings.json` não é alterado.
 - Cada agente recebe um `--session-id` fixo. Se o servidor reiniciar, o agente aparece como "fora do escritório" e o botão **Retomar conversa** roda `claude --resume` com a mesma sessão.
-- Os dados do escritório ficam em `~/.ai-office` (`state.json` e os worktrees em `worktrees/`).
+- Os dados do escritório ficam em `~/.ai-office` (`state.json`, os worktrees em `worktrees/` e o registro de cada incidente da sala de guerra em `incidentes/`).
+- Na sala de guerra, o escritório digita no terminal de cada agente o convite e as suas mensagens (sempre numa linha só; o briefing completo fica no registro em markdown) e lê a resposta do transcript quando o hook `Stop` chega. Mensagem para quem está ocupado espera ele terminar.
 
 ### Configuração
 
