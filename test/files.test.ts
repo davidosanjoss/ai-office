@@ -10,6 +10,9 @@ function git(dir: string, ...args: string[]) {
   return execFileSync('git', ['-C', dir, '-c', 'user.name=Teste', '-c', 'user.email=teste@example.com', ...args], { stdio: 'pipe' }).toString();
 }
 
+/** O git do Windows (core.autocrlf) grava no disco com \r\n o que vem de um checkout. */
+const lf = (t: string) => t.replace(/\r\n/g, '\n');
+
 function commit(dir: string, msg: string) {
   git(dir, 'add', '-A');
   git(dir, 'commit', '-q', '-m', msg);
@@ -163,24 +166,35 @@ describe('histórico', () => {
     expect((await fileAt(repo, 'feat/x', 'a.txt')).content).toBe('um\ndois\n');
     expect((await fileAt(repo, 'main', 'src/b.ts')).missing).toBe(true);
     // A pasta continua na main.
-    expect(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8')).toBe('um\n');
+    expect(lf(fs.readFileSync(path.join(repo, 'a.txt'), 'utf8'))).toBe('um\n');
   });
 
   it('arquivo no último commit, com caminho relativo à pasta (a sala pode ser uma subpasta do repositório)', async () => {
     const repo = repoWithBranch();
     fs.writeFileSync(path.join(repo, 'a.txt'), 'mudou no disco\n');
-    expect((await fileAtHead(repo, 'a.txt')).content).toBe('um\n');
+    expect(lf((await fileAtHead(repo, 'a.txt')).content)).toBe('um\n');
     fs.writeFileSync(path.join(repo, 'novo.txt'), 'x');
     expect((await fileAtHead(repo, 'novo.txt')).missing).toBe(true);
 
     git(repo, 'checkout', '-q', '-f', 'feat/x');
-    expect((await fileAtHead(path.join(repo, 'src'), 'b.ts')).content).toBe('export {};\n');
+    expect(lf((await fileAtHead(path.join(repo, 'src'), 'b.ts')).content)).toBe('export {};\n');
 
     const empty = tempDir('sem-commits');
     git(empty, 'init', '-q', '-b', 'main');
     fs.writeFileSync(path.join(empty, 'a.txt'), 'x');
     expect((await fileAtHead(empty, 'a.txt')).missing).toBe(true);
     await expect(fileAtHead(tempDir('sem-git-head'), 'a.txt')).rejects.toThrow(/não é um repositório/);
+  });
+
+  it('regressão: no último commit, o arquivo vem como o git o grava no disco (\\r\\n do Windows), senão "Ver alterações" acusava o arquivo inteiro', async () => {
+    const repo = makeRepo('crlf');
+    // O git do Windows vem com core.autocrlf=true: o checkout grava as linhas com \r\n.
+    git(repo, 'config', 'core.autocrlf', 'true');
+    fs.rmSync(path.join(repo, 'README.md'));
+    git(repo, 'checkout', '--', 'README.md');
+    const disk = fs.readFileSync(path.join(repo, 'README.md'), 'utf8');
+    expect(disk).toBe('# teste\r\n');
+    expect((await fileAtHead(repo, 'README.md')).content).toBe(disk);
   });
 
   it('recusa refs que o git leria como opção, e avisa da que não existe', async () => {

@@ -415,6 +415,12 @@ describe('desfazer no editor', () => {
     expect(headState('a', null)).toBe('unknown');
   });
 
+  it('regressão: o fim de linha não conta (\\r\\n do git do Windows contra \\n do arquivo)', () => {
+    expect(headState('a\nb\n', 'a\r\nb\r\n')).toBe('equal');
+    expect(headState('a\r\nb\r\n', 'a\nb\n')).toBe('equal');
+    expect(headState('a\nc\n', 'a\r\nb\r\n')).toBe('differs');
+  });
+
   it('desfazer edição só com algo por salvar; desfazer alterações só com diferença do commit', () => {
     expect(st()).toEqual({ save: true, undoEdit: false, changes: false, restore: false });
     expect(st({ dirty: true })).toMatchObject({ undoEdit: true, restore: false });

@@ -760,7 +760,8 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
       await waitFor(async () => (await editorText()).includes('da branch feat/y'), 5000, 'o README da feat/y');
       expect(await page.$eval('#files-note', (e) => e.textContent)).toContain('só leitura');
       expect(await page.$eval('#files-save', (e) => (e as HTMLElement).hidden)).toBe(true);
-      expect(fs.readFileSync(path.join(repo, 'README.md'), 'utf8')).toBe('# teste\n');
+      // O git do Windows grava com \r\n o que vem do checkout.
+      expect(fs.readFileSync(path.join(repo, 'README.md'), 'utf8').replace(/\r\n/g, '\n')).toBe('# teste\n');
       await page.select('#files-ref', '');
       await page.waitForSelector('#files-new-file:not([disabled])');
     });
@@ -789,7 +790,9 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
       await page.click('#files-modes button[data-mode="git"]');
       await page.waitForSelector('#git-pane:not([hidden]) #git .branch');
       expect(await page.$eval('#git-panel', (e) => (e as HTMLElement).hidden)).toBe(true);
-      await page.click(`#git-pane button.file[data-path="README.md"]`);
+      // A lista vem da atualização ao entrar no modo Git: espera o arquivo aparecer.
+      await page.waitForSelector('#git-pane button.file[data-path="README.md"]');
+      await page.click('#git-pane button.file[data-path="README.md"]');
       await page.waitForSelector('#git-main #diff-view:not([hidden]) .dl.add');
       expect(await page.$$eval('#diff-view .dl.add .code', (els) => els.map((e) => e.textContent))).toContain('+ mudou no modo git');
       // Esc fecha só o diff: o explorador continua, no modo Git.

@@ -396,11 +396,15 @@ export function editorButtons(s: { readOnly: boolean; dirty: boolean; head: Head
   };
 }
 
-/** Compara o texto do editor com o do último commit (ausente = arquivo novo; null = sem git). */
+/**
+ * Compara o texto do editor com o do último commit (ausente = arquivo novo; null = sem git).
+ * O fim de linha não conta: no Windows o git grava \r\n, e o arquivo pode ter vindo com \n.
+ */
 export function headState(current: string, head: string | null | undefined): HeadState {
   if (head === null) return 'unknown';
   if (head === undefined) return 'new';
-  return current === head ? 'equal' : 'differs';
+  const lf = (t: string) => t.replace(/\r\n/g, '\n');
+  return current === head || lf(current) === lf(head) ? 'equal' : 'differs';
 }
 
 // ---------- painel de git ----------

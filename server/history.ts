@@ -117,9 +117,11 @@ export async function treeAt(cwd: string, ref: unknown, dir: unknown): Promise<D
 
 /**
  * Conteúdo de um arquivo no commit de `ref`; `missing` se ele não existe ali. Com `fromCwd`, o
- * caminho é relativo à pasta (como no explorador), e não à raiz do repositório.
+ * caminho é relativo à pasta (como no explorador), e não à raiz do repositório. Com `asOnDisk`,
+ * vem como o checkout o gravaria (ex.: \r\n com o core.autocrlf do Windows), para comparar com o
+ * arquivo da pasta.
  */
-export async function fileAt(cwd: string, ref: unknown, file: unknown, opts: { fromCwd?: boolean } = {}): Promise<FileContent> {
+export async function fileAt(cwd: string, ref: unknown, file: unknown, opts: { fromCwd?: boolean; asOnDisk?: boolean } = {}): Promise<FileContent> {
   const hash = await commitOf(cwd, ref);
   const clean = cleanPath(file);
   if (!clean) throw new FileError('Informe o arquivo');
@@ -127,7 +129,12 @@ export async function fileAt(cwd: string, ref: unknown, file: unknown, opts: { f
   const size = Number(await ok(cwd, ['cat-file', '-s', spec]));
   if (!size && (await ok(cwd, ['cat-file', '-t', spec])) !== 'blob') return fileContent(clean, undefined, 0);
   if (size > MAX_FILE) return fileContent(clean, undefined, size);
-  const { stdout } = await exec('git', ['-C', cwd, 'cat-file', 'blob', spec], { encoding: 'buffer', maxBuffer: MAX_FILE + 1024, windowsHide: true });
+  // O \r de cada linha pode quase dobrar o tamanho com --filters.
+  const { stdout } = await exec('git', ['-C', cwd, 'cat-file', opts.asOnDisk ? '--filters' : 'blob', spec], {
+    encoding: 'buffer',
+    maxBuffer: MAX_FILE * 2 + 1024,
+    windowsHide: true,
+  });
   return fileContent(clean, stdout, size);
 }
 
@@ -138,5 +145,5 @@ export async function fileAt(cwd: string, ref: unknown, file: unknown, opts: { f
 export async function fileAtHead(cwd: string, file: unknown): Promise<FileContent> {
   await requireRepo(cwd);
   if (!(await ok(cwd, ['rev-parse', '--verify', '--quiet', 'HEAD']))) return fileContent(cleanPath(file), undefined, 0);
-  return fileAt(cwd, 'HEAD', file, { fromCwd: true });
+  return fileAt(cwd, 'HEAD', file, { fromCwd: true, asOnDisk: true });
 }
