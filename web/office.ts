@@ -283,7 +283,6 @@ export class Office {
 
   private setCamera(c: Camera) {
     this.cam = c;
-    this.canvas.dataset.cam = `${Math.round(c.x)},${Math.round(c.y)},${c.z}`;
     try {
       if (this.floor.id) localStorage.setItem(camKey(this.floor.id), JSON.stringify(c));
     } catch {}
@@ -343,10 +342,13 @@ export class Office {
     else this.setCamera(this.cam);
   }
 
+  /** Canvas de baixa resolução do tamanho da tela no zoom atual (só mexe nele se mudou: limpar custa). */
   private resizePix() {
     const z = this.camera.z;
-    this.pix.width = Math.max(1, Math.ceil(this.cssW / z) + 2);
-    this.pix.height = Math.max(1, Math.ceil(this.cssH / z) + 2);
+    const w = Math.max(1, Math.ceil(this.cssW / z) + 2);
+    const h = Math.max(1, Math.ceil(this.cssH / z) + 2);
+    if (this.pix.width !== w) this.pix.width = w;
+    if (this.pix.height !== h) this.pix.height = h;
   }
 
   private loop(t: number) {
@@ -552,8 +554,11 @@ export class Office {
 
   private draw() {
     if (!this.cssW || !this.cam) return;
+    // A câmera pode ter mudado sem passar por setCamera (a vista salva do andar, ao trocar de andar).
+    this.resizePix();
     const p = this.pctx;
     const c = this.camera;
+    this.canvas.dataset.cam = `${Math.round(c.x)},${Math.round(c.y)},${c.z}`;
     const left = Math.round(c.x - this.pix.width / 2);
     const top = Math.round(c.y - this.pix.height / 2);
     const view = { x: left, y: top, w: this.pix.width, h: this.pix.height };
