@@ -116,6 +116,63 @@ describe('salas', () => {
   });
 });
 
+describe('explorador de arquivos e histórico', () => {
+  it('lê e salva na pasta da sala, recusando caminho para fora e versão velha', async () => {
+    const room = await newRoom('explorador', true);
+    const base = `/api/rooms/${room.id}`;
+    expect((await api('GET', `${base}/files/list`)).data.entries).toEqual([{ name: 'README.md', kind: 'file' }]);
+    const read = await api('GET', `${base}/files/read?path=README.md`);
+    expect(read.data.content).toBe('# teste\n');
+
+    const saved = await api('PUT', `${base}/files/write`, { path: 'README.md', content: 'editado\n', version: read.data.version });
+    expect(saved.status).toBe(200);
+    expect(fs.readFileSync(path.join(room.path, 'README.md'), 'utf8')).toBe('editado\n');
+    const stale = await api('PUT', `${base}/files/write`, { path: 'README.md', content: 'x', version: read.data.version });
+    expect(stale.status).toBe(409);
+    expect(stale.data.error).toMatch(/mudou no disco/);
+
+    expect((await api('GET', `${base}/files/read?path=../fora.txt`)).status).toBe(400);
+    expect((await api('GET', `${base}/files/read?path=.git/config`)).status).toBe(400);
+    expect((await api('GET', `/api/coisas/${room.id}/files/list`)).status).toBe(404);
+    expect((await api('POST', `${base}/files/mkdir`, { path: 'src' })).status).toBe(200);
+    expect((await api('POST', `${base}/files/rename`, { from: 'src', to: 'lib' })).status).toBe(200);
+    expect((await api('POST', `${base}/files/delete`, { path: 'lib' })).status).toBe(200);
+    expect(fs.readdirSync(room.path).sort()).toEqual(['.git', 'README.md']);
+  });
+
+  it('salva arquivo maior que o limite padrão do Fastify (1 MB)', async () => {
+    const room = await newRoom('explorador-grande');
+    const content = 'linha "com aspas"\n'.repeat(80_000);
+    const res = await api('PUT', `/api/rooms/${room.id}/files/write`, { path: 'grande.txt', content, create: true });
+    expect(res.status).toBe(200);
+    expect(fs.statSync(path.join(room.path, 'grande.txt')).size).toBe(Buffer.byteLength(content));
+  });
+
+  it('salvar de outro site é bloqueado', async () => {
+    const room = await newRoom('explorador-origem');
+    const res = await api('PUT', `/api/rooms/${room.id}/files/write`, { path: 'x.txt', content: 'x', create: true }, { origin: 'http://malicioso.example' });
+    expect(res.status).toBe(403);
+    expect(fs.existsSync(path.join(room.path, 'x.txt'))).toBe(false);
+  });
+
+  it('branches, commits, commit e arquivo numa ref', async () => {
+    const room = await newRoom('historico', true);
+    const base = `/api/rooms/${room.id}/history`;
+    const refs = await api('GET', `${base}/refs`);
+    expect(refs.data).toEqual([expect.objectContaining({ name: 'main', kind: 'branch', current: true })]);
+    const log = await api('GET', `${base}/log?ref=main`);
+    expect(log.data.commits[0].subject).toBe('primeiro commit');
+    const commit = await api('GET', `${base}/commit?ref=${log.data.commits[0].hash}`);
+    expect(commit.data.files.map((f: { path: string }) => f.path)).toEqual(['README.md']);
+    expect((await api('GET', `${base}/show?ref=main&path=README.md`)).data.content).toBe('# teste\n');
+    expect((await api('GET', `${base}/compare?from=main&to=main`)).data).toMatchObject({ ahead: 0, behind: 0, files: [] });
+    expect((await api('GET', `${base}/log?ref=--all`)).status).toBe(400);
+    expect((await api('GET', `${base}/log?ref=nada`)).status).toBe(404);
+    const semGit = await newRoom('historico-sem-git');
+    expect((await api('GET', `/api/rooms/${semGit.id}/history/refs`)).status).toBe(400);
+  });
+});
+
 describe('ciclo de vida de um agente', () => {
   it('abre o Claude com os hooks do escritório, e o SessionStart chega pelo script real', async () => {
     const room = await newRoom('vida');

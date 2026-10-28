@@ -239,6 +239,19 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForFunction(() => document.querySelector('#tabs .tab.active')?.textContent?.includes('Ana'));
   });
 
+  it('regressão: atualizar um agente não recria as abas (o clique no "+" ou no 📁 caía num botão trocado)', async () => {
+    // Mudança de status redesenha a aba de verdade (a cor da bolinha): espera os agentes assentarem.
+    const ids = await page.$$eval('#tabs .tab[data-id]', (els) => els.map((el) => (el as HTMLElement).dataset.id!));
+    await waitFor(() => ids.every((i) => !['starting', 'working'].includes(status(i) ?? '')), 8000, 'os agentes das abas pararem');
+    await new Promise((r) => setTimeout(r, 300));
+    const tab = (await page.$('#tabs .tab[data-id]'))!;
+    const id = await tab.evaluate((el) => (el as HTMLElement).dataset.id!);
+    const activity = `atividade ${Date.now()}`;
+    store.patchAgent(id, { activity });
+    await page.waitForFunction((t) => document.querySelector(`#tabs .tab[title="${t}"]`), {}, activity);
+    expect(await tab.evaluate((el) => el.isConnected)).toBe(true);
+  });
+
   it('clicar num arquivo alterado abre as linhas modificadas; Esc volta', async () => {
     const room = [...store.rooms.values()].find((r) => r.path.includes('e2e-repo'))!;
     fs.writeFileSync(path.join(room.path, 'README.md'), '# teste\nlinha nova do e2e\n');
@@ -276,6 +289,28 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await refreshed;
     await new Promise((r) => setTimeout(r, 100));
     expect(await branch.evaluate((b) => b.isConnected)).toBe(true);
+  });
+
+  it('regressão: as seções do painel de git recolhem e continuam como você deixou quando a lista muda', async () => {
+    const room = [...store.rooms.values()].find((r) => r.path.includes('e2e-repo'))!;
+    const isOpen = (sec: string) => page.$eval(`#git details[data-sec="${sec}"]`, (d) => (d as HTMLDetailsElement).open);
+    await page.click('#git details[data-sec="working"] > summary');
+    await page.click('#git details[data-sec="commits"] > summary');
+    expect([await isOpen('working'), await isOpen('commits')]).toEqual([false, true]);
+
+    // Um arquivo novo muda a lista: antes, o painel redesenhado fechava os "Últimos commits".
+    fs.writeFileSync(path.join(room.path, 'secoes.txt'), 'x\n');
+    await page.click('#btn-git-refresh');
+    await page.waitForSelector('#git button.file[data-path="secoes.txt"]');
+    expect([await isOpen('working'), await isOpen('commits')]).toEqual([false, true]);
+    expect(JSON.parse((await page.evaluate(() => localStorage.getItem('gitSections')))!)).toEqual({ working: false, commits: true });
+
+    // Volta como estava (pelo DOM: com a lista aberta, o resumo pode ficar fora da área visível).
+    await page.$eval('#git details[data-sec="working"] > summary', (el) => (el as HTMLElement).click());
+    await page.$eval('#git details[data-sec="commits"] > summary', (el) => (el as HTMLElement).click());
+    fs.rmSync(path.join(room.path, 'secoes.txt'));
+    await page.click('#btn-git-refresh');
+    await page.waitForFunction(() => !document.querySelector('#git button.file[data-path="secoes.txt"]'));
   });
 
   it('worktree: o painel de git traz o trabalho do agente para a main e encerra o worktree', async () => {
@@ -498,6 +533,20 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForSelector('#activity-float:not(.collapsed)');
   });
 
+  it('o ⇥ esconde o painel da direita, o terminal ocupa o espaço, e a escolha vale depois de recarregar', async () => {
+    const width = () => page.$eval('.terminal-pane', (e) => e.getBoundingClientRect().width);
+    const before = await width();
+    await page.click('#btn-sidebar');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#sidebar')!).display === 'none');
+    expect(await width()).toBeGreaterThan(before + 200);
+    await page.reload();
+    await page.waitForSelector('#office canvas');
+    expect(await page.$eval('#sidebar', (e) => getComputedStyle(e).display)).toBe('none');
+    expect(await page.$eval('#btn-sidebar', (e) => e.getAttribute('title'))).toBe('Mostrar o painel da direita');
+    await page.click('#btn-sidebar');
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#sidebar')!).display !== 'none');
+  });
+
   it('sala de guerra: abre um incidente pelo mapa, conversa pelo chat e encerrar devolve o agente à mesa', async () => {
     const roomId = byName('Ana')!.roomId;
     const floorId = store.rooms.get(roomId)!.floorId!;
@@ -581,6 +630,186 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
       return green;
     });
     expect(grassPixels).toBe(0);
+  });
+
+  describe('explorador de arquivos', () => {
+    let repo = '';
+    const gitIn = (...args: string[]) =>
+      execFileSync('git', ['-C', repo, '-c', 'user.name=Teste', '-c', 'user.email=teste@example.com', ...args], { stdio: 'pipe' });
+    /** Texto do editor visível (o Monaco só desenha as linhas na tela). */
+    const editorText = () => page.$eval('#files-editor .view-lines', (el) => (el as HTMLElement).innerText.replace(/\u00a0/g, ' ')).catch(() => '');
+    const node = (p: string) => `#files-tree .node[data-path="${p}"]`;
+
+    beforeAll(async () => {
+      repo = makeRepo('e2e-explorador');
+      fs.mkdirSync(path.join(repo, 'src'));
+      fs.writeFileSync(path.join(repo, 'src', 'app.ts'), 'export const a = 1;\n');
+      gitIn('add', '-A');
+      gitIn('commit', '-q', '-m', 'adiciona app');
+      gitIn('checkout', '-q', '-b', 'feat/y');
+      fs.writeFileSync(path.join(repo, 'README.md'), '# teste\nda branch feat/y\n');
+      gitIn('commit', '-q', '-am', 'muda o readme na branch');
+      gitIn('checkout', '-q', 'main');
+      const { data: room } = await api('POST', '/api/rooms', { path: repo });
+      // Pela lista da esquerda: arrastar o mapa até a sala era lento no CI do Windows (estourava o tempo).
+      const head = `#directory .dir-room-head[data-room="${room.id}"]`;
+      await page.waitForSelector(head);
+      await page.click(head);
+      await page.waitForFunction((n) => document.querySelector('.room-title')?.textContent === n, {}, room.name);
+      await page.waitForFunction(() => document.querySelector('#git .branch')?.textContent?.includes('main'));
+    });
+
+    it('o 📁 abre o explorador numa aba da sala; um arquivo da árvore abre, edita e salva com Ctrl+S', async () => {
+      await page.click('#tabs .tab.add[title="Arquivos e histórico da sala"]');
+      await page.waitForSelector(`#files-view:not([hidden]) ${node('src')}`);
+      await page.waitForSelector('#tabs .tab.files.active');
+      expect(await page.$eval('#terminals', (e) => getComputedStyle(e).display)).toBe('none');
+      await page.click(node('src'));
+      await (await page.waitForSelector(node('src/app.ts')))!.click();
+      await waitFor(async () => (await editorText()).includes('export const a = 1;'), 15000, 'o arquivo no editor');
+
+      await page.click('#files-editor .view-lines');
+      await page.keyboard.down('Control');
+      await page.keyboard.press('End');
+      await page.keyboard.up('Control');
+      await page.keyboard.type('// editado');
+      await page.waitForFunction(() => document.querySelector('#files-path')?.textContent?.endsWith('●'));
+      await page.keyboard.down('Control');
+      await page.keyboard.press('KeyS');
+      await page.keyboard.up('Control');
+      await waitFor(() => fs.readFileSync(path.join(repo, 'src', 'app.ts'), 'utf8').includes('// editado'), 5000, 'salvar no disco');
+      await page.waitForFunction(() => document.querySelector('#files-path')?.textContent === 'src/app.ts');
+      // A árvore marca o arquivo alterado, e a pasta dele.
+      await page.waitForSelector(`${node('src/app.ts')}.mk-M`);
+      await page.waitForSelector(`${node('src')}.mk-dir`);
+    });
+
+    it('não salva por cima do que mudou no disco; "Recarregar do disco" traz a versão nova', async () => {
+      fs.writeFileSync(path.join(repo, 'src', 'app.ts'), 'export const a = 2; // do agente\n');
+      await page.click('#files-editor .view-lines');
+      await page.keyboard.type('x');
+      await page.keyboard.down('Control');
+      await page.keyboard.press('KeyS');
+      await page.keyboard.up('Control');
+      await page.waitForFunction(() => document.querySelector('#files-msg')?.textContent?.includes('mudou no disco'));
+      expect(fs.readFileSync(path.join(repo, 'src', 'app.ts'), 'utf8')).toBe('export const a = 2; // do agente\n');
+      await page.click('#files-msg button[data-act="reload"]');
+      await waitFor(async () => (await editorText()).includes('do agente'), 5000, 'a versão do disco no editor');
+    });
+
+    it('desfazer: a edição não salva, o arquivo lado a lado com o commit e o arquivo inteiro de volta ao commit', async () => {
+      const disk = () => fs.readFileSync(path.join(repo, 'src', 'app.ts'), 'utf8');
+      // Desfazer edição: volta ao que está no disco.
+      await page.click('#files-editor .view-lines');
+      await page.keyboard.type('zzz');
+      await page.waitForSelector('#files-undo:not([hidden])');
+      await page.click('#files-undo');
+      await waitFor(async () => !(await editorText()).includes('zzz'), 5000, 'a edição desfeita');
+      await page.waitForFunction(() => document.querySelector('#files-path')?.textContent === 'src/app.ts');
+      await page.waitForSelector('#files-undo', { hidden: true });
+
+      // Ver alterações: o último commit à esquerda, o arquivo à direita.
+      await page.click('#files-changes-btn');
+      await page.waitForSelector('#files-changes:not([hidden]) .monaco-diff-editor');
+      await page.waitForFunction(() =>
+        document.querySelector('#files-changes .editor.original .view-lines')?.textContent?.replace(/\u00a0/g, ' ').includes('export const a = 1;'),
+      );
+      await page.click('#files-changes-btn');
+      await page.waitForSelector('#files-editor:not([hidden])');
+
+      // Desfazer alterações: o arquivo volta ao commit e é salvo; Ctrl+Z traz o texto de antes.
+      await page.click('#files-restore');
+      await page.waitForSelector('#dlg-confirm[open]');
+      await page.click('#dlg-confirm button[value=ok]');
+      await waitFor(() => disk() === 'export const a = 1;\n', 5000, 'o arquivo de volta ao commit');
+      await page.waitForSelector(`${node('src/app.ts')}:not(.mk-M)`);
+      await page.waitForSelector('#files-restore', { hidden: true });
+      await page.click('#files-editor .view-lines');
+      await page.keyboard.down('Control');
+      await page.keyboard.press('KeyZ');
+      await page.keyboard.up('Control');
+      await waitFor(async () => (await editorText()).includes('do agente'), 5000, 'o Ctrl+Z trazendo o texto de antes');
+      expect(disk()).toBe('export const a = 1;\n');
+      await page.click('#files-undo');
+      await page.waitForSelector('#files-undo', { hidden: true });
+    });
+
+    it('cria e apaga arquivo pela árvore', async () => {
+      await page.click(node('src'));
+      await page.click('#files-new-file');
+      await page.waitForSelector('#dlg-file-name[open]');
+      await page.type('#dlg-file-name input[name=name]', 'novo.ts');
+      await page.keyboard.press('Enter');
+      // O arquivo novo já abre no editor.
+      await page.waitForSelector(`${node('src/novo.ts')}.open`);
+      expect(fs.existsSync(path.join(repo, 'src', 'novo.ts'))).toBe(true);
+
+      await page.click(node('src/novo.ts'));
+      await page.click('#files-delete');
+      await page.waitForSelector('#dlg-confirm[open]');
+      await page.click('#dlg-confirm button[value=ok]');
+      await waitFor(() => !fs.existsSync(path.join(repo, 'src', 'novo.ts')), 5000, 'apagar o arquivo');
+      await page.waitForFunction((sel) => !document.querySelector(sel), {}, node('src/novo.ts'));
+    });
+
+    it('mostra os arquivos de outra branch, só leitura, sem trocar a branch da pasta', async () => {
+      await page.select('#files-ref', 'feat/y');
+      // Na branch, a árvore é só leitura: os botões de criar ficam desligados.
+      await page.waitForSelector('#files-new-file[disabled]');
+      await page.click(node('README.md'));
+      await waitFor(async () => (await editorText()).includes('da branch feat/y'), 5000, 'o README da feat/y');
+      expect(await page.$eval('#files-note', (e) => e.textContent)).toContain('só leitura');
+      expect(await page.$eval('#files-save', (e) => (e as HTMLElement).hidden)).toBe(true);
+      // O git do Windows grava com \r\n o que vem do checkout.
+      expect(fs.readFileSync(path.join(repo, 'README.md'), 'utf8').replace(/\r\n/g, '\n')).toBe('# teste\n');
+      await page.select('#files-ref', '');
+      await page.waitForSelector('#files-new-file:not([disabled])');
+    });
+
+    it('histórico: commits da branch, o que um commit mudou e a comparação com outra branch', async () => {
+      await page.click('#files-modes button[data-mode="history"]');
+      await page.waitForSelector('#hist-pane:not([hidden]) .commit-row');
+      const subjects = await page.$$eval('#hist-list .commit-row .subj', (els) => els.map((e) => e.textContent));
+      expect(subjects).toEqual(['adiciona app', 'primeiro commit']);
+
+      await page.click('#hist-list .commit-row');
+      await (await page.waitForSelector('#hist-list button.file[data-path="src/app.ts"]'))!.click();
+      await page.waitForSelector('#files-diff:not([hidden]) .monaco-diff-editor');
+      expect(await page.$eval('#files-note', (e) => e.textContent)).toMatch(/^commit /);
+
+      await page.select('#hist-compare', 'feat/y');
+      await page.waitForFunction(() => document.querySelector('#hist-list')?.textContent?.includes('1 commit que'));
+      await page.click('#hist-list button.file[data-path="README.md"]');
+      await page.waitForFunction(() => document.querySelector('#files-note')?.textContent === 'main → feat/y');
+      await page.waitForFunction(() => document.querySelector('#files-diff .editor.modified .view-lines')?.textContent?.replace(/\u00a0/g, ' ').includes('da branch feat/y'));
+
+    });
+
+    it('modo Git: o painel de git da lateral entra no explorador, e o diff abre na área principal', async () => {
+      fs.writeFileSync(path.join(repo, 'README.md'), '# teste\nmudou no modo git\n');
+      await page.click('#files-modes button[data-mode="git"]');
+      await page.waitForSelector('#git-pane:not([hidden]) #git .branch');
+      expect(await page.$eval('#git-panel', (e) => (e as HTMLElement).hidden)).toBe(true);
+      // A lista vem da atualização ao entrar no modo Git: espera o arquivo aparecer.
+      await page.waitForSelector('#git-pane button.file[data-path="README.md"]');
+      await page.click('#git-pane button.file[data-path="README.md"]');
+      await page.waitForSelector('#git-main #diff-view:not([hidden]) .dl.add');
+      expect(await page.$$eval('#diff-view .dl.add .code', (els) => els.map((e) => e.textContent))).toContain('+ mudou no modo git');
+      // Esc fecha só o diff: o explorador continua, no modo Git.
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('#diff-view[hidden]');
+      expect(await page.$eval('#files-view', (e) => (e as HTMLElement).hidden)).toBe(false);
+      await page.waitForFunction(() => getComputedStyle(document.querySelector('#git-main .git-empty')!).display !== 'none');
+
+      // O × da aba fecha o explorador; o painel de git e o diff voltam para os lugares de antes.
+      await page.click('#tabs .tab.files .close');
+      await page.waitForSelector('#files-view[hidden]');
+      expect(await page.$('#tabs .tab.files')).toBeNull();
+      expect(await page.$eval('#git-panel', (e) => (e as HTMLElement).hidden)).toBe(false);
+      expect(await page.$('#git-panel #git')).not.toBeNull();
+      expect(await page.$eval('#diff-view', (e) => e.parentElement?.classList.contains('terminal-pane'))).toBe(true);
+      fs.writeFileSync(path.join(repo, 'README.md'), '# teste\n');
+    });
   });
 
   it('a página não tem erros de JavaScript', async () => {

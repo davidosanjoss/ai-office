@@ -175,6 +175,84 @@ export interface FileDiff {
   truncated: boolean;
 }
 
+/** Um item de uma pasta, no explorador de arquivos. */
+export interface DirEntry {
+  name: string;
+  kind: 'dir' | 'file';
+}
+
+export interface DirListing {
+  /** Pasta listada, relativa à raiz do projeto, com "/" (vazio = raiz). */
+  path: string;
+  entries: DirEntry[];
+  /** A pasta tinha itens demais e a lista foi cortada. */
+  truncated: boolean;
+}
+
+/** Um arquivo aberto no editor: da pasta (editável) ou de um commit (só leitura). */
+export interface FileContent {
+  path: string;
+  content: string;
+  /** Impressão digital do conteúdo lido; o salvar a confere para não apagar o que um agente mudou. */
+  version: string;
+  binary: boolean;
+  /** Grande demais para abrir no editor. */
+  tooLarge: boolean;
+  /** Na leitura de um commit: o arquivo não existe nele. */
+  missing?: boolean;
+}
+
+/** Uma branch ou tag, para escolher o que ver no histórico. */
+export interface GitRef {
+  name: string;
+  kind: 'branch' | 'remote' | 'tag';
+  hash: string;
+  when: string;
+  subject: string;
+  /** É a branch em que a pasta está. */
+  current?: boolean;
+}
+
+export interface CommitSummary {
+  hash: string;
+  short: string;
+  subject: string;
+  author: string;
+  /** Data relativa ("há 2 dias"). */
+  when: string;
+  /** Data ISO, para o título ao passar o mouse. */
+  date: string;
+  parents: string[];
+}
+
+export interface CommitLog {
+  commits: CommitSummary[];
+  /** Há commits mais antigos além dos que vieram. */
+  more: boolean;
+}
+
+export interface CommitDetail extends CommitSummary {
+  /** Mensagem completa, com o corpo. */
+  message: string;
+  /** Com o que foi comparado: o primeiro pai (ou a árvore vazia, no primeiro commit). */
+  base: string;
+  files: FileChange[];
+}
+
+/** Diferença entre duas refs: o que "to" tem de diferente de "from". */
+export interface RefCompare {
+  from: string;
+  to: string;
+  /** Hashes completos das duas pontas, para ler os arquivos de cada lado. */
+  fromHash: string;
+  toHash: string;
+  /** Commits de "to" que "from" não tem, e o contrário. */
+  ahead: number;
+  behind: number;
+  commits: CommitSummary[];
+  files: FileChange[];
+}
+
 /** Situação do ai-memory (memória dos agentes), para o indicador do topo. */
 export interface MemoryStatus {
   /** O servidor do ai-memory responde no `/healthz`. */

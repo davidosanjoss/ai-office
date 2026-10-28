@@ -55,12 +55,77 @@
 
     <main id="workspace">
       <section class="terminal-pane">
-        <nav id="tabs"></nav>
+        <div class="tabs-row">
+          <nav id="tabs"></nav>
+          <button id="btn-sidebar" class="icon" title="Esconder o painel da direita">⇥</button>
+        </div>
         <!-- Faixa acima do terminal (e não por cima): a saída de quem encerrou continua legível. -->
         <div id="exited" class="exited" hidden>
           <span id="exited-text"></span>
           <button id="btn-resume" class="btn small">Retomar conversa</button>
         </div>
+        <!-- Explorador (aba 📁 da sala): arquivos com editor e histórico do git; ocupa o lugar do terminal. -->
+        <section id="files-view" hidden>
+          <header class="diff-head">
+            <nav id="files-modes">
+              <button data-mode="files" class="active">Arquivos</button>
+              <button data-mode="history">Histórico</button>
+              <button data-mode="git">Git</button>
+            </nav>
+            <span id="files-root" class="muted"></span>
+          </header>
+          <div class="files-body">
+            <aside class="files-side">
+              <div id="files-tree-pane">
+                <div class="files-tools">
+                  <select id="files-ref" title="A pasta no disco (editável) ou uma branch (só leitura)">
+                    <option value="">Pasta no disco (editável)</option>
+                  </select>
+                </div>
+                <div class="files-tools">
+                  <button id="files-new-file" class="btn small ghost" title="Novo arquivo na pasta selecionada">+ Arquivo</button>
+                  <button id="files-new-dir" class="btn small ghost" title="Nova pasta dentro da selecionada">+ Pasta</button>
+                  <button id="files-rename" class="btn small ghost" title="Renomear o selecionado" disabled>Renomear</button>
+                  <button id="files-delete" class="btn small ghost" title="Apagar o selecionado" disabled>Apagar</button>
+                  <button id="files-reload" class="icon" title="Atualizar a árvore">↻</button>
+                </div>
+                <div id="files-tree"></div>
+              </div>
+              <div id="hist-pane" hidden>
+                <div class="files-tools">
+                  <select id="hist-ref" title="Branch ou tag cujos commits aparecem"></select>
+                  <select id="hist-compare" title="Comparar com outra branch: o que ela tem de diferente">
+                    <option value="">Comparar com…</option>
+                  </select>
+                </div>
+                <div id="hist-list"></div>
+              </div>
+              <!-- Modo Git: o painel de git da lateral vem para cá enquanto o explorador está na tela. -->
+              <div id="git-pane" hidden></div>
+            </aside>
+            <section class="files-main">
+              <div id="files-work">
+              <div class="files-bar">
+                <span id="files-path"></span>
+                <span id="files-note" class="muted"></span>
+                <span id="files-msg"></span>
+                <button id="files-undo" class="btn small ghost" title="Volta ao que está salvo no disco (Ctrl+Z traz de volta)" hidden>Desfazer edição</button>
+                <button id="files-changes-btn" class="btn small ghost" title="O arquivo lado a lado com o último commit; as setas na margem desfazem um bloco" hidden>Ver alterações</button>
+                <button id="files-restore" class="btn small ghost" title="Volta o arquivo inteiro ao último commit" hidden>Desfazer alterações</button>
+                <button id="files-save" class="btn small" title="Salvar (Ctrl+S)" hidden disabled>Salvar</button>
+              </div>
+              <div id="files-editor" hidden></div>
+              <div id="files-changes" hidden></div>
+              <div id="files-diff" hidden></div>
+              <p id="files-empty" class="diff-msg">Escolha um arquivo na árvore. Ctrl+S salva.</p>
+              </div>
+              <!-- Modo Git: o visualizador de diff vem para cá. -->
+              <div id="git-main" hidden>
+                <p class="diff-msg git-empty">Clique num arquivo alterado para ver as linhas modificadas.</p>
+              </div>
+            </section>
+          </div>
+        </section>
         <!-- Visualizador de diff: ocupa o lugar do terminal; Esc volta. -->
         <section id="diff-view" hidden>
           <header class="diff-head">
@@ -104,7 +169,12 @@
           </div>
         </section>
         <section id="git-panel" class="panel grow">
-          <h3>Git <button id="btn-git-refresh" class="icon" title="Atualizar">↻</button></h3>
+          <h3>Git
+            <span class="h3-actions">
+              <button id="btn-files" class="btn small ghost" title="Arquivos e histórico desta pasta">Arquivos</button>
+              <button id="btn-git-refresh" class="icon" title="Atualizar">↻</button>
+            </span>
+          </h3>
           <div id="git"></div>
         </section>
       </aside>
@@ -274,6 +344,19 @@
         <menu>
           <button value="ok" class="btn danger">Encerrar</button>
           <button value="cancel" formnovalidate class="btn ghost" autofocus>Cancelar</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-file-name">
+      <form method="dialog">
+        <h2 id="file-name-title"></h2>
+        <p id="file-name-where" class="muted"></p>
+        <input name="name" autocomplete="off" spellcheck="false" />
+        <p class="error" hidden></p>
+        <menu>
+          <button value="ok" class="btn">OK</button>
+          <button value="cancel" class="btn ghost" formnovalidate>Cancelar</button>
         </menu>
       </form>
     </dialog>
