@@ -1,6 +1,6 @@
 // Regras de decisão da interface, sem DOM, para poderem ser testadas.
 
-import type { Agent, Floor, Incident, IncidentMessage, MemoryStatus, Room, WorktreeStatus } from '../shared/types.ts';
+import type { Agent, FileChange, Floor, Incident, IncidentMessage, MemoryStatus, Room, WorktreeStatus } from '../shared/types.ts';
 import { canDeleteBranch } from '../shared/worktree.ts';
 
 /** Depois da última tecla, quanto esperar antes de trocar de terminal sozinho. */
@@ -33,16 +33,19 @@ export interface FocusInput {
   now: number;
   lastKeyAt: number;
   selectedAt: number;
+  /** O explorador de arquivos está aberto: você está lendo ou editando código. */
+  exploring?: boolean;
 }
 
 /**
  * Para quem o foco automático deve ir agora, ou undefined para ficar onde está.
  * Só troca quando o agente atual não precisa de você: está trabalhando, encerrado,
  * abrindo, ou parado há um tempo sem você digitar. Nunca troca enquanto você digita
- * nem enquanto você lê um agente que acabou de terminar.
+ * nem enquanto você lê um agente que acabou de terminar, nem com o explorador aberto (trocar de
+ * agente o esconderia no meio da edição).
  */
 export function nextAutoFocus(f: FocusInput): string | undefined {
-  if (!f.enabled || f.now - f.lastKeyAt < TYPING_GRACE_MS) return undefined;
+  if (!f.enabled || f.exploring || f.now - f.lastKeyAt < TYPING_GRACE_MS) return undefined;
   const current = f.agents.find((a) => a.id === f.selectedId);
   if (current) {
     const quietFor = f.now - Math.max(f.lastKeyAt, f.selectedAt);
@@ -311,4 +314,104 @@ export function memoryView(st: MemoryStatus | undefined): {
     canUninstall: st.autoInstall && !busy && any,
     showSteps: !st.autoInstall && !on,
   };
+}
+
+// ---------- explorador de arquivos ----------
+
+/** Caminho de `name` dentro da pasta `dir` (vazio = raiz), sempre com "/". */
+export function childPath(dir: string, name: string): string {
+  return dir ? `${dir}/${name}` : name;
+}
+
+/** Pasta que contém `p` (vazio = raiz). */
+export function parentPath(p: string): string {
+  const i = p.lastIndexOf('/');
+  return i < 0 ? '' : p.slice(0, i);
+}
+
+/** Por que o nome não serve para um arquivo ou pasta; undefined se serve. */
+export function fileNameError(name: string): string | undefined {
+  const n = name.trim();
+  if (!n) return 'Digite um nome.';
+  if (/[\\/]/.test(n)) return 'O nome não pode ter "/" nem "\\".';
+  if (n === '.' || n === '..') return 'Esse nome não pode.';
+  if (n.toLowerCase() === '.git') return 'A pasta .git fica de fora do explorador.';
+  if (/[<>:"|?*\x00-\x1f]/.test(n)) return 'O Windows não aceita < > : " | ? * no nome.';
+  return undefined;
+}
+
+/**
+ * Onde fica um arquivo aberto depois de renomear `from` para `to`: o próprio arquivo ou uma
+ * pasta acima dele. Undefined se a renomeação não o afeta.
+ */
+export function renamedPath(open: string, from: string, to: string): string | undefined {
+  if (open === from) return to;
+  if (open.startsWith(`${from}/`)) return to + open.slice(from.length);
+  return undefined;
+}
+
+/** O arquivo aberto foi apagado junto com `removed` (ele mesmo ou uma pasta acima). */
+export function removedWith(open: string, removed: string): boolean {
+  return open === removed || open.startsWith(`${removed}/`);
+}
+
+/**
+ * Marcas do git na árvore: a letra de cada arquivo alterado, e "•" nas pastas que têm algo
+ * alterado dentro, para você achar as mudanças sem abrir pasta por pasta.
+ */
+export function treeMarks(changes: FileChange[]): Map<string, string> {
+  const marks = new Map<string, string>();
+  for (const c of changes) {
+    marks.set(c.path, c.status === '??' ? '?' : c.status[0]);
+    for (let dir = parentPath(c.path); dir; dir = parentPath(dir)) {
+      if (marks.has(dir)) break;
+      marks.set(dir, '•');
+    }
+  }
+  return marks;
+}
+
+/** O arquivo no editor em relação ao último commit: igual, diferente ou novo (fora do git). */
+export type HeadState = 'equal' | 'differs' | 'new' | 'unknown';
+
+export interface EditorButtons {
+  save: boolean;
+  /** Volta ao que está salvo no disco. */
+  undoEdit: boolean;
+  /** Mostra o arquivo lado a lado com o último commit. */
+  changes: boolean;
+  /** Volta o arquivo inteiro ao último commit. */
+  restore: boolean;
+}
+
+/** Quais botões o editor mostra, pelo estado do arquivo aberto. */
+export function editorButtons(s: { readOnly: boolean; dirty: boolean; head: HeadState; showingChanges: boolean }): EditorButtons {
+  if (s.readOnly) return { save: false, undoEdit: false, changes: false, restore: false };
+  return {
+    save: true,
+    undoEdit: s.dirty,
+    // Na tela de alterações o botão continua, para voltar ao editor.
+    changes: s.head === 'differs' || s.showingChanges,
+    restore: s.head === 'differs',
+  };
+}
+
+/** Compara o texto do editor com o do último commit (ausente = arquivo novo; null = sem git). */
+export function headState(current: string, head: string | null | undefined): HeadState {
+  if (head === null) return 'unknown';
+  if (head === undefined) return 'new';
+  return current === head ? 'equal' : 'differs';
+}
+
+// ---------- painel de git ----------
+
+/** Seções do painel de git que você pode recolher. */
+export type GitSection = 'worktree' | 'working' | 'branch' | 'commits';
+
+/** Como cada seção começa: as de arquivos abertas, os últimos commits fechados. */
+const GIT_SECTIONS_OPEN: Record<GitSection, boolean> = { worktree: true, working: true, branch: true, commits: false };
+
+/** A seção está aberta: o que você escolheu por último, ou o padrão dela. */
+export function gitSectionOpen(saved: Partial<Record<GitSection, boolean>>, sec: GitSection): boolean {
+  return saved[sec] ?? GIT_SECTIONS_OPEN[sec];
 }

@@ -10,6 +10,15 @@ import {
   roomTabs,
   warTabs,
   nextAutoFocus,
+  childPath,
+  parentPath,
+  fileNameError,
+  renamedPath,
+  removedWith,
+  treeMarks,
+  editorButtons,
+  headState,
+  gitSectionOpen,
   officeAgents,
   resumeLabel,
   roomAgents,
@@ -74,6 +83,11 @@ describe('foco automático', () => {
 
   it('abre o terminal de quem terminou primeiro', () => {
     expect(focus([agent('atual'), done('b', 20), done('c', 10)], 'atual')).toBe('c');
+  });
+
+  it('regressão: não troca de agente com o explorador aberto (escondia o arquivo que você editava)', () => {
+    expect(focus([agent('atual', { status: 'working' }), done('b', 5)], 'atual', { exploring: true })).toBeUndefined();
+    expect(focus([agent('atual', { status: 'working' }), done('b', 5)], 'atual', { exploring: false })).toBe('b');
   });
 
   it('sem ninguém selecionado, vai para o primeiro da fila', () => {
@@ -352,5 +366,76 @@ describe('abas da sala de guerra e terminais', () => {
     const agents = [a('p1', { incidentId: 'i1' }), a('t1', { kind: 'shell', incidentId: 'i1' }), a('t0', { kind: 'shell' })];
     // O agente chamado continua nas abas da sala dele; o terminal da guerra, não.
     expect(roomTabs(agents, 'r').map((x) => x.id)).toEqual(['p1', 't0']);
+  });
+});
+
+describe('explorador de arquivos', () => {
+  it('monta e desmonta caminhos com "/"', () => {
+    expect(childPath('', 'a.ts')).toBe('a.ts');
+    expect(childPath('src/util', 'a.ts')).toBe('src/util/a.ts');
+    expect(parentPath('src/util/a.ts')).toBe('src/util');
+    expect(parentPath('a.ts')).toBe('');
+  });
+
+  it('recusa nomes que viram caminho ou que o Windows não aceita', () => {
+    expect(fileNameError('app.ts')).toBeUndefined();
+    expect(fileNameError('  ')).toMatch(/Digite/);
+    expect(fileNameError('a/b')).toMatch(/"\/"/);
+    expect(fileNameError('..')).toBeDefined();
+    expect(fileNameError('.GIT')).toMatch(/\.git/);
+    expect(fileNameError('a:b')).toMatch(/Windows/);
+  });
+
+  it('o arquivo aberto acompanha a renomeação dele ou de uma pasta acima', () => {
+    expect(renamedPath('src/a.ts', 'src/a.ts', 'src/b.ts')).toBe('src/b.ts');
+    expect(renamedPath('src/util/a.ts', 'src', 'lib')).toBe('lib/util/a.ts');
+    expect(renamedPath('srcx/a.ts', 'src', 'lib')).toBeUndefined();
+    expect(removedWith('src/a.ts', 'src')).toBe(true);
+    expect(removedWith('srcx/a.ts', 'src')).toBe(false);
+  });
+
+  it('marca os arquivos alterados e as pastas que os contêm', () => {
+    const marks = treeMarks([
+      { path: 'src/util/a.ts', status: 'M' },
+      { path: 'novo.txt', status: '??' },
+      { path: 'src/b.ts', status: 'A' },
+    ]);
+    expect(Object.fromEntries(marks)).toEqual({ 'src/util/a.ts': 'M', 'src/util': '•', src: '•', 'novo.txt': '?', 'src/b.ts': 'A' });
+  });
+});
+
+describe('desfazer no editor', () => {
+  const st = (patch: Partial<Parameters<typeof editorButtons>[0]> = {}) =>
+    editorButtons({ readOnly: false, dirty: false, head: 'equal', showingChanges: false, ...patch });
+
+  it('compara o editor com o último commit', () => {
+    expect(headState('a', 'a')).toBe('equal');
+    expect(headState('a', 'b')).toBe('differs');
+    expect(headState('a', undefined)).toBe('new');
+    expect(headState('a', null)).toBe('unknown');
+  });
+
+  it('desfazer edição só com algo por salvar; desfazer alterações só com diferença do commit', () => {
+    expect(st()).toEqual({ save: true, undoEdit: false, changes: false, restore: false });
+    expect(st({ dirty: true })).toMatchObject({ undoEdit: true, restore: false });
+    expect(st({ head: 'differs' })).toMatchObject({ changes: true, restore: true });
+    // Arquivo novo ou pasta sem git: não há commit para onde voltar.
+    expect(st({ head: 'new', dirty: true })).toMatchObject({ undoEdit: true, changes: false, restore: false });
+    expect(st({ head: 'unknown' })).toMatchObject({ changes: false, restore: false });
+    // Desfez tudo na tela de alterações: o botão fica, para voltar ao editor.
+    expect(st({ head: 'equal', showingChanges: true })).toMatchObject({ changes: true, restore: false });
+  });
+
+  it('arquivo de outra branch é só leitura: nenhum botão', () => {
+    expect(st({ readOnly: true, dirty: true, head: 'differs' })).toEqual({ save: false, undoEdit: false, changes: false, restore: false });
+  });
+});
+
+describe('seções do painel de git', () => {
+  it('arquivos começam abertos e os últimos commits fechados; depois vale o que você escolheu', () => {
+    expect(gitSectionOpen({}, 'working')).toBe(true);
+    expect(gitSectionOpen({}, 'commits')).toBe(false);
+    expect(gitSectionOpen({ working: false, commits: true }, 'working')).toBe(false);
+    expect(gitSectionOpen({ working: false, commits: true }, 'commits')).toBe(true);
   });
 });
