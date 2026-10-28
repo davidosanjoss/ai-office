@@ -389,6 +389,30 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await waitFor(async () => (await current()) === geral.id, 5000, 'voltou pelo botão');
   });
 
+  it('padrões do andar: o ✎ do elevador desliga a co-autoria e grava as instruções', async () => {
+    const geral = [...store.floors.values()].sort((a, b) => a.order - b.order)[0];
+    await page.goto(BASE);
+    await page.click(`#elevator .floor[data-floor="${geral.id}"]`);
+    await page.click('#elevator .floor.edit');
+    await page.waitForSelector('#dlg-floor[open]');
+    expect(await page.$eval('#dlg-floor input[name=coAuthor]', (i) => (i as HTMLInputElement).checked)).toBe(true);
+    await page.click('#dlg-floor input[name=coAuthor]');
+    await page.type('#dlg-floor textarea[name=instructions]', 'Commits resumidos');
+    await page.click('#dlg-floor button[value=ok]');
+    await waitFor(() => store.floors.get(geral.id)?.defaults?.instructions === 'Commits resumidos', 5000, 'padrões salvos');
+    expect(store.floors.get(geral.id)!.defaults).toEqual({ coAuthor: false, instructions: 'Commits resumidos' });
+
+    // Reabrir mostra o que foi salvo; desfaz para não afetar os outros testes.
+    await page.click('#elevator .floor.edit');
+    await page.waitForSelector('#dlg-floor[open]');
+    expect(await page.$eval('#dlg-floor input[name=coAuthor]', (i) => (i as HTMLInputElement).checked)).toBe(false);
+    expect(await page.$eval('#dlg-floor textarea[name=instructions]', (t) => (t as HTMLTextAreaElement).value)).toBe('Commits resumidos');
+    await page.click('#dlg-floor input[name=coAuthor]');
+    await page.$eval('#dlg-floor textarea[name=instructions]', (t) => ((t as HTMLTextAreaElement).value = ''));
+    await page.click('#dlg-floor button[value=ok]');
+    await waitFor(() => !store.floors.get(geral.id)?.defaults, 5000, 'padrões limpos');
+  });
+
   it('regressão: voltar a um andar com outro zoom desenha o céu na tela toda (sobrava uma borda verde)', async () => {
     const current = () => page.$eval('#elevator .floor.current', (b) => (b as HTMLElement).dataset.floor ?? '');
     const go = async (id: string) => {

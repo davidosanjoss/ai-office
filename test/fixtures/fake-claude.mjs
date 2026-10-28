@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Claude Code falso para os testes. Imita o que o escritório usa do real:
-// - aceita --settings, --session-id e --resume;
+// - aceita --settings, --session-id, --resume e --append-system-prompt-file;
 // - dispara os hooks do --settings de verdade (o mesmo office-hook.mjs da produção);
 // - grava o transcript em $AI_OFFICE_CLAUDE_DIR/projects só depois da primeira mensagem;
 // - `--resume` de uma sessão sem transcript sai com o mesmo erro do real.
@@ -24,6 +24,7 @@ const opt = (name) => {
 const resumeId = opt('--resume');
 const sessionId = resumeId ?? opt('--session-id');
 const settingsFile = opt('--settings');
+const promptFile = opt('--append-system-prompt-file');
 const projects = path.join(process.env.AI_OFFICE_CLAUDE_DIR ?? '.', 'projects');
 
 function transcriptExists() {
@@ -69,6 +70,9 @@ const out = (s) => process.stdout.write(s);
 
 out(`FAKE CLAUDE mode=${resumeId ? 'resume' : 'new'} session=${sessionId}\r\n`);
 out(`child=${process.env.CLAUDE_CODE_CHILD_SESSION ?? 'none'} hooks=${settingsFile ? 'yes' : 'no'}\r\n`);
+// Padrões do andar: o real esconde a co-autoria com attribution.commit vazio e lê as instruções do arquivo.
+out(`coautoria=${settings.attribution?.commit === '' ? 'nao' : 'sim'}\r\n`);
+if (promptFile) out(`instrucoes=${fs.readFileSync(promptFile, 'utf8').replace(/\r?\n/g, ' | ')}\r\n`);
 // Consulta de atributos do terminal, como o Claude real faz: o xterm responde sozinho.
 out('\x1b[c');
 
