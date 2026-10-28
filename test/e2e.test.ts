@@ -651,10 +651,10 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
       gitIn('commit', '-q', '-am', 'muda o readme na branch');
       gitIn('checkout', '-q', 'main');
       const { data: room } = await api('POST', '/api/rooms', { path: repo });
-      await page.waitForFunction((n) => document.body.textContent?.includes(n), {}, room.name);
-      const r = cellRect(store.rooms.get(room.id)!.pos!);
-      await revealWorld(r.x + r.w / 2, r.y + 20);
-      await clickWorld(r.x + 40, r.y + 20);
+      // Pela lista da esquerda: arrastar o mapa até a sala era lento no CI do Windows (estourava o tempo).
+      const head = `#directory .dir-room-head[data-room="${room.id}"]`;
+      await page.waitForSelector(head);
+      await page.click(head);
       await page.waitForFunction((n) => document.querySelector('.room-title')?.textContent === n, {}, room.name);
       await page.waitForFunction(() => document.querySelector('#git .branch')?.textContent?.includes('main'));
     });
