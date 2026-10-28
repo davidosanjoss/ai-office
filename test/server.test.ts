@@ -585,6 +585,20 @@ describe('sala de guerra', () => {
     expect(md).toContain('feito: [Sala de guerra]');
   });
 
+  it('abre um terminal comum da sala de guerra, na pasta do primeiro projeto, fora do chat', async () => {
+    const shells = [...store.agents.values()].filter((a) => a.kind === 'shell' && a.incidentId === incident.id);
+    expect(shells).toHaveLength(1);
+    expect(shells[0]).toMatchObject({ name: 'Terminal 1', roomId: gateway.id, cwd: gateway.path, forIncident: true });
+    expect(inc().participants).not.toContain(shells[0].id);
+    // Dá para abrir mais; a numeração é da sala de guerra, não da sala do projeto.
+    const { data: second } = await api<Agent>('POST', `/api/incidents/${incident.id}/shells`);
+    expect(second).toMatchObject({ kind: 'shell', name: 'Terminal 2', incidentId: incident.id });
+    const { data: roomShell } = await api<Agent>('POST', '/api/shells', { roomId: gateway.id });
+    expect(roomShell.name).toBe('Terminal 1');
+    expect(roomShell.incidentId).toBeUndefined();
+    await api('DELETE', `/api/agents/${roomShell.id}`);
+  });
+
   it('não abre um segundo incidente na mesma sala, nem chama quem já está numa', async () => {
     const again = await api('POST', '/api/incidents', { floorId: floor.id, slot: 0, title: 'outro', roomIds: [filas.id] });
     expect(again.status).toBe(400);
@@ -686,6 +700,8 @@ describe('sala de guerra', () => {
     expect(store.incidents.has(incident.id)).toBe(false);
     expect(store.agents.has(novo.id)).toBe(false);
     expect(store.agents.get(bruno.id)?.incidentId).toBeUndefined();
+    // Os terminais da sala de guerra fecham junto.
+    expect([...store.agents.values()].some((a) => a.incidentId === incident.id)).toBe(false);
     const md = fs.readFileSync(incident.file, 'utf8');
     expect(md).toContain('## Post-mortem');
     expect(md).toContain('Aumentamos os consumidores');

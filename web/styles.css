@@ -1294,11 +1294,63 @@ body.dir-hidden #directory {
 .msg .share {
   margin-top: 6px;
 }
+/* Resposta de agente: card compacto, o nome abre o terminal dele */
+#war-chat .msg.agente .msg-head {
+  margin-bottom: 0;
+}
+.msg-open {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.msg-open:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+/* Sugestões de @menção, acima do campo do chat */
+.mentions {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  margin: 0 0 4px;
+  padding: 4px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  max-height: 180px;
+  overflow: auto;
+  z-index: 5;
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.35);
+}
+.mentions li {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.mentions li.active,
+.mentions li:hover {
+  background: #2d3f76;
+}
+.mentions small {
+  color: var(--muted);
+}
 .msg.repasse .msg-text {
   max-height: 4.5em;
   overflow: hidden;
 }
 #war-form {
+  position: relative;
   display: flex;
   gap: 6px;
   align-items: flex-end;

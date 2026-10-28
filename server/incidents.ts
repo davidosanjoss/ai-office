@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { type Participant, invitation, parseMentions, recordMarkdown, sharedMessage, userMessage } from '../shared/incident.ts';
 import type { Incident, IncidentMessage } from '../shared/types.ts';
-import { createAgent, isRunning, removeAgent, resumeAgent, slugify, writeInput } from './agents.ts';
+import { createAgent, createShell, isRunning, removeAgent, resumeAgent, slugify, writeInput } from './agents.ts';
 import { CLAUDE_DIR, DATA_DIR } from './platform.ts';
 import { store } from './store.ts';
 
@@ -68,7 +68,20 @@ export async function openIncident(req: OpenIncident): Promise<Incident> {
   };
   store.putIncident(incident);
   await join(incident.id, roomIds, agentIds);
+  // Um terminal comum já aberto, para rodar comandos sem sair da sala de guerra.
+  openWarShell(incident.id);
   return store.incidents.get(id)!;
+}
+
+/**
+ * Terminal comum da sala de guerra, na pasta do primeiro projeto que entrou. Não é participante:
+ * não recebe as mensagens do chat.
+ */
+export function openWarShell(incidentId: string) {
+  const incident = mustGet(incidentId);
+  const roomId = incident.participants.map((id) => store.agents.get(id)?.roomId).find((r) => r && store.rooms.has(r));
+  if (!roomId) throw new IncidentError('Nenhum projeto na sala de guerra para abrir o terminal');
+  return createShell(roomId, { incidentId });
 }
 
 /** Chama mais gente para um incidente aberto. */
@@ -133,6 +146,8 @@ export function closeIncident(incidentId: string, resolution = '') {
       store.log(agentId, `${agent.name} voltou da sala de guerra`, 'system');
     }
   }
+  // Os terminais da sala de guerra fecham junto.
+  for (const a of [...store.agents.values()]) if (a.kind === 'shell' && a.incidentId === incidentId) removeAgent(a.id);
   store.removeIncident(incidentId);
   return { file: incident.file };
 }

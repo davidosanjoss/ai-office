@@ -74,28 +74,37 @@ export function isRunning(id: string): boolean {
   return running.has(id);
 }
 
-function shellName(roomId: string): string {
-  const used = new Set([...store.agents.values()].filter((a) => a.roomId === roomId && a.kind === 'shell').map((a) => a.name));
+function shellName(roomId: string, incidentId?: string): string {
+  // Os terminais da sala de guerra contam à parte dos da sala do projeto onde abrem.
+  const used = new Set(
+    [...store.agents.values()]
+      .filter((a) => a.kind === 'shell' && (incidentId ? a.incidentId === incidentId : a.roomId === roomId && !a.incidentId))
+      .map((a) => a.name),
+  );
   let n = 1;
   while (used.has(`Terminal ${n}`)) n++;
   return `Terminal ${n}`;
 }
 
-/** Abre uma aba de terminal comum (o seu shell) na pasta da sala, sem Claude. */
-export function createShell(roomId: string): Agent {
+/**
+ * Abre uma aba de terminal comum (o seu shell) na pasta da sala, sem Claude. Com `incidentId`,
+ * o terminal é da sala de guerra: aparece nas abas dela e fecha quando o incidente é encerrado.
+ */
+export function createShell(roomId: string, opts: { incidentId?: string } = {}): Agent {
   const room = store.rooms.get(roomId);
   if (!room) throw new Error('Sala não encontrada');
   const agent: Agent = {
     id: randomUUID().slice(0, 8),
     kind: 'shell',
     roomId,
-    name: shellName(roomId),
+    name: shellName(roomId, opts.incidentId),
     cwd: room.path,
     sessionId: '',
     status: 'idle',
     activity: path.basename(defaultShell()),
     subagents: 0,
     createdAt: Date.now(),
+    ...(opts.incidentId ? { incidentId: opts.incidentId, forIncident: true } : {}),
   };
   store.putAgent(agent);
   spawn(agent, false);
@@ -218,6 +227,7 @@ function spawn(agent: Agent, resume: boolean) {
   let output = '';
 
   proc.onData((data) => {
+    ready.add(proc);
     if (output.length < 20_000) output += data;
     appendScrollback(agent.id, data);
     store.output(agent.id, data);
@@ -290,8 +300,34 @@ export function isBusy(id: string): boolean {
   return proc.process !== shell && !proc.process.endsWith(`/${shell}`);
 }
 
+/** Terminais que já mostraram alguma saída: no Windows, só esses o ConPTY encerra com segurança. */
+const ready = new WeakSet<object>();
+
+type Killable = { kill(): void; onData(cb: (d: string) => void): { dispose(): void } };
+
+/**
+ * Encerra o terminal. No Windows, um terminal recém-aberto ainda está conectando o ConPTY, e
+ * encerrá-lo nesse meio pode derrubar o servidor: espera a primeira saída (até 3 s) antes.
+ */
+export function killWhenReady(proc: Killable, isReady: boolean, windows = isWindows, waitMs = 3000) {
+  if (!windows || isReady) return proc.kill();
+  let done = false;
+  const go = () => {
+    if (done) return;
+    done = true;
+    clearTimeout(timer);
+    sub.dispose();
+    try {
+      proc.kill();
+    } catch {}
+  };
+  const timer = setTimeout(go, waitMs);
+  const sub = proc.onData(() => setTimeout(go, 50));
+}
+
 export function killAgent(id: string) {
-  running.get(id)?.kill();
+  const proc = running.get(id);
+  if (proc) killWhenReady(proc, ready.has(proc));
 }
 
 /** Encerra a sessão e espera o processo sair (até 5 s), para a pasta dele poder ser apagada. */
@@ -304,7 +340,7 @@ export function stopAgent(id: string): Promise<void> {
       clearTimeout(timer);
       resolve();
     });
-    proc.kill();
+    killWhenReady(proc, ready.has(proc));
   });
 }
 

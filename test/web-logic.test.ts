@@ -7,6 +7,8 @@ import {
   becameAttention,
   exitedMessage,
   memoryView,
+  roomTabs,
+  warTabs,
   nextAutoFocus,
   officeAgents,
   resumeLabel,
@@ -332,5 +334,23 @@ describe('indicador da memória (ai-memory)', () => {
   it('Windows: sem botão de instalar, mostra o passo a passo', () => {
     expect(memoryView(st({ autoInstall: false }))).toMatchObject({ canInstall: false, canUninstall: false, showSteps: true });
     expect(memoryView(st({ autoInstall: false, running: true, hooks: true, mcp: true })).showSteps).toBe(false);
+  });
+});
+
+describe('abas da sala de guerra e terminais', () => {
+  const a = (id: string, patch: Partial<Agent> = {}): Agent =>
+    ({ id, roomId: 'r', name: id, cwd: '/', sessionId: '', status: 'idle', activity: '', subagents: 0, createdAt: 0, ...patch }) as Agent;
+  const incident = { id: 'i1', participants: ['p2', 'p1'] } as Incident;
+
+  it('a sala de guerra mostra os participantes e depois os terminais dela', () => {
+    const agents = [a('t2', { kind: 'shell', incidentId: 'i1', createdAt: 2 }), a('p1', { incidentId: 'i1' }), a('t1', { kind: 'shell', incidentId: 'i1', createdAt: 1 }), a('p2', { incidentId: 'i1' }), a('outro', { kind: 'shell' })];
+    expect(warTabs(incident, agents).map((x) => x.id)).toEqual(['p2', 'p1', 't1', 't2']);
+    expect(warTabs(undefined, agents)).toEqual([]);
+  });
+
+  it('o terminal da sala de guerra não aparece nas abas da sala do projeto onde abriu', () => {
+    const agents = [a('p1', { incidentId: 'i1' }), a('t1', { kind: 'shell', incidentId: 'i1' }), a('t0', { kind: 'shell' })];
+    // O agente chamado continua nas abas da sala dele; o terminal da guerra, não.
+    expect(roomTabs(agents, 'r').map((x) => x.id)).toEqual(['p1', 't0']);
   });
 });

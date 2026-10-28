@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { claudeArgs, cleanEnv, lastLine, slugify } from '../server/agents.ts';
+import { claudeArgs, cleanEnv, killWhenReady, lastLine, slugify } from '../server/agents.ts';
 
 describe('claudeArgs', () => {
   it('sessão nova fixa o ID com --session-id', () => {
@@ -68,5 +68,49 @@ describe('slugify', () => {
 
   it('nome só com símbolos vira "agente"', () => {
     expect(slugify('!!!')).toBe('agente');
+  });
+});
+
+describe('killWhenReady', () => {
+  const fakeProc = () => {
+    const listeners: ((d: string) => void)[] = [];
+    return {
+      kills: 0,
+      listeners,
+      kill() {
+        this.kills++;
+      },
+      onData(cb: (d: string) => void) {
+        listeners.push(cb);
+        return { dispose: () => listeners.splice(listeners.indexOf(cb), 1) };
+      },
+    };
+  };
+  const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+  it('fora do Windows, ou com o terminal pronto, encerra na hora', () => {
+    const a = fakeProc();
+    killWhenReady(a, false, false);
+    expect(a.kills).toBe(1);
+    const b = fakeProc();
+    killWhenReady(b, true, true);
+    expect(b.kills).toBe(1);
+  });
+
+  it('no Windows, terminal recém-aberto: espera a primeira saída para encerrar', async () => {
+    const p = fakeProc();
+    killWhenReady(p, false, true, 1000);
+    expect(p.kills).toBe(0);
+    p.listeners[0]('C:\\\\> ');
+    await sleep(80);
+    expect(p.kills).toBe(1);
+    expect(p.listeners).toHaveLength(0);
+  });
+
+  it('no Windows, sem saída nenhuma: encerra depois do limite, uma vez só', async () => {
+    const p = fakeProc();
+    killWhenReady(p, false, true, 60);
+    await sleep(100);
+    expect(p.kills).toBe(1);
   });
 });

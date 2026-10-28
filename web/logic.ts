@@ -187,6 +187,18 @@ export function incidentAgents(incident: Incident | undefined, agents: Agent[]):
   return incident.participants.map((id) => agents.find((a) => a.id === id)).filter((a): a is Agent => !!a);
 }
 
+/** Abas da sala de guerra: os participantes e, depois, os terminais comuns dela. */
+export function warTabs(incident: Incident | undefined, agents: Agent[]): Agent[] {
+  if (!incident) return [];
+  const shells = agents.filter((a) => a.kind === 'shell' && a.incidentId === incident.id).sort((a, b) => a.createdAt - b.createdAt);
+  return [...incidentAgents(incident, agents), ...shells];
+}
+
+/** Abas de uma sala de projeto: o terminal da sala de guerra que abriu nesta pasta fica só nas abas de lá. */
+export function roomTabs(agents: Agent[], roomId?: string): Agent[] {
+  return roomAgents(agents, roomId).filter((a) => !(a.kind === 'shell' && a.incidentId));
+}
+
 /** Quem pode ser chamado para a sala de guerra: agentes do Claude do andar que não estão em outra. */
 export function incidentCandidates(agents: Agent[], rooms: Room[], floorId: string): Agent[] {
   return agentsOnFloor(agents, rooms, floorId)
