@@ -38,7 +38,12 @@ export function makeRepo(name: string): string {
   git('init', '-q', '-b', 'main');
   fs.writeFileSync(path.join(dir, 'README.md'), '# teste\n');
   git('add', '.');
-  git('commit', '-q', '-m', 'primeiro commit');
+  // Data fixa no passado: o painel mostra "há N segundos", que mudaria a cada leitura.
+  const date = '2024-01-01T12:00:00Z';
+  execFileSync('git', ['-C', dir, '-c', 'user.name=Teste', '-c', 'user.email=teste@example.com', 'commit', '-q', '-m', 'primeiro commit'], {
+    stdio: 'pipe',
+    env: { ...process.env, GIT_AUTHOR_DATE: date, GIT_COMMITTER_DATE: date },
+  });
   return dir;
 }
 
