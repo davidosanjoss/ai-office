@@ -19,7 +19,9 @@ import {
   writeInput,
 } from './agents.ts';
 import { discoverProjects } from './discover.ts';
+import { FileError, MAX_FILE, listDir, makeDir, readFile, removePath, renamePath, writeFile } from './files.ts';
 import { fileDiff, gitInfo } from './git.ts';
+import { commitDetail, commitLog, compareRefs, fileAt, fileAtHead, listRefs, treeAt } from './history.ts';
 import { handleHook } from './hooks.ts';
 import { IncidentError, addParticipants, closeIncident, incidentAt, leaveIncidents, openIncident, openWarShell, sendMessage, shareMessage } from './incidents.ts';
 import { MemoryError, memoryEvents, memoryStatus, openDataDir, startInstall, startUninstall } from './memory.ts';
@@ -222,6 +224,42 @@ export async function buildApp(opts: { port?: number } = {}) {
       }
     },
   );
+
+  // ---------- explorador de arquivos e histórico, na pasta do agente ou da sala ----------
+
+  /** Acha a pasta (agente ou sala); erros de caminho, conflito ou ref viram a mensagem para você. */
+  const folderRoute = (fn: (cwd: string, req: any) => unknown) => async (req: any, reply: any) => {
+    const { kind, id } = req.params;
+    const cwd = kind === 'agents' ? store.agents.get(id)?.cwd : kind === 'rooms' ? store.rooms.get(id)?.path : undefined;
+    if (!cwd) return reply.code(404).send({ error: 'Não encontrado' });
+    try {
+      return await fn(cwd, req);
+    } catch (err) {
+      if (err instanceof FileError) return reply.code(err.status).send({ error: err.message });
+      throw err;
+    }
+  };
+  // O arquivo vai como texto dentro de um JSON: as aspas e as quebras de linha ocupam o dobro.
+  const bodyLimit = MAX_FILE * 3;
+
+  app.get('/api/:kind/:id/files/list', folderRoute((cwd, req) => listDir(cwd, req.query.path ?? '')));
+  app.get('/api/:kind/:id/files/read', folderRoute((cwd, req) => readFile(cwd, req.query.path)));
+  app.get('/api/:kind/:id/files/head', folderRoute((cwd, req) => fileAtHead(cwd, req.query.path)));
+  app.put(
+    '/api/:kind/:id/files/write',
+    { bodyLimit },
+    folderRoute((cwd, req) => writeFile(cwd, req.body?.path, req.body?.content, { version: req.body?.version, create: !!req.body?.create })),
+  );
+  app.post('/api/:kind/:id/files/mkdir', folderRoute((cwd, req) => makeDir(cwd, req.body?.path)));
+  app.post('/api/:kind/:id/files/rename', folderRoute((cwd, req) => renamePath(cwd, req.body?.from, req.body?.to)));
+  app.post('/api/:kind/:id/files/delete', folderRoute((cwd, req) => removePath(cwd, req.body?.path)));
+
+  app.get('/api/:kind/:id/history/refs', folderRoute((cwd) => listRefs(cwd)));
+  app.get('/api/:kind/:id/history/log', folderRoute((cwd, req) => commitLog(cwd, req.query.ref, { skip: req.query.skip, file: req.query.path })));
+  app.get('/api/:kind/:id/history/commit', folderRoute((cwd, req) => commitDetail(cwd, req.query.ref)));
+  app.get('/api/:kind/:id/history/compare', folderRoute((cwd, req) => compareRefs(cwd, req.query.from, req.query.to)));
+  app.get('/api/:kind/:id/history/tree', folderRoute((cwd, req) => treeAt(cwd, req.query.ref, req.query.path ?? '')));
+  app.get('/api/:kind/:id/history/show', folderRoute((cwd, req) => fileAt(cwd, req.query.ref, req.query.path)));
 
   app.post<{ Body: { roomId: string; name?: string; worktree?: boolean } }>('/api/agents', async (req, reply) => {
     try {

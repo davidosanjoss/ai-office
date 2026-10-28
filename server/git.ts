@@ -7,7 +7,7 @@ import type { DiffScope, FileChange, FileDiff, GitInfo } from '../shared/types.t
 const exec = promisify(execFile);
 
 /** Árvore vazia do git: base para comparar um repositório que ainda não tem commits. */
-const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
+export const EMPTY_TREE = '4b825dc642cb6eb9a060e54bf8d69288fbee4904';
 const MAX_DIFF = 2 * 1024 * 1024;
 
 export async function git(cwd: string, args: string[]): Promise<string> {
@@ -112,7 +112,7 @@ async function numstat(cwd: string, args: string[]): Promise<Map<string, { addit
   return map;
 }
 
-async function changedBetween(cwd: string, from: string, to: string): Promise<FileChange[]> {
+export async function changedBetween(cwd: string, from: string, to: string): Promise<FileChange[]> {
   const [names, counts] = await Promise.all([
     git(cwd, ['diff', '--name-status', '--no-renames', from, to]),
     numstat(cwd, [from, to]),
@@ -150,7 +150,7 @@ export function unquote(p: string): string {
   return Buffer.from(bytes).toString('utf8');
 }
 
-function isBinary(buf: Buffer) {
+export function isBinary(buf: Buffer) {
   return buf.subarray(0, 8000).includes(0);
 }
 
