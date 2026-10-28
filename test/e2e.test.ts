@@ -242,6 +242,16 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     expect(await page.$eval('#terminals', (e) => getComputedStyle(e).display)).not.toBe('none');
   });
 
+  it('regressão: atualizar o painel de git sem mudança não recria os botões (o clique que caía no meio se perdia)', async () => {
+    await page.waitForSelector('#git .branch');
+    const branch = (await page.$('#git .branch'))!;
+    const refreshed = page.waitForResponse((r) => r.url().endsWith('/git'));
+    await page.click('#btn-git-refresh');
+    await refreshed;
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await branch.evaluate((b) => b.isConnected)).toBe(true);
+  });
+
   it('worktree: o painel de git traz o trabalho do agente para a main e encerra o worktree', async () => {
     const room = [...store.rooms.values()].find((r) => r.path.includes('e2e-repo'))!;
     const before = new Set(agents().map((a) => a.id));
