@@ -206,6 +206,32 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForFunction(() => ![...document.querySelectorAll('#tabs .tab')].some((t) => t.textContent?.includes('Terminal')));
   });
 
+  it('regressão: Ctrl+Shift+V cola uma vez só (o navegador já colava, e o escritório colava de novo)', async () => {
+    // Com permissão de ler a área de transferência, como num navegador em que você já permitiu.
+    await browser.defaultBrowserContext().overridePermissions(BASE, ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write']);
+    const before = new Set(agents().map((a) => a.id));
+    await page.click('#tabs .tab.add[title^="Novo terminal"]');
+    const sh = await waitFor(() => agents().find((x) => !before.has(x.id) && x.kind === 'shell'), 5000, 'terminal novo');
+    await page.waitForFunction(() => document.querySelector('#tabs .tab.active')?.textContent?.includes('Terminal'));
+    const cmd = process.platform === 'win32' ? 'echo colado' : 'echo col$((2+3))';
+    const out = process.platform === 'win32' ? 'colado' : 'col5';
+    await page.bringToFront();
+    await page.evaluate((text) => navigator.clipboard.writeText(text), cmd);
+    await page.focus('.term:not([hidden]) textarea');
+    await page.keyboard.down('Control');
+    await page.keyboard.down('Shift');
+    await page.keyboard.press('KeyV');
+    await page.keyboard.up('Shift');
+    await page.keyboard.up('Control');
+    await new Promise((r) => setTimeout(r, 300));
+    await page.keyboard.press('Enter');
+    await waitScreen(out);
+    // Colado duas vezes, a linha vira "echo col5echo col5" e a saída, "col5echo col5".
+    expect(await screen()).not.toContain(`${out}echo`);
+    await typeInTerminal('exit');
+    await waitFor(() => !store.agents.has(sh.id), 5000, 'aba fechar');
+  });
+
   it('Alt+1 troca para a primeira aba da sala', async () => {
     await page.keyboard.down('Alt');
     await page.keyboard.press('Digit1');
@@ -240,6 +266,16 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.keyboard.press('Escape');
     await page.waitForSelector('#diff-view[hidden]');
     expect(await page.$eval('#terminals', (e) => getComputedStyle(e).display)).not.toBe('none');
+  });
+
+  it('regressão: atualizar o painel de git sem mudança não recria os botões (o clique que caía no meio se perdia)', async () => {
+    await page.waitForSelector('#git .branch');
+    const branch = (await page.$('#git .branch'))!;
+    const refreshed = page.waitForResponse((r) => r.url().endsWith('/git'));
+    await page.click('#btn-git-refresh');
+    await refreshed;
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await branch.evaluate((b) => b.isConnected)).toBe(true);
   });
 
   it('worktree: o painel de git traz o trabalho do agente para a main e encerra o worktree', async () => {
