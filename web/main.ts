@@ -1091,12 +1091,23 @@ let lastGit: { base: string; info: GitInfo } | undefined;
 let lastWorktree: WorktreeStatus | undefined;
 /** Erro da última ação do worktree, mostrado na seção até a próxima ação. */
 let worktreeError = '';
+/** Último HTML do painel de git. */
+let gitHtml = '';
+
+/**
+ * Troca o painel de git só se mudou: a atualização a cada 15 s recriava os botões (o clique
+ * que caía no meio se perdia) e fechava o "Últimos commits".
+ */
+function setGitHtml(html: string) {
+  if (html === gitHtml) return;
+  gitHtml = html;
+  $('#git').innerHTML = html;
+}
 
 async function refreshGit() {
-  const box = $('#git');
   const base = gitBase();
   if (!base) {
-    box.replaceChildren();
+    setGitHtml('');
     lastGit = undefined;
     lastWorktree = undefined;
     return;
@@ -1114,7 +1125,7 @@ async function refreshGit() {
     lastWorktree = wt;
     renderGit(info);
   } catch {
-    if (base === gitBase()) box.textContent = 'Não foi possível ler o git.';
+    if (base === gitBase()) setGitHtml('Não foi possível ler o git.');
   }
 }
 
@@ -1139,9 +1150,8 @@ function fileRows(files: FileChange[], scope: DiffScope) {
 }
 
 function renderGit(info: GitInfo) {
-  const box = $('#git');
   if (!info.isRepo) {
-    box.innerHTML = '<p class="muted">Esta pasta não é um repositório git.</p>';
+    setGitHtml('<p class="muted">Esta pasta não é um repositório git.</p>');
     return;
   }
   const sync = [info.ahead ? `↑${info.ahead}` : '', info.behind ? `↓${info.behind}` : ''].filter(Boolean).join(' ');
@@ -1152,7 +1162,7 @@ function renderGit(info: GitInfo) {
     const del = list.reduce((n, f) => n + (f.deletions ?? 0), 0);
     return `${add ? `<span class="add">+${add}</span>` : ''}${del ? `<span class="del">−${del}</span>` : ''}`;
   };
-  box.innerHTML = `
+  setGitHtml(`
     <div class="branch">⎇ ${esc(info.branch ?? '?')} <span class="muted">${sync}</span></div>
     ${lastWorktree ? worktreeSection(lastWorktree) : ''}
     <div class="git-section">
@@ -1170,7 +1180,7 @@ function renderGit(info: GitInfo) {
     <details>
       <summary>Últimos commits</summary>
       ${(info.commits ?? []).map((c) => `<div class="commit"><code>${esc(c.hash)}</code> ${esc(c.subject)} <span class="muted">${esc(c.when)}</span></div>`).join('')}
-    </details>`;
+    </details>`);
 }
 
 /** Seção do worktree: onde a branch está em relação à sala e os botões de PR, merge e encerrar. */
@@ -1232,6 +1242,8 @@ async function worktreeAction(action: string, btn: HTMLButtonElement) {
   worktreeError = '';
   btn.disabled = true;
   btn.textContent = action === 'merge' ? 'Trazendo…' : 'Enviando…';
+  // A tela já não bate com o HTML guardado: a próxima atualização redesenha, mesmo sem mudança.
+  gitHtml = '';
   try {
     if (action === 'merge') await api('POST', `/api/agents/${agent.id}/worktree/merge`);
     else await api('POST', `/api/agents/${agent.id}/worktree/pr`, {});
