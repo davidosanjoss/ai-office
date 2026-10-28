@@ -159,6 +159,15 @@
           <legend>Cor</legend>
           <div id="floor-colors"></div>
         </fieldset>
+        <fieldset class="colors">
+          <legend>Padrões dos agentes deste andar</legend>
+          <label class="check">
+            <input type="checkbox" name="coAuthor" checked />
+            <span>Co-autoria do Claude nos commits e PRs<br /><small>Desligue para os commits saírem só no seu nome.</small></span>
+          </label>
+          <label>Instruções <textarea name="instructions" rows="3" maxlength="4000" placeholder="Ex.: Mensagens de commit resumidas, numa linha só"></textarea></label>
+          <small class="muted">Valem para quem for contratado ou voltar ao trabalho depois de salvar. Quem já está trabalhando continua como estava.</small>
+        </fieldset>
         <p class="error" hidden></p>
         <menu>
           <button value="ok" class="btn">Salvar</button>

@@ -979,7 +979,7 @@ function renderElevator() {
     const edit = document.createElement('button');
     edit.className = 'floor edit';
     edit.textContent = '✎';
-    edit.title = 'Renomear, trocar a cor ou apagar este andar';
+    edit.title = 'Renomear, trocar a cor, mudar os padrões dos agentes ou apagar este andar';
     edit.addEventListener('click', () => openFloorDialog(state.floors.find((f) => f.id === currentFloor)));
     panel.append(edit);
   }
@@ -994,6 +994,8 @@ function openFloorDialog(floor?: Floor) {
   form.reset();
   $('#dlg-floor-title').textContent = floor ? `Andar ${floor.name}` : 'Novo andar';
   dlgFloor.querySelector<HTMLInputElement>('input[name=name]')!.value = floor?.name ?? '';
+  dlgFloor.querySelector<HTMLInputElement>('input[name=coAuthor]')!.checked = floor?.defaults?.coAuthor !== false;
+  dlgFloor.querySelector<HTMLTextAreaElement>('textarea[name=instructions]')!.value = floor?.defaults?.instructions ?? '';
   const colors = $('#floor-colors');
   const chosen = floor?.color ?? FLOOR_COLORS[state.floors.length % FLOOR_COLORS.length];
   colors.replaceChildren(
@@ -1011,7 +1013,8 @@ function openFloorDialog(floor?: Floor) {
 }
 
 formDialog(dlgFloor, async (data) => {
-  const body = { name: data.get('name'), color: data.get('color') };
+  const defaults = { coAuthor: data.get('coAuthor') === 'on', instructions: data.get('instructions') };
+  const body = { name: data.get('name'), color: data.get('color'), defaults };
   const floor = (editingFloor ? await api('PATCH', `/api/floors/${editingFloor.id}`, body) : await api('POST', '/api/floors', body)) as Floor;
   upsert(state.floors, floor);
   state.floors.sort((a, b) => a.order - b.order);

@@ -522,6 +522,48 @@ describe('andares', () => {
     expect((await api('DELETE', `/api/floors/${f.id}`)).status).toBe(200);
     expect(store.floors.has(f.id)).toBe(false);
   });
+
+  it('padrões do andar: guarda só o que muda, mantém ao renomear e limpa com {}', async () => {
+    const { data: f } = await api<Floor>('POST', '/api/floors', { name: 'Cliente', defaults: { coAuthor: false, instructions: '  Commits resumidos  ' } });
+    expect(f.defaults).toEqual({ coAuthor: false, instructions: 'Commits resumidos' });
+    expect((await api<Floor>('PATCH', `/api/floors/${f.id}`, { name: 'Cliente X' })).data.defaults).toEqual(f.defaults);
+    // Co-autoria ligada e texto vazio são o padrão do Claude Code: nada a guardar.
+    expect((await api<Floor>('PATCH', `/api/floors/${f.id}`, { defaults: { coAuthor: true, instructions: ' ' } })).data.defaults).toBeUndefined();
+    const longo = await api('PATCH', `/api/floors/${f.id}`, { defaults: { instructions: 'x'.repeat(4001) } });
+    expect(longo.status).toBe(400);
+    expect((await novoAndar('Sem padrões')).defaults).toBeUndefined();
+  });
+
+  it('cada andar abre os agentes com os próprios padrões, e retomar pega os padrões novos', async () => {
+    const { data: cliente } = await api<Floor>('POST', '/api/floors', {
+      name: 'AMPM',
+      defaults: { coAuthor: false, instructions: 'Commits resumidos\nSem corpo' },
+    });
+    const pessoal = await novoAndar('Pessoal 2');
+    const { data: salaCliente } = await api<Room>('POST', '/api/rooms', { path: tempDir('cliente'), floorId: cliente.id });
+    const { data: salaPessoal } = await api<Room>('POST', '/api/rooms', { path: tempDir('pessoal'), floorId: pessoal.id });
+
+    const a = await hire(salaCliente);
+    await waitOutput(a.id, 'coautoria=nao');
+    await waitOutput(a.id, 'instrucoes=Commits resumidos | Sem corpo');
+    await waitOutput(a.id, 'hooks=yes');
+    await waitStatus(a.id, 'idle');
+
+    const b = await hire(salaPessoal);
+    await waitOutput(b.id, 'coautoria=sim');
+    await waitStatus(b.id, 'idle');
+    expect(ws.out(b.id)).not.toContain('instrucoes=');
+
+    // Mudou os padrões do Pessoal: quem volta ao trabalho já abre com eles.
+    await api('PATCH', `/api/floors/${pessoal.id}`, { defaults: { coAuthor: false } });
+    ws.type(b.id, 'prompt oi\r');
+    await waitStatus(b.id, 'done');
+    ws.type(b.id, '/exit\r');
+    await waitStatus(b.id, 'exited');
+    await api('POST', `/api/agents/${b.id}/resume`);
+    await waitOutput(b.id, 'FAKE CLAUDE mode=resume');
+    await waitOutput(b.id, 'coautoria=nao');
+  });
 });
 
 describe('sala de guerra', () => {

@@ -865,7 +865,8 @@ dialog label {
   margin-bottom: 12px;
   color: var(--muted);
 }
-dialog input:not([type='checkbox']) {
+dialog input:not([type='checkbox']),
+#dlg-floor textarea {
   display: block;
   width: 100%;
   margin-top: 4px;
@@ -889,7 +890,11 @@ dialog input:not([type='checkbox']) {
 .path-row .btn {
   white-space: nowrap;
 }
-dialog input:focus {
+#dlg-floor textarea {
+  resize: vertical;
+}
+dialog input:focus,
+#dlg-floor textarea:focus {
   outline: 2px solid var(--accent);
 }
 dialog .check {

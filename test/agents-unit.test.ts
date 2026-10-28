@@ -13,6 +13,12 @@ describe('claudeArgs', () => {
   it('regressão: os hooks entram sempre por --settings, sem mexer no ~/.claude/settings.json', () => {
     for (const resume of [false, true]) expect(claudeArgs('x', resume).slice(0, 1)).toEqual(['--settings']);
   });
+
+  it('instruções do andar entram por arquivo, também ao retomar', () => {
+    for (const resume of [false, true]) {
+      expect(claudeArgs('abc', resume, '/s.json', '/andar.md').slice(-2)).toEqual(['--append-system-prompt-file', '/andar.md']);
+    }
+  });
 });
 
 describe('lastLine', () => {

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pty, { type IPty } from '@lydell/node-pty';
-import type { Agent } from '../shared/types.ts';
+import type { Agent, Floor } from '../shared/types.ts';
 import { findTranscript } from './discover.ts';
 import { addWorktree } from './git.ts';
 import { DATA_DIR, HOST, PORT, claudeBin, defaultShell, isWindows, ptyCommand } from './platform.ts';
@@ -35,16 +35,36 @@ const running = new Map<string, IPty>();
 // Fica guardado mesmo depois que o processo termina, para você ver o que ele mostrou ao sair.
 const scrollbacks = new Map<string, string>();
 
-/** Arquivo de settings passado com --settings: só as sessões do escritório recebem esses hooks. */
-function writeHookSettings() {
+/** Settings passado com --settings: só as sessões do escritório recebem esses hooks. */
+function hookSettings() {
   const command = `"${process.execPath}" "${HOOK_SCRIPT}"`;
   const hooks: Record<string, unknown> = {};
   for (const event of HOOK_EVENTS) {
     hooks[event] = [{ matcher: '', hooks: [{ type: 'command', command: `${command} ${event}`, timeout: 5 }] }];
   }
-  fs.writeFileSync(SETTINGS_FILE, JSON.stringify({ hooks }, null, 2));
+  return { hooks };
 }
-writeHookSettings();
+fs.writeFileSync(SETTINGS_FILE, JSON.stringify(hookSettings(), null, 2));
+
+/**
+ * Arquivos da sessão com os padrões do andar. Co-autoria desligada: um settings próprio do
+ * andar, com os mesmos hooks e a atribuição vazia. Instruções: um arquivo para
+ * --append-system-prompt-file (no Windows, texto com quebras de linha não passa inteiro pelo cmd.exe).
+ */
+export function floorSessionFiles(floor: Floor | undefined): { settings: string; prompt?: string } {
+  const d = floor?.defaults;
+  let settings = SETTINGS_FILE;
+  let prompt: string | undefined;
+  if (floor && d?.coAuthor === false) {
+    settings = path.join(DATA_DIR, `claude-hooks-${floor.id}.json`);
+    fs.writeFileSync(settings, JSON.stringify({ ...hookSettings(), attribution: { commit: '', pr: '' } }, null, 2));
+  }
+  if (floor && d?.instructions) {
+    prompt = path.join(DATA_DIR, `andar-${floor.id}.md`);
+    fs.writeFileSync(prompt, d.instructions);
+  }
+  return { settings, prompt };
+}
 
 function pickName(roomId: string): string {
   const used = new Set([...store.agents.values()].filter((a) => a.roomId === roomId).map((a) => a.name));
@@ -175,9 +195,13 @@ export function resumeAgent(id: string) {
   );
 }
 
-/** Argumentos do `claude`: sessão nova usa o ID que escolhemos; retomada continua a mesma conversa. */
-export function claudeArgs(sessionId: string, resume: boolean, settingsFile = SETTINGS_FILE): string[] {
-  return ['--settings', settingsFile, resume ? '--resume' : '--session-id', sessionId];
+/**
+ * Argumentos do `claude`: sessão nova usa o ID que escolhemos; retomada continua a mesma conversa.
+ * As instruções do andar valem por execução, então entram também ao retomar.
+ */
+export function claudeArgs(sessionId: string, resume: boolean, settingsFile = SETTINGS_FILE, promptFile?: string): string[] {
+  const args = ['--settings', settingsFile, resume ? '--resume' : '--session-id', sessionId];
+  return promptFile ? [...args, '--append-system-prompt-file', promptFile] : args;
 }
 
 function appendScrollback(id: string, data: string) {
@@ -203,7 +227,11 @@ function spawn(agent: Agent, resume: boolean) {
     store.patchAgent(agent.id, { status: 'exited', activity: 'Claude Code não encontrado no PATH' });
     return;
   }
-  const args = isShell ? [] : claudeArgs(agent.sessionId, resume);
+  let args: string[] = [];
+  if (!isShell) {
+    const files = floorSessionFiles(store.floors.get(store.rooms.get(agent.roomId)?.floorId ?? ''));
+    args = claudeArgs(agent.sessionId, resume, files.settings, files.prompt);
+  }
   const cmd = ptyCommand(bin, args);
   const cwd = fs.existsSync(agent.cwd) ? agent.cwd : store.rooms.get(agent.roomId)!.path;
   // Só as sessões do Claude reportam eventos ao escritório.

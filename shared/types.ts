@@ -19,6 +19,16 @@ export interface Floor {
   createdAt: number;
   /** Quantas salas de guerra o andar tem (ausente = 1). */
   warRooms?: number;
+  /** Como os agentes das salas deste andar trabalham (ausente = padrão do Claude Code). */
+  defaults?: FloorDefaults;
+}
+
+/** Padrões de um andar, aplicados a cada sessão do Claude que abre (ou volta) numa sala dele. */
+export interface FloorDefaults {
+  /** false tira a co-autoria do Claude dos commits e PRs (ausente = como o Claude Code faz). */
+  coAuthor?: boolean;
+  /** Texto acrescentado ao prompt de sistema de cada agente do andar. */
+  instructions?: string;
 }
 
 export interface Room {

@@ -28,7 +28,7 @@ import { WorktreeError, mergeWorktree, openPr, removeWorktree, worktreeStatus } 
 import { PORT } from './platform.ts';
 import { DEFAULT_FLOOR, store } from './store.ts';
 import { FLOOR_COLORS, MAX_WAR_ROOMS, autoPlace, canPlace, isValidCell } from '../shared/building.ts';
-import type { Agent, Floor, Room } from '../shared/types.ts';
+import type { Agent, Floor, FloorDefaults, Room } from '../shared/types.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const DIST = path.join(ROOT, 'dist');
@@ -110,22 +110,26 @@ export async function buildApp(opts: { port?: number } = {}) {
 
   // ---------- andares ----------
 
-  app.post<{ Body: { name?: string; color?: string } }>('/api/floors', async (req, reply) => {
+  app.post<{ Body: { name?: string; color?: string; defaults?: FloorDefaults } }>('/api/floors', async (req, reply) => {
     const name = String(req.body?.name ?? '').trim();
     if (!name) return reply.code(400).send({ error: 'Dê um nome ao andar' });
+    const defaults = floorDefaults(req.body?.defaults);
+    if (defaults === null) return reply.code(400).send({ error: `As instruções do andar têm até ${MAX_FLOOR_INSTRUCTIONS} caracteres` });
     const floors = [...store.floors.values()];
     const order = floors.reduce((max, f) => Math.max(max, f.order), 0) + 1;
     const color = validColor(req.body?.color) ?? FLOOR_COLORS[floors.length % FLOOR_COLORS.length];
-    const floor: Floor = { id: randomUUID().slice(0, 8), name, color, order, createdAt: Date.now() };
+    const floor: Floor = { id: randomUUID().slice(0, 8), name, color, order, createdAt: Date.now(), defaults };
     store.putFloor(floor);
     return floor;
   });
 
-  app.patch<{ Params: { id: string }; Body: { name?: string; color?: string; warRooms?: number } }>('/api/floors/:id', async (req, reply) => {
+  app.patch<{ Params: { id: string }; Body: { name?: string; color?: string; warRooms?: number; defaults?: FloorDefaults } }>('/api/floors/:id', async (req, reply) => {
     const floor = store.floors.get(req.params.id);
     if (!floor) return reply.code(404).send({ error: 'Andar não encontrado' });
     const name = req.body?.name === undefined ? floor.name : String(req.body.name).trim();
     if (!name) return reply.code(400).send({ error: 'Dê um nome ao andar' });
+    const defaults = req.body?.defaults === undefined ? floor.defaults : floorDefaults(req.body.defaults);
+    if (defaults === null) return reply.code(400).send({ error: `As instruções do andar têm até ${MAX_FLOOR_INSTRUCTIONS} caracteres` });
     let warRooms = store.warRoomsOf(floor.id);
     if (req.body?.warRooms !== undefined) {
       const n = Number(req.body.warRooms);
@@ -135,7 +139,7 @@ export async function buildApp(opts: { port?: number } = {}) {
       }
       warRooms = n;
     }
-    const updated = { ...floor, name, color: validColor(req.body?.color) ?? floor.color, warRooms };
+    const updated = { ...floor, name, color: validColor(req.body?.color) ?? floor.color, warRooms, defaults };
     store.putFloor(updated);
     return updated;
   });
@@ -338,6 +342,23 @@ export async function buildApp(opts: { port?: number } = {}) {
 /** Primeiro andar acima do térreo: destino padrão de salas novas sem andar escolhido. */
 function firstFloorId(): string | undefined {
   return [...store.floors.values()].sort((a, b) => a.order - b.order)[0]?.id;
+}
+
+const MAX_FLOOR_INSTRUCTIONS = 4000;
+
+/**
+ * Padrões do andar vindos da interface: guarda só o que difere do Claude Code (co-autoria
+ * desligada, instruções não vazias). null = instruções longas demais.
+ */
+function floorDefaults(d: unknown): FloorDefaults | undefined | null {
+  if (!d || typeof d !== 'object') return undefined;
+  const { coAuthor, instructions } = d as Record<string, unknown>;
+  const text = typeof instructions === 'string' ? instructions.trim() : '';
+  if (text.length > MAX_FLOOR_INSTRUCTIONS) return null;
+  const out: FloorDefaults = {};
+  if (coAuthor === false) out.coAuthor = false;
+  if (text) out.instructions = text;
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Só cores no formato #rrggbb: o valor vai direto para o CSS e para o canvas. */
