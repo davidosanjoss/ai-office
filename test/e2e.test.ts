@@ -389,6 +389,27 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await waitFor(async () => (await current()) === geral.id, 5000, 'voltou pelo botão');
   });
 
+  it('regressão: voltar a um andar com outro zoom desenha o céu na tela toda (sobrava uma borda verde)', async () => {
+    const current = () => page.$eval('#elevator .floor.current', (b) => (b as HTMLElement).dataset.floor ?? '');
+    const go = async (id: string) => {
+      await page.click(`#elevator .floor[data-floor="${id}"]`);
+      await waitFor(async () => (await current()) === id, 5000, `andar ${id}`);
+    };
+    const geral = [...store.floors.values()].sort((a, b) => a.order - b.order)[0];
+    await page.goto(BASE);
+    await page.waitForSelector(`#elevator .floor[data-floor="${geral.id}"]`);
+    // Andar afastado ao máximo, térreo aproximado ao máximo: o canvas interno fica pequeno.
+    await go(geral.id);
+    for (let i = 0; i < 6; i++) await page.click('#map-zoom-out');
+    await go('terreo');
+    for (let i = 0; i < 6; i++) await page.click('#map-zoom-in');
+    await go(geral.id);
+    expect((await camera()).z).toBe(0.5);
+    // O canto da tela é céu, não o verde de reserva que aparece fora do desenho.
+    const corner = await page.$eval('#office canvas', (c) => [...(c as HTMLCanvasElement).getContext('2d')!.getImageData(2, 2, 1, 1).data.slice(0, 3)]);
+    expect(corner).not.toEqual([0x2f, 0x6b, 0x33]);
+  });
+
   it('lista do escritório: mostra os agentes por andar, busca sem acento e clicar abre o terminal', async () => {
     const ana = byName('Ana')!;
     await page.waitForSelector(`#dir-tree .dir-agent[data-agent="${ana.id}"]`);
