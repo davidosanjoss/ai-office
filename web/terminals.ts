@@ -90,17 +90,15 @@ export class Terminals {
     term.textarea?.addEventListener('paste', () => this.io.userActivity(id));
     term.onResize(({ cols, rows }) => this.io.resize(id, cols, rows));
     // Ctrl+Shift+C / Ctrl+Shift+V como em terminais Linux; Ctrl+C continua indo para o Claude.
+    // Ctrl+Shift+V já é o "colar" do navegador: o xterm só não pode tratar a tecla. Ler a área de
+    // transferência aqui também colava tudo duas vezes.
     term.attachCustomKeyEventHandler((e) => {
       if (e.type !== 'keydown' || !e.ctrlKey || !e.shiftKey) return true;
       if (e.code === 'KeyC') {
         navigator.clipboard.writeText(term.getSelection());
         return false;
       }
-      if (e.code === 'KeyV') {
-        navigator.clipboard.readText().then((text) => term.paste(text));
-        return false;
-      }
-      return true;
+      return e.code !== 'KeyV';
     });
 
     const t: Term = { term, fit, el, ready: false };
