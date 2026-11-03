@@ -116,7 +116,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
 
   async function hireViaTab(name: string): Promise<Agent> {
     const before = new Set(agents().map((a) => a.id));
-    await page.click('#tabs .tab.add[title="Contratar agente"]');
+    await page.click('#tab-actions [title="Contratar agente"]');
     await page.waitForSelector('#dlg-agent[open]');
     await page.type('#dlg-agent input[name=name]', name);
     await page.keyboard.press('Enter');
@@ -147,6 +147,9 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await waitStatus(a.id, 'idle');
     const tabs = await page.$$eval('#tabs .tab', (els) => els.map((e) => e.textContent));
     expect(tabs.some((t) => t?.includes('Ana'))).toBe(true);
+    // Contratar, terminal e arquivos ficam à direita das abas, e não mais no painel lateral.
+    expect(await page.$$eval('#tab-actions:not([hidden]) button:not([hidden])', (els) => els.map((e) => e.textContent))).toEqual(['+ Agente', '>_ Terminal', '📁 Arquivos']);
+    expect(await page.$('#room-info [data-act=hire], #room-info [data-act=shell], #git-panel #btn-files')).toBeNull();
   });
 
   it('regressão: as respostas automáticas do terminal não marcam como visto quem terminou', async () => {
@@ -167,7 +170,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForSelector('#exited:not([hidden])');
 
     // Sai da aba e volta: antes, o terminal de quem encerrou ficava escondido e o erro sumia.
-    await page.click('#tabs .tab.add[title^="Novo terminal"]');
+    await page.click('#tab-actions [title^="Novo terminal"]');
     const shell = await waitFor(() => agents().find((x) => x.kind === 'shell'), 5000, 'terminal');
     await page.waitForFunction(() => document.querySelector('#tabs .tab.active')?.textContent?.includes('Terminal'));
     await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('#tabs .tab')].find((t) => t.textContent?.includes('Ana'))?.click());
@@ -198,7 +201,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
 
   it('terminal comum: abre, roda comando e `exit` fecha a aba', async () => {
     const before = new Set(agents().map((a) => a.id));
-    await page.click('#tabs .tab.add[title^="Novo terminal"]');
+    await page.click('#tab-actions [title^="Novo terminal"]');
     const sh = await waitFor(() => agents().find((x) => !before.has(x.id) && x.kind === 'shell'), 5000, 'terminal novo');
     await page.waitForFunction(() => document.querySelector('#tabs .tab.active')?.textContent?.includes('Terminal'));
     await typeInTerminal(process.platform === 'win32' ? 'echo ola-terminal' : 'echo ola-$((1+1))');
@@ -212,7 +215,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     // Com permissão de ler a área de transferência, como num navegador em que você já permitiu.
     await browser.defaultBrowserContext().overridePermissions(BASE, ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write']);
     const before = new Set(agents().map((a) => a.id));
-    await page.click('#tabs .tab.add[title^="Novo terminal"]');
+    await page.click('#tab-actions [title^="Novo terminal"]');
     const sh = await waitFor(() => agents().find((x) => !before.has(x.id) && x.kind === 'shell'), 5000, 'terminal novo');
     await page.waitForFunction(() => document.querySelector('#tabs .tab.active')?.textContent?.includes('Terminal'));
     const cmd = process.platform === 'win32' ? 'echo colado' : 'echo col$((2+3))';
@@ -318,7 +321,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
   it('worktree: o painel de git traz o trabalho do agente para a main e encerra o worktree', async () => {
     const room = [...store.rooms.values()].find((r) => r.path.includes('e2e-repo'))!;
     const before = new Set(agents().map((a) => a.id));
-    await page.click('#tabs .tab.add[title="Contratar agente"]');
+    await page.click('#tab-actions [title="Contratar agente"]');
     await page.waitForSelector('#dlg-agent[open]');
     await page.type('#dlg-agent input[name=name]', 'Wanda');
     await page.click('#dlg-agent input[name=worktree]');
@@ -683,7 +686,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     });
 
     it('o 📁 abre o explorador numa aba da sala; um arquivo da árvore abre, edita e salva com Ctrl+S', async () => {
-      await page.click('#tabs .tab.add[title="Arquivos e histórico da sala"]');
+      await page.click('#tab-actions [title="Arquivos e histórico da sala"]');
       await page.waitForSelector(`#files-view:not([hidden]) ${node('src')}`);
       await page.waitForSelector('#tabs .tab.files.active');
       expect(await page.$eval('#terminals', (e) => getComputedStyle(e).display)).toBe('none');
@@ -853,7 +856,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
 
     // Contratar já vem com o projeto escolhido.
     const before = new Set(agents().map((a) => a.id));
-    await page.click('#tabs .tab.add[title="Contratar agente"]');
+    await page.click('#tab-actions [title="Contratar agente"]');
     await page.waitForSelector('#dlg-agent[open]');
     expect(await page.$eval('#agent-project', (e) => (e as HTMLSelectElement).selectedOptions[0].textContent)).toBe('ms-sales');
     await page.type('#dlg-agent input[name=name]', 'Saulo');

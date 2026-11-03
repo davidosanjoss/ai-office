@@ -374,7 +374,41 @@ function renderAll(full = true) {
 /** O que as abas mostram (sem a atividade, que vai no title e muda o tempo todo). */
 let tabsKey = '';
 
+/**
+ * Botões à direita das abas: contratar, terminal e arquivos (git e histórico). Na sala de guerra,
+ * o "+" chama mais gente e o terminal é o da sala de guerra. Os botões são fixos (só mudam o
+ * texto e o que fazem), para um clique nunca cair num botão que acabou de ser trocado.
+ */
+function renderTabActions() {
+  const war = selectedWar !== undefined;
+  const incident = war ? currentIncident() : undefined;
+  const room = !war && !!selectedRoom;
+  const hire = $<HTMLButtonElement>('#act-hire');
+  const shell = $<HTMLButtonElement>('#act-shell');
+  const files = $<HTMLButtonElement>('#act-files');
+  $('#tab-actions').hidden = !room && !incident;
+  hire.textContent = war ? '+ Chamar' : '+ Agente';
+  hire.title = war ? 'Chamar mais gente para a sala de guerra' : 'Contratar agente';
+  shell.title = war ? 'Novo terminal da sala de guerra (Alt+T)' : 'Novo terminal (Alt+T)';
+  files.hidden = !room;
+  // Com um agente num worktree selecionado, os arquivos e o git são os do worktree dele.
+  const wt = state.agents.find((a) => a.id === selectedAgent && a.worktreeBranch);
+  files.title = wt ? `Arquivos, histórico e git do worktree de ${wt.name}` : 'Arquivos e histórico da sala';
+}
+
+$('#act-hire').addEventListener('click', () => {
+  if (selectedWar !== undefined) return void (currentIncident() && openIncidentDialog('call'));
+  if (selectedRoom) openAgentDialog(selectedRoom);
+});
+$('#act-shell').addEventListener('click', () => {
+  const incident = selectedWar !== undefined ? currentIncident() : undefined;
+  if (incident) void openWarShell(incident.id);
+  else if (selectedRoom && selectedWar === undefined) void openShell(selectedRoom);
+});
+$('#act-files').addEventListener('click', () => explorer.show(explorerTarget(true)));
+
 function renderTabs() {
+  renderTabActions();
   const nav = $('#tabs');
   const tabs = currentTabs();
   const files = explorer.tab();
@@ -451,36 +485,6 @@ function renderTabs() {
     tab.addEventListener('click', () => explorer.show());
     nav.appendChild(tab);
   }
-  if (selectedWar !== undefined && currentIncident()) {
-    const call = document.createElement('button');
-    call.className = 'tab add';
-    call.textContent = '+';
-    call.title = 'Chamar mais gente para a sala de guerra';
-    call.addEventListener('click', () => openIncidentDialog('call'));
-    const shell = document.createElement('button');
-    shell.className = 'tab add';
-    shell.textContent = '>_';
-    shell.title = 'Novo terminal da sala de guerra (Alt+T)';
-    shell.addEventListener('click', () => openWarShell(currentIncident()!.id));
-    nav.append(call, shell);
-  } else if (selectedRoom && selectedWar === undefined) {
-    const add = document.createElement('button');
-    add.className = 'tab add';
-    add.textContent = '+';
-    add.title = 'Contratar agente';
-    add.addEventListener('click', () => openAgentDialog(selectedRoom!));
-    const shell = document.createElement('button');
-    shell.className = 'tab add';
-    shell.textContent = '>_';
-    shell.title = 'Novo terminal (Alt+T)';
-    shell.addEventListener('click', () => openShell(selectedRoom!));
-    const browse = document.createElement('button');
-    browse.className = 'tab add';
-    browse.textContent = '📁';
-    browse.title = 'Arquivos e histórico da sala';
-    browse.addEventListener('click', () => explorer.show(explorerTarget(false)));
-    nav.append(add, shell, browse);
-  }
   $('#placeholder').hidden = !!selectedAgent;
 }
 
@@ -514,9 +518,7 @@ function renderRoomInfo() {
     <div class="room-projects"></div>
     <div class="agent-line"></div>
     <div class="room-actions">
-      <button class="btn small" data-act="hire">+ Agente</button>
       <button class="btn small ghost" data-act="projects" title="Resumo do sistema e fichas dos projetos">Projetos</button>
-      <button class="btn small" data-act="shell">&gt;_ Terminal</button>
       <button class="btn small ghost" data-act="remove">Fechar sala</button>
     </div>
     <label class="move-room">Andar <select data-act="move"></select></label>`;
@@ -544,8 +546,6 @@ function renderRoomInfo() {
   const where = agentProject && projects.length > 1 ? ` (${agentProject.name})` : '';
   box.querySelector('.agent-line')!.textContent = agent ? `${agent.name}${where}: ${agent.activity}` : '';
   box.querySelector('[data-act=projects]')!.addEventListener('click', () => openProjectsDialog(room.id));
-  box.querySelector('[data-act=hire]')!.addEventListener('click', () => openAgentDialog(room.id));
-  box.querySelector('[data-act=shell]')!.addEventListener('click', () => openShell(room.id));
   box.querySelector('[data-act=remove]')!.addEventListener('click', () => closeRoom(room));
   const move = box.querySelector<HTMLSelectElement>('[data-act=move]')!;
   move.replaceChildren(...state.floors.map((f) => new Option(f.name, f.id, false, f.id === room.floorId)));
@@ -1500,8 +1500,6 @@ window.addEventListener('keydown', (e) => {
   e.preventDefault();
 });
 
-// O "Arquivos" do painel de git abre a pasta que o painel mostra: o worktree do agente, se ele tem um.
-$('#btn-files').addEventListener('click', () => explorer.show(explorerTarget(true)));
 
 $('#btn-git-refresh').addEventListener('click', refreshGit);
 setInterval(() => !document.hidden && refreshGit(), 15000);

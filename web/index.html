@@ -57,6 +57,11 @@
       <section class="terminal-pane">
         <div class="tabs-row">
           <nav id="tabs"></nav>
+          <div id="tab-actions" hidden>
+            <button id="act-hire" class="btn small">+ Agente</button>
+            <button id="act-shell" class="btn small">&gt;_ Terminal</button>
+            <button id="act-files" class="btn small ghost">📁 Arquivos</button>
+          </div>
           <button id="btn-sidebar" class="icon" title="Esconder o painel da direita">⇥</button>
         </div>
         <!-- Faixa acima do terminal (e não por cima): a saída de quem encerrou continua legível. -->
@@ -171,7 +176,6 @@
         <section id="git-panel" class="panel grow">
           <h3>Git
             <span class="h3-actions">
-              <button id="btn-files" class="btn small ghost" title="Arquivos e histórico desta pasta">Arquivos</button>
               <button id="btn-git-refresh" class="icon" title="Atualizar">↻</button>
             </span>
           </h3>

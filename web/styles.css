@@ -414,6 +414,17 @@ dialog select {
   background: var(--bg-2);
   flex-shrink: 0;
 }
+/* Contratar, terminal e arquivos: à direita das abas, sempre à vista mesmo com muitas abas. */
+#tab-actions {
+  display: flex;
+  gap: 4px;
+  padding: 2px 4px 0 8px;
+  flex-shrink: 0;
+}
+#tab-actions[hidden],
+#tab-actions [hidden] {
+  display: none;
+}
 #btn-sidebar {
   padding: 0 10px;
   font-size: 15px;
