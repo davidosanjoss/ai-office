@@ -891,6 +891,15 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     const a = await waitFor(() => agents().find((x) => !before.has(x.id)), 5000, 'agente novo');
     expect(a.cwd).toBe(path.join(root, 'ms-sales'));
     await waitScreen('Você trabalha no projeto **ms-sales**');
+    // O quadro da sala mostra quem está em cada projeto e no que está trabalhando; a aba diz o projeto.
+    await waitStatus(a.id, 'idle');
+    await typeInTerminal('prompt revisar o contrato de vendas');
+    await waitStatus(a.id, 'done');
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('#squad-list .squad-row')].some((r) => r.textContent?.includes('Saulo') && r.textContent.includes('revisar o contrato de vendas')),
+    );
+    expect(await page.$eval('#squad-list .squad-project', (e) => e.textContent)).toBe('ms-sales');
+    expect(await page.$eval(`#tabs .tab[data-id="${a.id}"] .tab-project`, (e) => e.textContent)).toBe('ms-sales');
 
     // Fichas e resumo do sistema pelo diálogo de projetos.
     await page.click('#room-info [data-act=projects]');

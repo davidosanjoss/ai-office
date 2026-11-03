@@ -474,3 +474,40 @@ describe('pathInRoot', () => {
     expect(logic.pathInRoot('C:\\ampm\\saff', 'C:\\ampm\\saff\\ms-motor')).toBe('ms-motor');
   });
 });
+
+describe('quem está fazendo o quê', () => {
+  const now = 1_000_000;
+  const ag = (patch: Partial<Agent>): Agent =>
+    ({ id: 'x', roomId: 'r1', name: 'Ana', cwd: '/', sessionId: '', status: 'idle', activity: 'Pronto para trabalhar', subagents: 0, createdAt: 1, ...patch }) as Agent;
+  const sala = (n: number) =>
+    ({ id: 'r1', name: 'SAFF', path: '/saff', createdAt: 1, projects: [{ id: 'a', name: 'arquivos', path: '/saff/a', summary: '' }, { id: 's', name: 'sales', path: '/saff/s', summary: '' }].slice(0, n) }) as Room;
+
+  it('quem precisa de você vem primeiro, e mostra o pedido, a ferramenta e há quanto tempo', () => {
+    const agents = [
+      ag({ id: 'i', name: 'Iara', createdAt: 1 }),
+      ag({ id: 'w', name: 'Wil', status: 'working', activity: 'Editando x.ts', createdAt: 2 }),
+      ag({ id: 'p', name: 'Pedro', status: 'waiting', activity: 'Quer rodar npm test', createdAt: 3 }),
+      ag({ id: 't', name: 'Terminal 1', kind: 'shell', status: 'working' }),
+    ];
+    const activity = [
+      { id: 1, ts: now - 5 * 60_000, agentId: 'w', roomId: 'r1', text: 'Pedido: arruma o layout do arquivo', kind: 'prompt' as const },
+      { id: 2, ts: now - 10_000, agentId: 'w', roomId: 'r1', text: 'Editando x.ts', kind: 'tool' as const },
+    ];
+    const [g] = logic.squadBoard(sala(1), agents, activity, now);
+    expect(g.project).toBeUndefined();
+    expect(g.rows.map((r) => r.agent.name)).toEqual(['Pedro', 'Wil', 'Iara']);
+    expect(g.rows[1]).toMatchObject({ status: 'Trabalhando', task: 'arruma o layout do arquivo', doing: 'Editando x.ts', since: 'agora' });
+    expect(g.rows[0]).toMatchObject({ status: 'Pedindo permissão', doing: 'Quer rodar npm test' });
+    // "Pronto para trabalhar" só repete o estado.
+    expect(g.rows[2].doing).toBe('');
+  });
+
+  it('numa sala com vários projetos, agrupa por projeto e pula os sem ninguém', () => {
+    const groups = logic.squadBoard(sala(2), [ag({ id: '1', projectId: 's' }), ag({ id: '2', projectId: 's', name: 'Bia' })], [], now);
+    expect(groups.map((g) => [g.project?.name, g.rows.length])).toEqual([['sales', 2]]);
+  });
+
+  it('há quanto tempo', () => {
+    expect([logic.ago(now - 10_000, now), logic.ago(now - 3 * 60_000, now), logic.ago(now - 2 * 3600_000, now), logic.ago(undefined, now)]).toEqual(['agora', 'há 3 min', 'há 2 h', '']);
+  });
+});

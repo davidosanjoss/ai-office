@@ -1,6 +1,6 @@
 // Regras de decisão da interface, sem DOM, para poderem ser testadas.
 
-import type { Agent, FileChange, Floor, Incident, IncidentMessage, MemoryStatus, Project, Room, WorktreeStatus } from '../shared/types.ts';
+import type { ActivityEvent, Agent, FileChange, Floor, Incident, IncidentMessage, MemoryStatus, Project, Room, WorktreeStatus } from '../shared/types.ts';
 import { canDeleteBranch } from '../shared/worktree.ts';
 
 /** Depois da última tecla, quanto esperar antes de trocar de terminal sozinho. */
@@ -454,4 +454,77 @@ export function pathInRoot(root: string, picked: string): string {
   if (p === r) return '.';
   for (const sep of ['/', '\\']) if (p.startsWith(r + sep)) return p.slice(r.length + 1);
   return picked;
+}
+
+// ---------- quem está fazendo o quê ----------
+
+/** Como cada estado aparece no quadro da sala. */
+export const STATUS_TEXT: Record<Agent['status'], string> = {
+  waiting: 'Pedindo permissão',
+  done: 'Terminou',
+  working: 'Trabalhando',
+  starting: 'Chegando',
+  idle: 'Livre',
+  exited: 'Fora',
+};
+
+/** Ordem no quadro: quem precisa de você primeiro, depois quem está trabalhando, e os parados por último. */
+const BOARD_ORDER: Agent['status'][] = ['waiting', 'done', 'working', 'starting', 'idle', 'exited'];
+
+export interface BoardRow {
+  agent: Agent;
+  status: string;
+  /** O pedido em que está (o último que recebeu), para saber no que cada um trabalha. */
+  task: string;
+  /** O que está fazendo agora (vazio quando a atividade só repete o estado). */
+  doing: string;
+  /** Há quanto tempo, pela última atividade dele ("agora", "há 3 min"). */
+  since: string;
+}
+
+export interface BoardGroup {
+  /** Projeto (ausente numa sala de um projeto só). */
+  project?: Project;
+  rows: BoardRow[];
+}
+
+export function ago(ts: number | undefined, now: number): string {
+  if (!ts) return '';
+  const s = Math.max(0, Math.round((now - ts) / 1000));
+  if (s < 45) return 'agora';
+  const m = Math.round(s / 60);
+  if (m < 60) return `há ${m} min`;
+  const h = Math.round(m / 60);
+  return h < 24 ? `há ${h} h` : `há ${Math.round(h / 24)} d`;
+}
+
+/**
+ * Quadro da sala: os agentes do Claude dela (sem terminais e sem quem está na sala de guerra só
+ * por um incidente), agrupados por projeto quando a sala tem mais de um.
+ */
+export function squadBoard(room: Room, agents: Agent[], activity: ActivityEvent[], now: number): BoardGroup[] {
+  const last = new Map<string, number>();
+  const task = new Map<string, string>();
+  for (const e of activity) {
+    last.set(e.agentId, Math.max(last.get(e.agentId) ?? 0, e.ts));
+    if (e.kind === 'prompt') task.set(e.agentId, e.text.replace(/^Pedido:\s*/, ''));
+  }
+  const people = agents.filter((a) => a.roomId === room.id && a.kind !== 'shell' && !a.forIncident);
+  const row = (a: Agent): BoardRow => {
+    const repeats = !a.activity || /^(Pronto para trabalhar|Fora do escritório|Saiu do escritório|Terminou!)$/.test(a.activity);
+    return {
+      agent: a,
+      status: a.incidentId ? 'Na sala de guerra' : STATUS_TEXT[a.status],
+      task: task.get(a.id) ?? '',
+      doing: repeats ? '' : a.activity,
+      since: ago(last.get(a.id) ?? a.createdAt, now),
+    };
+  };
+  const sorted = (list: Agent[]) =>
+    [...list].sort((a, b) => BOARD_ORDER.indexOf(a.status) - BOARD_ORDER.indexOf(b.status) || a.createdAt - b.createdAt).map(row);
+  const projects = room.projects ?? [];
+  if (projects.length < 2) return people.length ? [{ rows: sorted(people) }] : [];
+  return projects
+    .map((p) => ({ project: p, rows: sorted(people.filter((a) => (agentProject(room, a)?.id ?? '') === p.id)) }))
+    .filter((g) => g.rows.length);
 }

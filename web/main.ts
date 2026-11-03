@@ -364,6 +364,7 @@ function renderAll(full = true) {
   renderDirectory();
   renderTabs();
   renderRoomInfo();
+  renderSquadBoard();
   renderInbox();
   renderExited();
   if (full) renderActivity();
@@ -413,7 +414,7 @@ function renderTabs() {
   // Só recria os botões quando algo das abas muda: recriar a cada atualização de agente fazia um
   // clique cair num botão que acabou de ser trocado (e não pegar).
   const key = JSON.stringify([
-    tabs.map((a) => [a.id, a.name, a.status, a.kind, a.worktreeBranch]),
+    tabs.map((a) => [a.id, a.name, a.status, a.kind, a.worktreeBranch, a.projectId]),
     selectedAgent,
     selectedRoom,
     selectedWar,
@@ -442,6 +443,14 @@ function renderTabs() {
     const name = document.createElement('span');
     name.textContent = a.name;
     tab.appendChild(name);
+    // Numa sala com vários projetos, a aba diz em qual o agente trabalha.
+    const tabRoom = state.rooms.find((r) => r.id === a.roomId);
+    if (a.kind !== 'shell' && (tabRoom?.projects?.length ?? 0) > 1) {
+      const p = document.createElement('small');
+      p.className = 'tab-project';
+      p.textContent = logic.agentProject(tabRoom, a)?.name ?? '';
+      tab.appendChild(p);
+    }
     if (a.worktreeBranch) {
       const b = document.createElement('small');
       b.textContent = '⎇';
@@ -554,6 +563,54 @@ function renderRoomInfo() {
     office.reveal(moved.id);
   });
 }
+
+// ---------- quem está fazendo o quê ----------
+
+/** Quadro da sala selecionada: cada agente com o projeto, o estado, o que está fazendo e há quanto tempo. */
+function renderSquadBoard() {
+  const room = selectedWar === undefined ? state.rooms.find((r) => r.id === selectedRoom) : undefined;
+  const groups = room ? logic.squadBoard(room, state.agents, state.activity, Date.now()) : [];
+  const box = $('#squad-board');
+  box.hidden = !groups.length;
+  const list = $('#squad-list');
+  list.replaceChildren();
+  for (const g of groups) {
+    if (g.project) {
+      const h = document.createElement('div');
+      h.className = 'squad-project';
+      h.textContent = g.project.name;
+      h.title = g.project.path;
+      list.appendChild(h);
+    }
+    for (const r of g.rows) {
+      const a = r.agent;
+      const row = document.createElement('div');
+      row.className = `squad-row ${a.status}${a.id === selectedAgent ? ' selected' : ''}`;
+      row.dataset.id = a.id;
+      row.innerHTML = `
+        <span class="dot" style="background:${STATUS_COLOR[a.status]}"></span>
+        <span class="squad-main">
+          <span class="squad-top"><b class="squad-name"></b><span class="squad-status"></span><span class="squad-since"></span></span>
+          <span class="squad-task"></span>
+          <span class="squad-doing"></span>
+        </span>`;
+      row.querySelector('.squad-name')!.textContent = a.name + (a.worktreeBranch ? ' ⎇' : '');
+      row.querySelector('.squad-status')!.textContent = r.status;
+      row.querySelector('.squad-since')!.textContent = r.since;
+      row.querySelector('.squad-task')!.textContent = r.task;
+      row.querySelector('.squad-doing')!.textContent = r.doing;
+      row.title = [a.worktreeBranch && `Worktree: ${a.worktreeBranch}`, a.subagents ? `${a.subagents} ajudante(s)` : ''].filter(Boolean).join(' · ');
+      list.appendChild(row);
+    }
+  }
+}
+// O quadro é redesenhado a cada atualização: o clique é pego no pointerdown, pela lista, para não se perder.
+$('#squad-list').addEventListener('pointerdown', (e) => {
+  const row = (e.target as HTMLElement).closest<HTMLElement>('.squad-row');
+  if (row?.dataset.id) selectAgent(row.dataset.id);
+});
+// "há 3 min" anda sozinho.
+setInterval(() => !document.hidden && renderSquadBoard(), 30_000);
 
 // ---------- sala de guerra ----------
 
