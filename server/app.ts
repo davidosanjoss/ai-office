@@ -165,7 +165,7 @@ export async function buildApp(opts: { port?: number } = {}) {
     if (existing) return existing;
     const floorId = req.body.floorId ?? firstFloorId();
     if (!floorId || !store.floors.has(floorId)) return reply.code(400).send({ error: 'Escolha um andar para a sala' });
-    const rooms = store.roomsOn(floorId);
+    const rooms = store.planRooms(floorId);
     const wanted = req.body.pos;
     if (wanted !== undefined && !(isValidCell(wanted) && canPlace(rooms, wanted, 'andar', store.warRoomsOf(floorId)))) {
       return reply.code(400).send({ error: 'Essa vaga do andar não está livre' });
@@ -252,7 +252,7 @@ export async function buildApp(opts: { port?: number } = {}) {
     const floorId = String(req.body?.floorId ?? '');
     if (!store.floors.has(floorId)) return reply.code(400).send({ error: 'Andar não encontrado' });
     if (room.floorId === floorId) return room;
-    const moved = { ...room, floorId, pos: autoPlace(store.roomsOn(floorId), 'andar', store.warRoomsOf(floorId)) };
+    const moved = { ...room, floorId, pos: autoPlace(store.planRooms(floorId), 'andar', store.warRoomsOf(floorId)) };
     store.putRoom(moved);
     return moved;
   });

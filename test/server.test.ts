@@ -621,13 +621,18 @@ describe('andares', () => {
   it('cada andar tem a própria planta: a mesma vaga pode ter uma sala em cada andar', async () => {
     const a = await novoAndar('Empresa');
     const b = await novoAndar('Pessoal');
-    const r1 = await api<Room>('POST', '/api/rooms', { path: tempDir('p1'), floorId: a.id, pos: { x: -1, y: 0 } });
-    const r2 = await api<Room>('POST', '/api/rooms', { path: tempDir('p2'), floorId: b.id, pos: { x: -1, y: 0 } });
+    const r1 = await api<Room>('POST', '/api/rooms', { path: tempDir('p1'), floorId: a.id, pos: { x: -1, y: 1 } });
+    const r2 = await api<Room>('POST', '/api/rooms', { path: tempDir('p2'), floorId: b.id, pos: { x: -1, y: 1 } });
     expect(r1.status).toBe(200);
     expect(r2.status).toBe(200);
-    expect(r2.data).toMatchObject({ floorId: b.id, pos: { x: -1, y: 0 } });
+    expect(r2.data).toMatchObject({ floorId: b.id, pos: { x: -1, y: 1 } });
     // No mesmo andar, a vaga já está ocupada.
-    expect((await api('POST', '/api/rooms', { path: tempDir('p3'), floorId: a.id, pos: { x: -1, y: 0 } })).status).toBe(400);
+    expect((await api('POST', '/api/rooms', { path: tempDir('p3'), floorId: a.id, pos: { x: -1, y: 1 } })).status).toBe(400);
+  });
+
+  it('a primeira fileira do andar é só do elevador e da copa', async () => {
+    const andar = await novoAndar('Fileira');
+    expect((await api('POST', '/api/rooms', { path: tempDir('baixo'), floorId: andar.id, pos: { x: 2, y: 0 } })).status).toBe(400);
   });
 
   it('sala em andar que não existe dá erro', async () => {

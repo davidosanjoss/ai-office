@@ -87,7 +87,7 @@ describe('andares no store', () => {
       file,
       JSON.stringify({
         rooms: [
-          { id: 'r1', name: 'api', path: '/api', createdAt: 1, pos: { x: -1, y: 0 } },
+          { id: 'r1', name: 'api', path: '/api', createdAt: 1, pos: { x: -1, y: 1 } },
           { id: 'r2', name: 'site', path: '/site', createdAt: 2 },
         ],
         agents: [],
@@ -96,7 +96,7 @@ describe('andares no store', () => {
     const s = new Store(file);
     s.load();
     expect([...s.floors.values()].map((f) => f.name)).toEqual(['Geral']);
-    expect(s.rooms.get('r1')).toMatchObject({ floorId: 'geral', pos: { x: -1, y: 0 } });
+    expect(s.rooms.get('r1')).toMatchObject({ floorId: 'geral', pos: { x: -1, y: 1 } });
     expect(s.rooms.get('r2')?.floorId).toBe('geral');
     expect(s.rooms.get('r2')?.pos).toBeDefined();
   });
@@ -127,17 +127,38 @@ describe('andares no store', () => {
       JSON.stringify({
         floors: [{ id: 'geral', name: 'Geral', color: '#7aa2f7', order: 1, createdAt: 1 }],
         rooms: [
-          { id: 'dona', name: 'a', path: '/a', createdAt: 1, floorId: 'geral', pos: { x: 2, y: 0 } },
-          { id: 'orfa', name: 'b', path: '/b', createdAt: 2, floorId: 'sumiu', pos: { x: 2, y: 0 } },
+          { id: 'dona', name: 'a', path: '/a', createdAt: 1, floorId: 'geral', pos: { x: 1, y: 1 } },
+          { id: 'orfa', name: 'b', path: '/b', createdAt: 2, floorId: 'sumiu', pos: { x: 1, y: 1 } },
         ],
         agents: [],
       }),
     );
     const s = new Store(file);
     s.load();
-    expect(s.rooms.get('dona')?.pos).toEqual({ x: 2, y: 0 });
-    expect(s.rooms.get('orfa')?.pos).not.toEqual({ x: 2, y: 0 });
+    expect(s.rooms.get('dona')?.pos).toEqual({ x: 1, y: 1 });
+    expect(s.rooms.get('orfa')?.pos).not.toEqual({ x: 1, y: 1 });
     expect(s.rooms.get('orfa')?.pos).toBeDefined();
+  });
+
+  it('salas na primeira fileira mudam de vaga: ela agora é só do elevador e da copa', () => {
+    const file = path.join(tempDir('store'), 'state.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        floors: [{ id: 'geral', name: 'Geral', color: '#7aa2f7', order: 1, createdAt: 1 }],
+        rooms: [
+          { id: 'esq', name: 'a', path: '/a', createdAt: 1, floorId: 'geral', pos: { x: -1, y: 0 } },
+          { id: 'dir', name: 'b', path: '/b', createdAt: 2, floorId: 'geral', pos: { x: 2, y: 0 } },
+          { id: 'cima', name: 'c', path: '/c', createdAt: 3, floorId: 'geral', pos: { x: 1, y: 1 } },
+        ],
+        agents: [],
+      }),
+    );
+    const s = new Store(file);
+    s.load();
+    expect(s.rooms.get('cima')?.pos).toEqual({ x: 1, y: 1 });
+    for (const id of ['esq', 'dir']) expect(s.rooms.get(id)?.pos?.y).toBeGreaterThanOrEqual(1);
+    expect(s.rooms.get('esq')?.pos).not.toEqual(s.rooms.get('dir')?.pos);
   });
 
   it('salas na coluna em cima do elevador mudam de vaga: ali agora ficam as salas de guerra', () => {

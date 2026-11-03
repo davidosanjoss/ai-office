@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_WAR_ROOMS, autoPlace, canPlace, fixedRooms, freeCells, isValidCell, isWarColumn, nextWarCell, occupiedCells } from '../shared/building.ts';
+import { MAX_ROOM_W, MAX_WAR_ROOMS, autoPlace, canPlace, fixedRooms, freeCells, isValidCell, isWarColumn, nextWarCell, occupiedCells, roomSpans, roomWidth } from '../shared/building.ts';
 import type { Agent, Room } from '../shared/types.ts';
-import { CELL_H, CELL_W, CORR, MAX_VISIBLE_AGENTS, ZOOMS, cellRect, fitCamera, layoutBuilding, stepZoom } from '../web/office.ts';
+import { CELL_H, CELL_W, CORR, MAX_VISIBLE_AGENTS, ZOOMS, cellRect, fitCamera, layoutBuilding, stepZoom, visibleAgents } from '../web/office.ts';
 
 const room = (id: string, pos?: { x: number; y: number }): Room => ({ id, name: id, path: `/${id}`, createdAt: 0, pos });
 const keys = (cells: { x: number; y: number }[]) => cells.map((c) => `${c.x},${c.y}`).sort();
@@ -38,13 +38,13 @@ describe('planta do prédio', () => {
     }
   });
 
-  it('sem salas, os "+" ficam dos lados do elevador, da copa e da sala de guerra, nunca abaixo da primeira fileira', () => {
+  it('sem salas, os "+" ficam dos lados da sala de guerra: a primeira fileira é só do elevador e da copa', () => {
     expect(keys(freeCells([]))).toEqual(keys([
-      { x: -1, y: 0 },
-      { x: 2, y: 0 },
       { x: -1, y: 1 },
       { x: 1, y: 1 },
     ]));
+    expect(canPlace([], { x: 2, y: 0 })).toBe(false);
+    expect(canPlace([], { x: -1, y: 0 })).toBe(false);
   });
 
   it('uma sala nova libera vagas em volta dela', () => {
@@ -67,8 +67,8 @@ describe('planta do prédio', () => {
 
   it('vaga automática: a mais baixa e mais perto do centro', () => {
     const first = autoPlace([]);
-    expect(first.y).toBe(0);
-    expect([-1, 2]).toContain(first.x);
+    expect(first.y).toBe(1);
+    expect([-1, 1]).toContain(first.x);
     const rooms = [room('a', first)];
     const second = autoPlace(rooms);
     expect(canPlace(rooms, second)).toBe(true);
@@ -80,6 +80,50 @@ describe('planta do prédio', () => {
     expect(isValidCell({ x: 1, y: -1 })).toBe(false);
     expect(isValidCell('1,2')).toBe(false);
     expect(isValidCell(null)).toBe(false);
+  });
+});
+
+describe('salas que crescem com a squad', () => {
+  const plan = (id: string, x: number, y: number, w: number, createdAt = 0) => ({ id, pos: { x, y }, w, createdAt });
+  const spansOf = (rooms: ReturnType<typeof plan>[]) => {
+    const m = roomSpans(rooms);
+    return Object.fromEntries(rooms.map((r) => [r.id, m.get(r)]));
+  };
+
+  it('até 3 agentes, 1 vaga; 4 a 7, 2; 8 a 11, 3; 12 ou mais, 4', () => {
+    expect([0, 3, 4, 7, 8, 11, 12, 40].map(roomWidth)).toEqual([1, 1, 2, 2, 3, 3, 4, 4]);
+    expect(roomWidth(100)).toBe(MAX_ROOM_W);
+  });
+
+  it('cresce para longe da coluna das salas de guerra: para a direita de um lado, para a esquerda do outro', () => {
+    expect(spansOf([plan('d', 1, 1, 3), plan('e', -1, 1, 2)])).toEqual({ d: { x: 1, y: 1, w: 3 }, e: { x: -2, y: 1, w: 2 } });
+  });
+
+  it('empurra a vizinha da mesma fileira, e ela volta para a vaga dela quando a sala encolhe', () => {
+    expect(spansOf([plan('a', 1, 1, 2), plan('b', 2, 1, 1), plan('c', 4, 1, 1)])).toEqual({
+      a: { x: 1, y: 1, w: 2 },
+      b: { x: 3, y: 1, w: 1 },
+      c: { x: 4, y: 1, w: 1 },
+    });
+    // Mais gente em a: b e c vão juntos para fora.
+    expect(spansOf([plan('a', 1, 1, 4), plan('b', 2, 1, 1), plan('c', 4, 1, 1)])).toMatchObject({ b: { x: 5 }, c: { x: 6 } });
+    // a encolheu: cada uma volta para a própria vaga.
+    expect(spansOf([plan('a', 1, 1, 1), plan('b', 2, 1, 1), plan('c', 4, 1, 1)])).toMatchObject({ b: { x: 2 }, c: { x: 4 } });
+    // Do lado esquerdo, empurra para a esquerda.
+    expect(spansOf([plan('a', -1, 2, 3), plan('b', -2, 2, 1)])).toMatchObject({ a: { x: -3, w: 3 }, b: { x: -4 } });
+  });
+
+  it('outras fileiras não mudam', () => {
+    expect(spansOf([plan('a', 1, 1, 4), plan('b', 2, 2, 1)])).toMatchObject({ b: { x: 2, y: 2 } });
+  });
+
+  it('as vagas de uma sala larga ficam ocupadas, e os "+" aparecem em volta dela toda', () => {
+    const rooms = [plan('a', 1, 1, 3)];
+    const taken = occupiedCells(rooms);
+    for (const k of ['1,1', '2,1', '3,1']) expect(taken.has(k)).toBe(true);
+    const free = keys(freeCells(rooms));
+    expect(free).toEqual(expect.arrayContaining(['4,1', '1,2', '2,2', '3,2']));
+    expect(canPlace(rooms, { x: 2, y: 1 })).toBe(false);
   });
 });
 
@@ -97,32 +141,45 @@ describe('desenho do prédio', () => {
   });
 
   it('cada sala vai para a sua vaga; andar de cima fica acima no mapa', () => {
-    const { rooms } = layoutBuilding([room('a', { x: 1, y: 1 }), room('b', { x: 2, y: 0 })], []);
+    const { rooms } = layoutBuilding([room('a', { x: 1, y: 1 }), room('b', { x: 2, y: 2 })], []);
     // Entre um andar e outro passa um corredor.
     expect(rooms[0].rect).toEqual({ x: CELL_W + CORR, y: -(CELL_H + CORR), w: CELL_W, h: CELL_H });
-    expect(rooms[1].rect).toEqual(cellRect({ x: 2, y: 0 }));
+    expect(rooms[1].rect).toEqual(cellRect({ x: 2, y: 2 }));
   });
 
   it('sala sem vaga (ainda não migrada) não é desenhada', () => {
     expect(layoutBuilding([room('a')], []).rooms).toEqual([]);
   });
 
+  it('a sala cresce com a squad e engole o corredor entre as vagas; terminais não contam', () => {
+    const squad = Array.from({ length: 5 }, (_, i) => agent(`a${i}`, 'r', i));
+    const shells = Array.from({ length: 6 }, (_, i) => ({ ...agent(`t${i}`, 'r', 10 + i), kind: 'shell' as const }));
+    const [r] = layoutBuilding([room('r', { x: 1, y: 1 })], [...squad, ...shells]).rooms;
+    expect(r.span).toEqual({ x: 1, y: 1, w: 2 });
+    expect(r.rect).toEqual({ ...cellRect({ x: 1, y: 1 }), w: 2 * CELL_W + CORR });
+    expect(visibleAgents(cellRect({ x: 0, y: 0 }))).toBe(MAX_VISIBLE_AGENTS);
+    expect(visibleAgents(r.rect)).toBeGreaterThan(MAX_VISIBLE_AGENTS);
+  });
+
   it('mais agentes que mesas: os primeiros a chegar sentam, o resto vira "+N"', () => {
-    const agents = Array.from({ length: MAX_VISIBLE_AGENTS + 3 }, (_, i) => agent(`a${i}`, 'r', i));
+    const [cheia] = layoutBuilding([room('r', { x: 1, y: 1 })], []).rooms;
+    const max = visibleAgents({ ...cheia.rect, w: 4 * CELL_W + 3 * CORR });
+    const agents = Array.from({ length: max + 3 }, (_, i) => agent(`a${i}`, 'r', i));
     const [r] = layoutBuilding([room('r', { x: 1, y: 1 })], agents.reverse()).rooms;
-    expect(r.agents).toHaveLength(MAX_VISIBLE_AGENTS);
+    expect(r.span.w).toBe(4);
+    expect(r.agents).toHaveLength(max);
     expect(r.agents[0].id).toBe('a0');
     expect(r.overflow).toBe(3);
   });
 
   it('a caixa do prédio inclui as vagas livres e o "+" da próxima sala de guerra', () => {
     const { bounds, warAdd } = layoutBuilding([], []);
-    // Vagas livres de -1 a 2 (4 colunas), com corredor entre elas e meia largura nas pontas.
+    // Vagas livres em -1 e 1 (na fileira 1): de -1 a 1, 3 colunas, com corredor entre elas e meia largura nas pontas.
     expect(bounds.x).toBe(-(CELL_W + CORR) - CORR / 2);
     // Em cima: o "+" da segunda sala de guerra, na fileira 2.
     expect(warAdd).toMatchObject({ x: 0, y: 2 });
     expect(bounds.y).toBe(-2 * (CELL_H + CORR) - CORR / 2);
-    expect(bounds.w).toBe(4 * CELL_W + 4 * CORR);
+    expect(bounds.w).toBe(3 * CELL_W + 3 * CORR);
     expect(bounds.h).toBeGreaterThan(2 * CELL_H);
   });
 });

@@ -6,7 +6,7 @@
 // suavização; os textos são desenhados depois, já na escala da tela, para ficarem legíveis.
 // A arte vem do PixelLab (web/sprites.ts); paredes, balcões, rua e balões são desenhados aqui.
 
-import { type Cell, type FixedRoom, type FloorKind, fixedRooms, freeCells, nextWarCell } from '../shared/building.ts';
+import { type Cell, type FixedRoom, type FloorKind, type Span, fixedRooms, freeCells, nextWarCell, roomSpans, roomWidth } from '../shared/building.ts';
 import type { Agent, AgentStatus, Incident, Room } from '../shared/types.ts';
 import { type Area, type Projection, type ScreenDir, depth, floorMatrix, pick, planBox, projectRect, screenDir, toScreen as project } from './iso.ts';
 import { type Anim, RECEPCIONISTA, Sprites, characterFor } from './sprites.ts';
@@ -28,10 +28,18 @@ const SLOT_W = 80;
 const SLOT_H = 104;
 const WALL_H = 40;
 const PAD = 12;
-/** Mesas por sala: 4 por fileira, 2 fileiras. A última vaga visível é sempre a mesa de contratar. */
+/** Mesas por sala: 4 por fileira numa sala de uma vaga (mais nas largas), 2 fileiras. A última vaga visível é sempre a mesa de contratar. */
 const COLS = 4;
 const ROWS = 2;
 export const MAX_VISIBLE_AGENTS = COLS * ROWS - 1;
+/** Quantas mesas cabem numa fileira da sala. */
+export function deskCols(room: { w: number }): number {
+  return Math.max(COLS, Math.floor((room.w - 2 * PAD) / SLOT_W));
+}
+/** Quantos funcionários têm mesa visível na sala (a última vaga é a de contratar). */
+export function visibleAgents(room: { w: number }): number {
+  return deskCols(room) * ROWS - 1;
+}
 /** Corredor em volta de cada sala: é por ele que os funcionários andam. */
 export const CORR = 48;
 const GEO: Geometry = { cellW: CELL_W, cellH: CELL_H, corr: CORR };
@@ -108,6 +116,8 @@ type Hit =
 
 export interface PlacedRoom {
   room: Room;
+  /** Vagas que a sala ocupa de fato (cresce com a squad e pode ter sido empurrada). */
+  span: Span;
   rect: Rect;
   /** Agentes com mesa visível (os primeiros a chegar). */
   agents: Agent[];
@@ -127,7 +137,7 @@ export interface BuildingLayout {
   core: Rect;
 }
 
-export function cellRect(c: Cell): Rect {
+export function cellRect(c: Cell & { w?: number }): Rect {
   return cellBox(c, GEO);
 }
 
@@ -138,7 +148,8 @@ function withCorridor(r: Rect): Rect {
 
 /** Canto superior esquerdo da vaga de funcionário número i dentro de uma sala. */
 export function slotOrigin(room: Rect, i: number): { x: number; y: number } {
-  return { x: room.x + PAD + (i % COLS) * SLOT_W, y: room.y + WALL_H + 4 + Math.floor(i / COLS) * SLOT_H };
+  const cols = deskCols(room);
+  return { x: room.x + PAD + (i % cols) * SLOT_W, y: room.y + WALL_H + 4 + Math.floor(i / cols) * SLOT_H };
 }
 
 /** Onde cada coisa fica no mundo: salas nas vagas, as fixas no térreo e os "+" nas vagas livres. */
@@ -152,19 +163,26 @@ export interface FloorView {
 }
 
 export function layoutBuilding(rooms: Room[], agents: Agent[], kind: FloorKind = 'andar', warRooms = 1): BuildingLayout {
-  const placed: PlacedRoom[] = rooms
-    .filter((r) => r.pos)
-    .map((room) => {
+  // A sala cresce com a squad: os agentes do Claude dela, fora os chamados só para um incidente.
+  const plan = rooms.map((room) => ({
+    room,
+    pos: room.pos,
+    createdAt: room.createdAt,
+    w: roomWidth(agents.filter((a) => a.roomId === room.id && a.kind !== 'shell' && !a.forIncident).length),
+  }));
+  const spans = roomSpans(plan);
+  const placed: PlacedRoom[] = plan
+    .filter((p) => spans.has(p))
+    .map((p) => {
+      const { room } = p;
+      const span = spans.get(p)!;
+      const rect = cellRect(span);
+      const max = visibleAgents(rect);
       const inRoom = agents.filter((a) => a.roomId === room.id).sort((a, b) => a.createdAt - b.createdAt);
-      return {
-        room,
-        rect: cellRect(room.pos!),
-        agents: inRoom.slice(0, MAX_VISIBLE_AGENTS),
-        overflow: Math.max(0, inRoom.length - MAX_VISIBLE_AGENTS),
-      };
+      return { room, span, rect, agents: inRoom.slice(0, max), overflow: Math.max(0, inRoom.length - max) };
     });
   const fixed = fixedRooms(kind, warRooms).map((f) => ({ ...f, rect: cellRect(f) }));
-  const free = freeCells(rooms, kind, warRooms).map((c) => ({ ...c, rect: cellRect(c) }));
+  const free = freeCells(plan, kind, warRooms).map((c) => ({ ...c, rect: cellRect(c) }));
   const next = kind === 'andar' ? nextWarCell(warRooms) : undefined;
   const warAdd = next && { ...next, rect: cellRect(next) };
   const box = (rects: Rect[]): Rect => {
@@ -387,8 +405,8 @@ export class Office {
 
   // ---------- quem anda pelo prédio ----------
 
-  private builtCells(): Cell[] {
-    return [...this.layout.fixed, ...this.layout.rooms.map((r) => r.room.pos!)];
+  private builtCells(): (Cell & { w?: number })[] {
+    return [...this.layout.fixed, ...this.layout.rooms.map((r) => r.span)];
   }
 
   /**
@@ -399,23 +417,24 @@ export class Office {
     const now = performance.now();
     for (const a of agents) {
       const room = rooms.find((r) => r.id === a.roomId);
+      const span = this.layout.rooms.find((p) => p.room.id === a.roomId)?.span;
       const known = this.lastIncident.has(a.id);
       const before = this.lastIncident.get(a.id);
       this.lastIncident.set(a.id, a.incidentId);
       // Recém-contratado para o incidente também vai andando, da sala do projeto até a de guerra.
       const fresh = !known && !!a.incidentId && Date.now() - a.createdAt < 15_000;
-      if (room?.pos && a.status !== 'exited' && ((known && before !== a.incidentId) || fresh)) {
+      if (span && a.status !== 'exited' && ((known && before !== a.incidentId) || fresh)) {
         const war = this.warCellOf(before ?? a.incidentId);
         const going = !!a.incidentId;
-        const from = going ? room.pos : war;
-        const to = going ? war : room.pos;
+        const from = going ? span : war;
+        const to = going ? war : span;
         if (from && to) this.startTransit(a, from, to, now);
       }
       if (this.walkers.get(a.id)?.transit) {
         this.walkers.get(a.id)!.agent = a;
         continue;
       }
-      if (a.status !== 'exited' || a.kind === 'shell' || !room?.pos) {
+      if (a.status !== 'exited' || a.kind === 'shell' || !room || !span) {
         this.walkers.delete(a.id);
         continue;
       }
@@ -427,7 +446,7 @@ export class Office {
       // Começa na cadeira (se tinha mesa visível) e vai até a porta da sala.
       const placed = this.layout.rooms.find((r) => r.room.id === room.id);
       const i = placed?.agents.findIndex((x) => x.id === a.id) ?? -1;
-      const door = insideDoor(room.pos, GEO);
+      const door = insideDoor(span, GEO);
       const start = i >= 0 && placed ? slotOrigin(placed.rect, i) : undefined;
       const from = start ? { x: start.x + SLOT_W / 2 + SEAT_DX, y: start.y + DESK_Y + 30 } : door;
       this.walkers.set(a.id, {
@@ -438,7 +457,7 @@ export class Office {
         path: start ? [{ x: from.x, y: door.y - 30 }, door] : [],
         // Cada um levanta num momento diferente, para não saírem todos juntos pela porta.
         restUntil: now + 800 + (hash(a.id) % 6000),
-        cell: room.pos,
+        cell: span,
       });
     }
     for (const id of this.walkers.keys()) if (!agents.some((a) => a.id === id)) this.walkers.delete(id);
@@ -914,7 +933,8 @@ export class Office {
    * nos lados que não dão para outra vaga. A entrada principal fica na frente da recepção.
    */
   private drawCorridors() {
-    const built = this.builtCells();
+    // Vaga por vaga (uma sala larga conta todas as dela): as paredes de fora do prédio vão onde não há vizinha.
+    const built = this.builtCells().flatMap((c) => Array.from({ length: c.w ?? 1 }, (_, i) => ({ x: c.x + i, y: c.y })));
     const has = (x: number, y: number) => built.some((c) => c.x === x && c.y === y);
     this.flat(() => {
       for (const c of built) this.tileFloor(withCorridor(cellRect(c)), 'corredor', '#8e94a3');
