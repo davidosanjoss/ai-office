@@ -489,6 +489,85 @@ describe('worktree: PR, trazer para a sala e encerrar', () => {
   });
 });
 
+describe('sala com vários projetos', () => {
+  /** Raiz com dois repositórios e um documento solto, como ~/ampm/saff. */
+  function sistema() {
+    const root = tempDir('saff');
+    for (const name of ['ms-arquivos', 'ms-sales']) fs.renameSync(makeRepo(name), path.join(root, name));
+    fs.writeFileSync(path.join(root, 'ms-sales', 'README.md'), '# sales\n\nMonta as vendas a partir dos arquivos validados.\n');
+    fs.writeFileSync(path.join(root, 'plano.md'), '# plano\n');
+    return root;
+  }
+
+  it('a sala é a raiz: cada repositório dentro dela vira um projeto, com o rascunho da ficha', async () => {
+    const root = sistema();
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: root });
+    expect(room.path).toBe(root);
+    expect(room.projects!.map((p) => p.name)).toEqual(['ms-arquivos', 'ms-sales']);
+    expect(room.projects![1].summary).toBe('Monta as vendas a partir dos arquivos validados.');
+  });
+
+  it('o agente trabalha na pasta do projeto escolhido e recebe a raiz e o contexto da sala', async () => {
+    const root = sistema();
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: root });
+    await api('PATCH', `/api/rooms/${room.id}`, { brief: 'arquivos depois sales' });
+    const sales = room.projects![1];
+    const a = await hire(room, { projectId: sales.id });
+    expect(a).toMatchObject({ projectId: sales.id, cwd: sales.path });
+    await waitOutput(a.id, `add-dir=${root}`);
+    await waitOutput(a.id, 'Você trabalha no projeto **ms-sales**');
+    await waitOutput(a.id, 'arquivos depois sales');
+    await waitOutput(a.id, '- plano.md');
+    await waitStatus(a.id, 'idle');
+    // O quadro de quem está fazendo o quê acompanha os agentes da sala.
+    const now = path.join(process.env.AI_OFFICE_DATA!, 'salas', room.id, 'agora.md');
+    await waitFor(() => fs.existsSync(now) && fs.readFileSync(now, 'utf8').includes(`**${a.name}** (ms-sales)`), 4000, 'quadro da sala');
+  });
+
+  it('o worktree sai do repositório do projeto do agente', async () => {
+    const root = sistema();
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: root });
+    const arquivos = room.projects![0];
+    const a = await hire(room, { projectId: arquivos.id, worktree: true });
+    expect(execFileSync('git', ['-C', arquivos.path, 'worktree', 'list'], { encoding: 'utf8' })).toContain(a.cwd);
+    const { data: st } = await api<WorktreeStatus>('GET', `/api/agents/${a.id}/worktree`);
+    expect(st).toMatchObject({ branch: a.worktreeBranch, target: 'main' });
+    const { data: git } = await api<{ isRepo: boolean; branch: string }>('GET', `/api/projects/${arquivos.id}/git`);
+    expect(git).toMatchObject({ isRepo: true, branch: 'main' });
+  });
+
+  it('adiciona, edita e tira projetos, só de dentro da raiz e sem ninguém trabalhando neles', async () => {
+    const root = sistema();
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: root });
+    fs.renameSync(makeRepo('ms-motor'), path.join(root, 'ms-motor'));
+    const fora = await api('POST', `/api/rooms/${room.id}/projects`, { path: tempDir('fora') });
+    expect(fora.status).toBe(400);
+    const { data: com3 } = await api<Room>('POST', `/api/rooms/${room.id}/projects`, { path: 'ms-motor' });
+    const motor = com3.projects!.find((p) => p.name === 'ms-motor')!;
+    expect(motor.path).toBe(path.join(root, 'ms-motor'));
+    expect((await api('POST', `/api/rooms/${room.id}/projects`, { path: 'ms-motor' })).status).toBe(400);
+
+    const { data: editada } = await api<Room>('PATCH', `/api/rooms/${room.id}/projects/${motor.id}`, { summary: 'Calcula o faturamento.' });
+    expect(editada.projects!.find((p) => p.id === motor.id)).toMatchObject({ summary: 'Calcula o faturamento.', summaryEdited: true });
+    const { data: refeita } = await api<Room>('PATCH', `/api/rooms/${room.id}/projects/${motor.id}`, { redraft: true });
+    expect(refeita.projects!.find((p) => p.id === motor.id)?.summaryEdited).toBeUndefined();
+
+    const a = await hire(room, { projectId: motor.id });
+    const ocupado = await api<{ error: string }>('DELETE', `/api/rooms/${room.id}/projects/${motor.id}`);
+    expect(ocupado.status).toBe(400);
+    expect(ocupado.data.error).toContain(a.name);
+    await api('DELETE', `/api/agents/${a.id}`);
+    const { data: sem } = await api<Room>('DELETE', `/api/rooms/${room.id}/projects/${motor.id}`);
+    expect(sem.projects!.map((p) => p.name)).toEqual(['ms-arquivos', 'ms-sales']);
+  });
+
+  it('recusa projeto que não é da sala', async () => {
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: sistema() });
+    const { status } = await api('POST', '/api/agents', { roomId: room.id, projectId: 'outro' });
+    expect(status).toBe(400);
+  });
+});
+
 describe('terminal comum', () => {
   it('abre o shell na pasta da sala, sem hooks do escritório', async () => {
     const room = await newRoom('shell');
@@ -609,7 +688,9 @@ describe('andares', () => {
     const b = await hire(salaPessoal);
     await waitOutput(b.id, 'coautoria=sim');
     await waitStatus(b.id, 'idle');
-    expect(ws.out(b.id)).not.toContain('instrucoes=');
+    // Sem instruções no andar, o prompt acrescentado é só o contexto da sala.
+    expect(ws.out(b.id)).toContain('instrucoes=# Sala ');
+    expect(ws.out(b.id)).not.toContain('Commits resumidos');
 
     // Mudou os padrões do Pessoal: quem volta ao trabalho já abre com eles.
     await api('PATCH', `/api/floors/${pessoal.id}`, { defaults: { coAuthor: false } });

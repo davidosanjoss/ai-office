@@ -4,6 +4,7 @@ import path from 'node:path';
 import { FLOOR_COLORS, autoPlace, isWarColumn } from '../shared/building.ts';
 import type { ActivityEvent, Agent, Floor, Incident, OfficeState, Room, ServerMsg } from '../shared/types.ts';
 import { DATA_DIR } from './platform.ts';
+import { newProject } from './projects.ts';
 
 const STATE_FILE = path.join(DATA_DIR, 'state.json');
 const MAX_ACTIVITY = 300;
@@ -61,11 +62,21 @@ export class Store extends EventEmitter {
       // Salas de antes do prédio ganham uma vaga encostada nele, na ordem em que foram criadas.
       const semVaga = [...this.rooms.values()].filter((r) => !r.pos).sort((a, b) => a.createdAt - b.createdAt);
       for (const r of semVaga) r.pos = autoPlace(this.roomsOn(r.floorId!), 'andar', this.warRoomsOf(r.floorId!));
+      // Salas de antes dos projetos: a pasta da sala vira o único projeto dela.
+      for (const r of this.rooms.values()) {
+        if (!r.projects?.length) {
+          r.projects = [newProject(r.path)];
+          migrated = true;
+        }
+      }
       for (const i of data.incidents ?? []) this.incidents.set(i.id, i);
       if (semVaga.length || migrated) this.save();
       // Processos não sobrevivem a um reinício do servidor; o agente fica disponível para retomar.
       for (const a of data.agents ?? []) {
-        this.agents.set(a.id, { ...a, status: 'exited', activity: 'Fora do escritório', subagents: 0 });
+        const room = this.rooms.get(a.roomId);
+        // Agentes de antes dos projetos trabalham no primeiro projeto da sala.
+        const projectId = a.projectId ?? (a.kind !== 'shell' ? room?.projects?.[0]?.id : undefined);
+        this.agents.set(a.id, { ...a, ...(projectId ? { projectId } : {}), status: 'exited', activity: 'Fora do escritório', subagents: 0 });
       }
     } catch (err) {
       console.error('[store] state.json inválido, ignorando:', err);

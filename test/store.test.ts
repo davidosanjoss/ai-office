@@ -33,6 +33,16 @@ describe('Store', () => {
     expect(s2.agents.get('a1')).toMatchObject({ status: 'exited', subagents: 0, sessionId: 's1' });
   });
 
+  it('sala de antes dos projetos vira uma sala com um projeto, e os agentes dela trabalham nele', () => {
+    const file = path.join(tempDir('store'), 'state.json');
+    fs.writeFileSync(file, JSON.stringify({ rooms: [{ id: 'r1', name: 'app', path: '/app', createdAt: 1, floorId: 'f', pos: { x: 1, y: 1 } }], floors: [{ id: 'f', name: 'F', color: '#fff', order: 1, createdAt: 1 }], agents: [agent()] }));
+    const s = new Store(file);
+    s.load();
+    const room = s.rooms.get('r1')!;
+    expect(room.projects).toMatchObject([{ name: 'app', path: '/app' }]);
+    expect(s.agents.get('a1')?.projectId).toBe(room.projects![0].id);
+  });
+
   it('state.json corrompido não derruba o servidor', () => {
     const file = path.join(tempDir('store'), 'state.json');
     fs.writeFileSync(file, '{ quebrado');
