@@ -405,7 +405,21 @@ dialog select {
   padding: 4px 6px 0;
   background: var(--bg-2);
   overflow-x: auto;
+  flex: 1;
+  min-width: 0;
+}
+.tabs-row {
+  display: flex;
+  align-items: center;
+  background: var(--bg-2);
   flex-shrink: 0;
+}
+#btn-sidebar {
+  padding: 0 10px;
+  font-size: 15px;
+}
+body.side-hidden #sidebar {
+  display: none;
 }
 
 .tab {
@@ -567,6 +581,24 @@ dialog select {
 }
 .git-section {
   margin: 8px 0 4px;
+}
+/* Seções recolhíveis: o título é o <summary>, com a setinha no lugar do marcador padrão. */
+.git-section > summary {
+  list-style: none;
+  color: inherit;
+}
+.git-section > summary::-webkit-details-marker {
+  display: none;
+}
+.git-section > summary h4::before {
+  content: '▾';
+  width: 8px;
+}
+.git-section:not([open]) > summary h4 {
+  margin-bottom: 0;
+}
+.git-section:not([open]) > summary h4::before {
+  content: '▸';
 }
 .git-section h4 {
   margin: 0 0 3px;
@@ -956,7 +988,8 @@ dialog menu {
 }
 
 @media (max-width: 900px) {
-  #sidebar {
+  #sidebar,
+  #btn-sidebar {
     display: none;
   }
 }
@@ -1394,4 +1427,275 @@ body.dir-hidden #directory {
 #dlg-close-incident textarea {
   width: 100%;
   resize: vertical;
+}
+
+/* ---------- explorador: arquivos e histórico ---------- */
+
+.h3-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+#files-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #16161e;
+}
+#files-view[hidden] {
+  display: none;
+}
+#files-view:not([hidden]) ~ #terminals,
+#files-view:not([hidden]) ~ #diff-view {
+  display: none;
+}
+#files-modes {
+  display: flex;
+  gap: 2px;
+}
+#files-modes button {
+  background: none;
+  border: 1px solid var(--line);
+  color: var(--muted);
+  padding: 3px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+#files-modes button.active {
+  color: var(--text);
+  border-color: var(--accent);
+}
+#files-root {
+  flex: 1;
+  padding-right: 4px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+.files-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.files-side {
+  width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--line);
+  background: var(--bg-2);
+  min-height: 0;
+}
+#files-tree-pane,
+#hist-pane {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#files-tree-pane[hidden],
+#hist-pane[hidden] {
+  display: none;
+}
+.files-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.files-tools select {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 4px;
+}
+#files-tree,
+#hist-list {
+  flex: 1;
+  overflow: auto;
+  padding: 4px 0;
+}
+#files-tree .node {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+  padding: 2px 8px;
+  font: 12px/1.6 'JetBrains Mono', Consolas, monospace;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#files-tree .node:hover {
+  background: var(--panel);
+}
+#files-tree .node.selected {
+  background: #283457;
+}
+#files-tree .node.open .nm {
+  color: var(--accent);
+}
+#files-tree .node.more {
+  color: var(--muted);
+  cursor: default;
+}
+#files-tree .tw {
+  width: 10px;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+#files-tree .nm {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#files-tree .mk {
+  font-size: 11px;
+  color: var(--muted);
+}
+#files-tree .mk-M .nm,
+#files-tree .mk-M .mk {
+  color: var(--waiting);
+}
+#files-tree .mk-A .nm,
+#files-tree .mk-A .mk,
+#files-tree .mk-\? .nm,
+#files-tree .mk-\? .mk {
+  color: var(--done);
+}
+#files-tree .mk-D .nm,
+#files-tree .mk-U .nm {
+  color: var(--danger);
+}
+#files-tree .mk-dir .mk {
+  color: var(--waiting);
+}
+#hist-list .empty,
+#files-tree .empty {
+  padding: 8px;
+}
+#hist-list h4 {
+  margin: 10px 8px 4px;
+  font: 11px var(--pixel);
+  color: var(--muted);
+}
+.commit-row {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  background: none;
+  border: 0;
+  border-bottom: 1px solid #1f2335;
+  color: var(--text);
+  text-align: left;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+.commit-row:hover {
+  background: var(--panel);
+}
+.commit-row .subj {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.commit-row .meta {
+  font-size: 11px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.hist-back,
+.hist-more {
+  margin: 4px 8px;
+}
+.hist-commit {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.hist-commit pre {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  font: 12px/1.4 'JetBrains Mono', Consolas, monospace;
+  color: var(--text);
+}
+.files-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.files-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 32px;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
+}
+#files-path {
+  font: 600 12px 'JetBrains Mono', monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+#files-msg {
+  flex: 1;
+  text-align: right;
+  color: var(--muted);
+}
+#files-msg.error {
+  color: var(--danger);
+}
+#files-editor,
+#files-changes,
+#files-diff {
+  flex: 1;
+  min-height: 0;
+}
+#files-editor[hidden],
+#files-changes[hidden],
+#files-diff[hidden],
+#files-empty[hidden] {
+  display: none;
+}
+
+.tab.files .files-icon {
+  font-size: 12px;
+}
+
+#files-work,
+#git-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#files-work[hidden],
+#git-main[hidden],
+#git-pane[hidden] {
+  display: none;
+}
+#git-main:has(#diff-view:not([hidden])) .git-empty {
+  display: none;
+}
+#git-pane {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+  min-height: 0;
 }

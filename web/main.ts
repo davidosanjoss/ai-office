@@ -3,6 +3,7 @@ import { type MentionSuggestion, type Participant, applyMention, mentionQuery, m
 import { windowsSteps } from '../shared/memory.ts';
 import { FLOOR_COLORS, type Cell } from '../shared/building.ts';
 import { countChanges, parseDiff, renderDiff } from './diff.ts';
+import { Explorer, type ExplorerTarget } from './files.ts';
 import * as logic from './logic.ts';
 import { Office, STATUS_COLOR, hash } from './office.ts';
 import { characterFor, type Manifest } from './sprites.ts';
@@ -150,6 +151,46 @@ const terminals = new Terminals($('#terminals'), {
   resize: (id, cols, rows) => send({ t: 'resize', id, cols, rows }),
 });
 
+// Explorador (aba 📁 da sala): arquivos com editor e histórico do git.
+const explorer = new Explorer({
+  api,
+  confirm: confirmDialog,
+  onShow: () => {
+    closeDiff();
+    // O modo Git do explorador é o painel de git da lateral, com o diff na área principal.
+    $('#git-pane').append($('#git'));
+    $('#git-main').append($('#diff-view'));
+    renderWarPanel();
+    refreshGit();
+  },
+  onHide: () => {
+    closeDiff();
+    $('#git-panel').append($('#git'));
+    $('#terminals').before($('#diff-view'));
+    renderWarPanel();
+    if (selectedAgent) terminals.show(selectedAgent);
+    refreshGit();
+  },
+  onTabChange: renderTabs,
+  // O diff aberto é o do modo Git: fora dele, nem Esc nem Alt+↑/↓ mexem nele.
+  onModeChange: (mode) => {
+    if (mode !== 'git') closeDiff();
+    // A pasta pode ter mudado (outra aba de explorador) ou ter arquivos salvos no editor.
+    refreshGit();
+  },
+});
+
+/** A pasta da sala selecionada ou, com `worktree`, a do worktree do agente selecionado, se ele tem um. */
+function explorerTarget(worktree: boolean): ExplorerTarget | undefined {
+  const agent = worktree ? state.agents.find((a) => a.id === selectedAgent && a.worktreeBranch) : undefined;
+  const room = state.rooms.find((r) => r.id === (agent?.roomId ?? selectedRoom));
+  if (!room) return undefined;
+  if (agent) {
+    return { base: `/api/agents/${agent.id}`, roomId: room.id, tab: `Arquivos · ${agent.name}`, label: `${room.name} · worktree de ${agent.name} (${agent.worktreeBranch})` };
+  }
+  return { base: `/api/rooms/${room.id}`, roomId: room.id, tab: 'Arquivos', label: `${room.name} · ${room.path}` };
+}
+
 function roomAgents(roomId?: string) {
   return logic.roomAgents(state.agents, roomId);
 }
@@ -174,6 +215,8 @@ function selectRoom(roomId: string) {
   if (selectedRoom === roomId && selectedWar === undefined) return;
   selectedRoom = roomId;
   selectedWar = undefined;
+  // A aba do explorador é de outra sala: a sala nova mostra o terminal dela.
+  if (explorer.tab()?.roomId !== roomId) explorer.hide();
   const floor = state.rooms.find((r) => r.id === roomId)?.floorId;
   if (floor && floor !== currentFloor) goToFloor(floor);
   const first = roomAgents(roomId).find((a) => a.status !== 'exited') ?? roomAgents(roomId)[0];
@@ -186,6 +229,7 @@ function selectAgent(id?: string) {
   if (id !== selectedAgent) {
     selectedAt = Date.now();
     closeDiff();
+    explorer.hide();
   }
   selectedAgent = id;
   const agent = state.agents.find((a) => a.id === id);
@@ -285,6 +329,7 @@ setInterval(() => {
     now: Date.now(),
     lastKeyAt,
     selectedAt,
+    exploring: explorer.isShown(),
   });
   if (next) selectAgent(next);
 }, 1000);
@@ -319,12 +364,37 @@ function renderAll(full = true) {
   if (full) renderActivity();
 }
 
+/** O que as abas mostram (sem a atividade, que vai no title e muda o tempo todo). */
+let tabsKey = '';
+
 function renderTabs() {
   const nav = $('#tabs');
+  const tabs = currentTabs();
+  const files = explorer.tab();
+  // Só recria os botões quando algo das abas muda: recriar a cada atualização de agente fazia um
+  // clique cair num botão que acabou de ser trocado (e não pegar).
+  const key = JSON.stringify([
+    tabs.map((a) => [a.id, a.name, a.status, a.kind, a.worktreeBranch]),
+    selectedAgent,
+    selectedRoom,
+    selectedWar,
+    currentIncident()?.id,
+    explorer.isShown(),
+    files && [files.roomId, files.tab, files.label],
+  ]);
+  if (key === tabsKey) {
+    for (const a of tabs) {
+      const tab = nav.querySelector<HTMLElement>(`.tab[data-id="${a.id}"]`);
+      if (tab) tab.title = a.activity;
+    }
+    return;
+  }
+  tabsKey = key;
   nav.replaceChildren();
-  for (const a of currentTabs()) {
+  for (const a of tabs) {
     const tab = document.createElement('button');
-    tab.className = `tab ${a.id === selectedAgent ? 'active' : ''} ${a.status}`;
+    tab.className = `tab ${a.id === selectedAgent && !explorer.isShown() ? 'active' : ''} ${a.status}`;
+    tab.dataset.id = a.id;
     tab.title = a.activity;
     tab.innerHTML =
       a.kind === 'shell'
@@ -349,7 +419,29 @@ function renderTabs() {
       else fireAgent(a);
     });
     tab.appendChild(close);
-    tab.addEventListener('click', () => selectAgent(a.id));
+    tab.addEventListener('click', () => {
+      explorer.hide();
+      selectAgent(a.id);
+    });
+    nav.appendChild(tab);
+  }
+  if (files && selectedWar === undefined && files.roomId === selectedRoom) {
+    const tab = document.createElement('button');
+    tab.className = `tab files ${explorer.isShown() ? 'active' : ''}`;
+    tab.title = files.label;
+    tab.innerHTML = '<span class="files-icon">📁</span>';
+    const name = document.createElement('span');
+    name.textContent = files.tab;
+    const close = document.createElement('span');
+    close.className = 'close';
+    close.textContent = '×';
+    close.title = 'Fechar o explorador';
+    close.addEventListener('click', (e) => {
+      e.stopPropagation();
+      explorer.closeTab();
+    });
+    tab.append(name, close);
+    tab.addEventListener('click', () => explorer.show());
     nav.appendChild(tab);
   }
   if (selectedWar !== undefined && currentIncident()) {
@@ -375,7 +467,12 @@ function renderTabs() {
     shell.textContent = '>_';
     shell.title = 'Novo terminal (Alt+T)';
     shell.addEventListener('click', () => openShell(selectedRoom!));
-    nav.append(add, shell);
+    const browse = document.createElement('button');
+    browse.className = 'tab add';
+    browse.textContent = '📁';
+    browse.title = 'Arquivos e histórico da sala';
+    browse.addEventListener('click', () => explorer.show(explorerTarget(false)));
+    nav.append(add, shell, browse);
   }
   $('#placeholder').hidden = !!selectedAgent;
 }
@@ -439,7 +536,8 @@ function renderWarPanel() {
   const war = selectedWar !== undefined && !!floor;
   $('#war-panel').hidden = !war;
   $('#room-info').hidden = war;
-  $('#git-panel').hidden = war;
+  // Com o explorador na tela, o painel de git está dentro dele (modo Git).
+  $('#git-panel').hidden = war || explorer.isShown();
   if (!war) {
     warChatKey = '';
     return;
@@ -925,6 +1023,19 @@ $('#btn-directory').addEventListener('click', () => {
   directoryKey = '';
   renderDirectory();
 });
+/** Esconde ou mostra o painel da direita (sala e git), e lembra a escolha. */
+function setSidebarHidden(hidden: boolean) {
+  document.body.classList.toggle('side-hidden', hidden);
+  const btn = $('#btn-sidebar');
+  btn.textContent = hidden ? '⇤' : '⇥';
+  btn.title = hidden ? 'Mostrar o painel da direita' : 'Esconder o painel da direita';
+}
+setSidebarHidden(recall('sidebar') === 'hidden');
+$('#btn-sidebar').addEventListener('click', () => {
+  const hidden = !document.body.classList.contains('side-hidden');
+  setSidebarHidden(hidden);
+  remember('sidebar', hidden ? 'hidden' : 'shown');
+});
 if (recall('activity') === 'collapsed') $('#activity-float').classList.add('collapsed');
 $('#activity-toggle').addEventListener('click', () => {
   const collapsed = $('#activity-float').classList.toggle('collapsed');
@@ -1083,6 +1194,8 @@ function scheduleGitRefresh() {
 
 /** Pasta do git mostrado: a do agente selecionado (o worktree dele, se houver) ou a da sala. */
 function gitBase(): string {
+  // Com o explorador na tela, o git é o da pasta dele (a sala, ou o worktree de um agente).
+  if (explorer.isShown()) return explorer.tab()?.base ?? '';
   return selectedAgent ? `/api/agents/${selectedAgent}` : selectedRoom ? `/api/rooms/${selectedRoom}` : '';
 }
 
@@ -1093,6 +1206,16 @@ let lastWorktree: WorktreeStatus | undefined;
 let worktreeError = '';
 /** Último HTML do painel de git. */
 let gitHtml = '';
+/** Seções do painel de git que você abriu ou recolheu (guardado entre recarregamentos). */
+const gitSections: Partial<Record<logic.GitSection, boolean>> = (() => {
+  try {
+    return JSON.parse(localStorage.getItem('gitSections') ?? '{}');
+  } catch {
+    return {};
+  }
+})();
+/** `open` da seção, para o HTML: sem ele, cada atualização com mudança fechava o que você abriu. */
+const secOpen = (sec: logic.GitSection) => (logic.gitSectionOpen(gitSections, sec) ? ' open' : '');
 
 /**
  * Troca o painel de git só se mudou: a atualização a cada 15 s recriava os botões (o clique
@@ -1116,7 +1239,7 @@ async function refreshGit() {
   try {
     const [info, wt] = await Promise.all([
       fetch(`${base}/git`).then((r) => r.json() as Promise<GitInfo>),
-      agent?.worktreeBranch ? fetch(`${base}/worktree`).then((r) => (r.ok ? (r.json() as Promise<WorktreeStatus>) : undefined)) : undefined,
+      agent?.worktreeBranch && base === `/api/agents/${agent.id}` ? fetch(`${base}/worktree`).then((r) => (r.ok ? (r.json() as Promise<WorktreeStatus>) : undefined)) : undefined,
     ]);
     // Você pode ter trocado de agente enquanto a resposta vinha.
     if (base !== gitBase()) return;
@@ -1165,19 +1288,19 @@ function renderGit(info: GitInfo) {
   setGitHtml(`
     <div class="branch">⎇ ${esc(info.branch ?? '?')} <span class="muted">${sync}</span></div>
     ${lastWorktree ? worktreeSection(lastWorktree) : ''}
-    <div class="git-section">
-      <h4>Não commitado <span class="count">${files.length}</span>${files.length ? `<span class="nums">${total(files)}</span>` : ''}</h4>
+    <details class="git-section" data-sec="working"${secOpen('working')}>
+      <summary><h4>Não commitado <span class="count">${files.length}</span>${files.length ? `<span class="nums">${total(files)}</span>` : ''}</h4></summary>
       ${files.length ? fileRows(files, 'working') : '<div class="muted empty">Nada modificado</div>'}
-    </div>
+    </details>
     ${
       info.base
-        ? `<div class="git-section">
-      <h4>Na branch, desde <code>${esc(info.base)}</code> <span class="count">${info.branchCommits ?? 0} commit${info.branchCommits === 1 ? '' : 's'}</span>${branchFiles.length ? `<span class="nums">${total(branchFiles)}</span>` : ''}</h4>
+        ? `<details class="git-section" data-sec="branch"${secOpen('branch')}>
+      <summary><h4>Na branch, desde <code>${esc(info.base)}</code> <span class="count">${info.branchCommits ?? 0} commit${info.branchCommits === 1 ? '' : 's'}</span>${branchFiles.length ? `<span class="nums">${total(branchFiles)}</span>` : ''}</h4></summary>
       ${branchFiles.length ? fileRows(branchFiles, 'branch') : '<div class="muted empty">Nenhum arquivo diferente da base</div>'}
-    </div>`
+    </details>`
         : ''
     }
-    <details>
+    <details data-sec="commits"${secOpen('commits')}>
       <summary>Últimos commits</summary>
       ${(info.commits ?? []).map((c) => `<div class="commit"><code>${esc(c.hash)}</code> ${esc(c.subject)} <span class="muted">${esc(c.when)}</span></div>`).join('')}
     </details>`);
@@ -1188,14 +1311,26 @@ function worktreeSection(st: WorktreeStatus): string {
   const ui = logic.worktreeActions(st);
   const button = (action: string, b: logic.WorktreeButton, cls = '') =>
     `<button class="btn small ${cls}" data-wt="${action}"${b.disabled ? ` disabled title="${esc(b.disabled)}"` : ''}>${esc(b.label)}</button>`;
-  return `<div class="git-section worktree">
-      <h4>Worktree <span class="count">${esc(ui.summary)}</span></h4>
+  return `<details class="git-section worktree" data-sec="worktree"${secOpen('worktree')}>
+      <summary><h4>Worktree <span class="count">${esc(ui.summary)}</span></h4></summary>
       ${st.pr ? `<a class="wt-pr" href="${esc(st.pr)}" target="_blank" rel="noopener">PR aberto ↗</a>` : ''}
       ${ui.warnings.map((w) => `<p class="wt-warn">${esc(w)}</p>`).join('')}
       <div class="wt-actions">${button('pr', ui.pr)}${button('merge', ui.merge)}${button('remove', ui.remove, 'ghost')}</div>
       ${worktreeError ? `<p class="error">${esc(worktreeError)}</p>` : ''}
-    </div>`;
+    </details>`;
 }
+
+// Abrir ou recolher uma seção: guarda a escolha (o "toggle" não borbulha, por isso a captura).
+$('#git').addEventListener(
+  'toggle',
+  (e) => {
+    const sec = (e.target as HTMLElement).dataset.sec as logic.GitSection | undefined;
+    if (!sec) return;
+    gitSections[sec] = (e.target as HTMLDetailsElement).open;
+    remember('gitSections', JSON.stringify(gitSections));
+  },
+  true,
+);
 
 $('#git').addEventListener('click', (e) => {
   const wt = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-wt]');
@@ -1311,7 +1446,7 @@ function closeDiff() {
   diffOpen = undefined;
   $('#diff-view').hidden = true;
   if (lastGit) renderGit(lastGit.info);
-  if (selectedAgent) terminals.show(selectedAgent);
+  if (selectedAgent && !explorer.isShown()) terminals.show(selectedAgent);
 }
 
 function stepDiff(delta: number) {
@@ -1332,6 +1467,9 @@ window.addEventListener('keydown', (e) => {
   else return;
   e.preventDefault();
 });
+
+// O "Arquivos" do painel de git abre a pasta que o painel mostra: o worktree do agente, se ele tem um.
+$('#btn-files').addEventListener('click', () => explorer.show(explorerTarget(true)));
 
 $('#btn-git-refresh').addEventListener('click', refreshGit);
 setInterval(() => !document.hidden && refreshGit(), 15000);
