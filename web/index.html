@@ -105,8 +105,14 @@
                 </div>
                 <div id="hist-list"></div>
               </div>
-              <!-- Modo Git: o painel de git da lateral vem para cá enquanto o explorador está na tela. -->
-              <div id="git-pane" hidden></div>
+              <!-- Modo Git: o git da pasta do explorador (o worktree do agente, se ele tiver um). -->
+              <div id="git-pane" hidden>
+                <div class="git-pane-head">
+                  <span>Git</span>
+                  <button id="btn-git-refresh" class="icon" title="Atualizar">↻</button>
+                </div>
+                <div id="git"></div>
+              </div>
             </aside>
             <section class="files-main">
               <div id="files-work">
@@ -172,14 +178,6 @@
             <button id="war-close" class="btn small ghost" type="button">Encerrar incidente</button>
             <button id="war-remove" class="btn small ghost" type="button">Tirar esta sala de guerra</button>
           </div>
-        </section>
-        <section id="git-panel" class="panel grow">
-          <h3>Git
-            <span class="h3-actions">
-              <button id="btn-git-refresh" class="icon" title="Atualizar">↻</button>
-            </span>
-          </h3>
-          <div id="git"></div>
         </section>
       </aside>
     </main>

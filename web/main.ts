@@ -159,15 +159,13 @@ const explorer = new Explorer({
   confirm: confirmDialog,
   onShow: () => {
     closeDiff();
-    // O modo Git do explorador é o painel de git da lateral, com o diff na área principal.
-    $('#git-pane').append($('#git'));
+    // O modo Git do explorador mostra o git da pasta dele, com o diff na área principal.
     $('#git-main').append($('#diff-view'));
     renderWarPanel();
     refreshGit();
   },
   onHide: () => {
     closeDiff();
-    $('#git-panel').append($('#git'));
     $('#terminals').before($('#diff-view'));
     renderWarPanel();
     if (selectedAgent) terminals.show(selectedAgent);
@@ -566,8 +564,6 @@ function renderWarPanel() {
   const war = selectedWar !== undefined && !!floor;
   $('#war-panel').hidden = !war;
   $('#room-info').hidden = war;
-  // Com o explorador na tela, o painel de git está dentro dele (modo Git).
-  $('#git-panel').hidden = war || explorer.isShown();
   if (!war) {
     warChatKey = '';
     return;
@@ -1224,11 +1220,8 @@ function scheduleGitRefresh() {
 
 /** Pasta do git mostrado: a do agente selecionado (o worktree dele, se houver) ou a da sala. */
 function gitBase(): string {
-  // Com o explorador na tela, o git é o da pasta dele (a sala, ou o worktree de um agente).
-  if (explorer.isShown()) return explorer.tab()?.base ?? '';
-  if (selectedAgent) return `/api/agents/${selectedAgent}`;
-  const room = state.rooms.find((r) => r.id === selectedRoom);
-  return room ? logic.roomFolder(room, roomProjectSel.get(room.id)).base : '';
+  // O git só aparece no modo Git do explorador: é o da pasta dele (o projeto, ou o worktree de um agente).
+  return explorer.isShown() ? (explorer.tab()?.base ?? '') : '';
 }
 
 let lastGit: { base: string; info: GitInfo } | undefined;

@@ -1727,3 +1727,13 @@ body.dir-hidden #directory {
 .project-row .project-name { font-weight: bold; width: 14em; }
 .project-actions { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
 .project-actions .project-auto { flex: 1; }
+
+#git-pane .git-pane-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 8px;
+  font: 12px var(--pixel);
+  color: var(--muted);
+  letter-spacing: 1px;
+}
