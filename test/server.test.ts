@@ -529,7 +529,10 @@ describe('sala com vários projetos', () => {
     const { data: room } = await api<Room>('POST', '/api/rooms', { path: root });
     const arquivos = room.projects![0];
     const a = await hire(room, { projectId: arquivos.id, worktree: true });
-    expect(execFileSync('git', ['-C', arquivos.path, 'worktree', 'list'], { encoding: 'utf8' })).toContain(a.cwd);
+    // O worktree compartilha o .git do projeto. Compara as pastas de verdade: no Windows o git escreve o
+    // caminho com "/" e o nome longo, e a pasta temporária vem com "\\" e o nome curto (RUNNER~1).
+    const common = execFileSync('git', ['-C', a.cwd, 'rev-parse', '--git-common-dir'], { encoding: 'utf8' }).trim();
+    expect(fs.realpathSync.native(path.resolve(a.cwd, common))).toBe(fs.realpathSync.native(path.join(arquivos.path, '.git')));
     const { data: st } = await api<WorktreeStatus>('GET', `/api/agents/${a.id}/worktree`);
     expect(st).toMatchObject({ branch: a.worktreeBranch, target: 'main' });
     const { data: git } = await api<{ isRepo: boolean; branch: string }>('GET', `/api/projects/${arquivos.id}/git`);
