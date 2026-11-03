@@ -739,11 +739,17 @@ export class Office {
   private wall(x0: number, y0: number, x1: number, y1: number, h: number, color: string, gap = 0, glass?: number) {
     const len = Math.hypot(x1 - x0, y1 - y0);
     const n = Math.max(1, Math.ceil(len / 16));
+    const at = (t: number) => ({ x: x0 + (x1 - x0) * t, y: y0 + (y1 - y0) * t });
+    // O vão de verdade: do começo do primeiro pedaço pulado ao fim do último.
+    let open: { a: Point; b: Point } | undefined;
     for (let i = 0; i < n; i++) {
       const t0 = i / n;
       const t1 = (i + 1) / n;
       const mid = ((t0 + t1) / 2) * len;
-      if (gap && Math.abs(mid - len / 2) < gap / 2) continue;
+      if (gap && Math.abs(mid - len / 2) < gap / 2) {
+        open = { a: open?.a ?? at(t0), b: at(t1) };
+        continue;
+      }
       // Um pouco de sobra em cada ponta: sem ela, a borda suavizada deixa um fio entre os pedaços.
       const e = 0.6 / len;
       const a = { x: x0 + (x1 - x0) * Math.max(0, t0 - e), y: y0 + (y1 - y0) * Math.max(0, t0 - e) };
@@ -753,6 +759,38 @@ export class Office {
       if (glass !== undefined) this.upright(m, () => this.glassFace(a, b, h, color, glass, i % 4 === 0));
       else this.upright(m, () => this.face(a, b, 0, h, color, true));
     }
+    return open;
+  }
+
+  /**
+   * Porta de vidro aberta no vão da parede da frente: batentes dos dois lados, a bandeira em cima
+   * e a folha girada para dentro da sala, presa no batente da esquerda, com o puxador na ponta.
+   */
+  private drawDoor(o: { a: Point; b: Point }, frame: string) {
+    const h = WALL_UP;
+    const top = h - 10;
+    const len = Math.hypot(o.b.x - o.a.x, o.b.y - o.a.y);
+    const ang = (70 * Math.PI) / 180;
+    // A parede da frente corre ao longo de x: abrir para dentro é ir para y menor.
+    const end = { x: o.a.x + Math.cos(ang) * len, y: o.a.y - Math.sin(ang) * len };
+    const post = (q: Point) =>
+      this.upright(q, () => {
+        const b0 = this.sp(q.x, q.y);
+        const b1 = this.sp(q.x, q.y, h);
+        rect(this.pctx, b0.x - 1, b1.y, 3, b0.y - b1.y, frame);
+      });
+    post(o.a);
+    post(o.b);
+    this.upright({ x: (o.a.x + o.b.x) / 2, y: o.a.y }, () => this.face(o.a, o.b, top, h, frame));
+    this.upright({ x: (o.a.x + end.x) / 2, y: (o.a.y + end.y) / 2 }, () => {
+      this.glassFace(o.a, end, top, frame, 0.45, true);
+      const e0 = this.sp(end.x, end.y);
+      const e1 = this.sp(end.x, end.y, top);
+      rect(this.pctx, e0.x - 1, e1.y, 2, e0.y - e1.y, frame);
+      // puxador
+      const k = this.sp(o.a.x + (end.x - o.a.x) * 0.85, o.a.y + (end.y - o.a.y) * 0.85, 22);
+      rect(this.pctx, k.x - 1, k.y - 5, 2, 10, '#d8dee9');
+    });
   }
 
   /** Painel em pé entre dois pontos do chão, de z0 a z1 (parede, janela, porta de elevador). */
@@ -814,7 +852,15 @@ export class Office {
   private onBackWall(r: Rect, x0: number, x1: number, z0: number, z1: number, color: string) {
     const a = { x: r.x + x0, y: r.y };
     const b = { x: r.x + x1, y: r.y };
-    this.upright({ x: (a.x + b.x) / 2, y: r.y }, () => this.face(a, b, z0, z1, color), 0.5);
+    // Entra na ordem pela ponta da direita (e um pedaço além): senão o vidro dos pedaços depois
+    // do meio é desenhado por cima e corta a placa ao meio.
+    this.upright({ x: b.x + 16, y: r.y }, () => this.face(a, b, z0, z1, color), 0.5);
+  }
+
+  /** Placa para o nome da vaga no meio da parede do fundo (o texto entra no passe de texto). */
+  private signPlate(r: Rect, w: number) {
+    this.onBackWall(r, (r.w - w) / 2, (r.w + w) / 2, SIGN_Z - 10, SIGN_Z + 10, '#2a2f45');
+    this.onBackWall(r, (r.w - w) / 2 + 1, (r.w + w) / 2 - 1, SIGN_Z - 9, SIGN_Z + 9, '#3b4261');
   }
 
   /** Caixa em pé (bancada, balcão): tampo e as duas faces que dão para quem olha. */
@@ -849,7 +895,8 @@ export class Office {
       this.wall(r.x, r.y, x1, r.y, WALL_UP, wallColor, 0, 0.32);
       this.wall(r.x, r.y, r.x, y1, WALL_UP, shade(wallColor, 0.8), 0, 0.32);
       this.wall(x1, r.y, x1, y1, WALL_UP, shade(wallColor, 0.8), 0, 0.14);
-      this.wall(r.x, y1, x1, y1, WALL_UP, wallColor, opts.door ?? 40, 0.14);
+      const door = this.wall(r.x, y1, x1, y1, WALL_UP, wallColor, opts.door ?? 40, 0.14);
+      if (door) this.drawDoor(door, wallColor);
       return;
     }
     this.wall(r.x, r.y, x1, r.y, WALL_UP, wallColor);
@@ -1006,11 +1053,11 @@ export class Office {
     this.flat(() => this.tileFloor(r, 'corredor', '#8e94a3'));
     this.drawShell(r, shade(this.floor.color, 0.45), { door: 120, solid: true });
     for (const dx of [70, r.w - 70 - 72]) {
-      this.onBackWall(r, dx - 4, dx + 76, 0, 62, '#4a4f63');
-      this.onBackWall(r, dx, dx + 35, 0, 56, '#9aa3b8');
-      this.onBackWall(r, dx + 37, dx + 72, 0, 56, '#9aa3b8');
-      this.onBackWall(r, dx + 24, dx + 48, 63, 70, '#1f2335');
-      this.onBackWall(r, dx + 27, dx + 45, 64, 68, this.frame % 20 < 10 ? this.floor.color : shade(this.floor.color, 0.6));
+      this.onBackWall(r, dx - 4, dx + 76, 0, 46, '#4a4f63');
+      this.onBackWall(r, dx, dx + 35, 0, 42, '#9aa3b8');
+      this.onBackWall(r, dx + 37, dx + 72, 0, 42, '#9aa3b8');
+      this.onBackWall(r, dx + 24, dx + 48, 47, 53, '#1f2335');
+      this.onBackWall(r, dx + 27, dx + 45, 48, 52, this.frame % 20 < 10 ? this.floor.color : shade(this.floor.color, 0.6));
     }
     this.obj('banco', r.x + r.w / 2 - 40, r.y + 150);
     this.obj('vaso-grande', r.x + 10, r.y + r.h - 70);
@@ -1026,6 +1073,7 @@ export class Office {
       rect(this.pctx, r.x + r.w / 2 - 26, r.y + 144, 52, r.h - 152, '#9b3d4a');
     });
     this.drawShell(r, '#5a6b8c', { door: 72 });
+    this.signPlate(r, 110);
     this.obj('estante', r.x + 8, r.y + 8);
     this.obj('vaso-grande', r.x + r.w - 56, r.y + 12);
     // recepcionista atrás do balcão
@@ -1041,6 +1089,7 @@ export class Office {
   private drawKitchen(r: Rect) {
     this.flat(() => this.tileFloor(r, 'copa', '#dfe2ea'));
     this.drawShell(r, '#6b8c7a');
+    this.signPlate(r, 80);
     this.box(r.x + 10, r.y + 2, r.w - 80, 26, 22, '#8d93a6');
     this.obj('cafeteira', r.x + 110, r.y + 2 - 22 + 26, 22);
     this.obj('geladeira', r.x + r.w - 60, r.y + 4);
@@ -1193,10 +1242,7 @@ export class Office {
     const wallColor = shade(this.floor.color, 0.42 + ((hash(room.id) % 5) - 2) * 0.03);
     this.drawShell(r, wallColor);
 
-    // placa com o nome na parede do fundo (o texto entra no passe de texto)
-    const signW = 150;
-    this.onBackWall(r, (r.w - signW) / 2, (r.w + signW) / 2, SIGN_Z - 10, SIGN_Z + 10, '#2a2f45');
-    this.onBackWall(r, (r.w - signW) / 2 + 1, (r.w + signW) / 2 - 1, SIGN_Z - 9, SIGN_Z + 9, '#3b4261');
+    this.signPlate(r, 150);
 
     // luz de atenção: pisca quando alguém terminou ou precisa de aprovação
     const needs = pr.agents.some((a) => a.status === 'done' || a.status === 'waiting');
@@ -1343,8 +1389,12 @@ export class Office {
         this.drawWarTexts(f.rect, f.slot ?? 0, signFont);
         continue;
       }
-      const s = this.toScreen(f.rect.x + f.rect.w / 2, f.rect.y, f.id === 'elevadores' ? WALL_UP + 12 : SIGN_Z);
-      this.label(f.name, s.x, s.y, signFont, '#ffffff', 'rgba(26,27,38,0.75)');
+      if (f.id === 'elevadores') {
+        const s = this.toScreen(f.rect.x + f.rect.w / 2, f.rect.y, WALL_UP + 12);
+        this.label(f.name, s.x, s.y, signFont, '#ffffff', 'rgba(26,27,38,0.75)');
+      } else {
+        this.wallText(f.name, f.rect.x + f.rect.w / 2, f.rect.y, SIGN_Z, signFont, '#ffffff');
+      }
     }
     if (this.layout.warAdd && this.hover?.kind === 'newwar') {
       const r = this.layout.warAdd.rect;
@@ -1360,9 +1410,8 @@ export class Office {
 
     for (const pr of this.layout.rooms) {
       const r = pr.rect;
-      const s = this.toScreen(r.x + r.w / 2, r.y, SIGN_Z);
       c.font = `${signFont}px "Silkscreen", monospace`;
-      this.label(fit(c, pr.room.name, 140 * z), s.x, s.y, signFont, '#e0e6ff');
+      this.wallText(fit(c, pr.room.name, 140 * z), r.x + r.w / 2, r.y, SIGN_Z, signFont, '#e0e6ff');
       if (pr.overflow) {
         const o = this.toScreen(r.x + r.w - 52, r.y, SIGN_Z);
         this.label(`+${pr.overflow}`, o.x, o.y, Math.max(9, Math.round(8 * z)), '#1a1b26', '#e0af68');
@@ -1426,9 +1475,8 @@ export class Office {
     const c = this.ctx;
     const z = this.camera.z;
     const incident = this.incidents.find((i) => i.slot === slot);
-    const screen = this.toScreen(r.x + r.w / 2, r.y, 31);
     c.font = `${signFont}px "Silkscreen", monospace`;
-    this.label(incident ? fit(c, incident.title, 126 * z) : 'Sala de guerra · livre', screen.x, screen.y, signFont, incident ? '#ffffff' : '#a9b1d6');
+    this.wallText(incident ? fit(c, incident.title, 126 * z) : 'Sala de guerra · livre', r.x + r.w / 2, r.y, 31, signFont, incident ? '#ffffff' : '#a9b1d6');
     if (!incident) {
       if (this.hover?.kind === 'war' && this.hover.slot === slot) {
         const s = this.toScreen(r.x + r.w / 2, r.y + r.h / 2 + 40);
@@ -1455,6 +1503,26 @@ export class Office {
       const o = this.toScreen(r.x + r.w - 40, r.y, 31);
       this.label(`+${incident.participants.length - WAR_SEATS.length}`, o.x, o.y, Math.max(9, Math.round(8 * z)), '#1a1b26', '#e0af68');
     }
+  }
+
+  /**
+   * Texto pintado numa parede do fundo (as que correm ao longo de x na planta): inclinado junto
+   * com ela, centrado no ponto (x, y) da planta, `z` acima do chão.
+   */
+  private wallText(text: string, x: number, y: number, z: number, size: number, color: string) {
+    const c = this.ctx;
+    const s = this.toScreen(x, y, z);
+    // Na tela, andar ao longo de x na planta é ir na direção (a, b) da matriz do chão.
+    const [a, b] = floorMatrix(VIEW);
+    c.save();
+    c.translate(s.x, s.y);
+    c.transform(a, b, 0, 1, 0, 0);
+    c.font = `${size}px "Silkscreen", monospace`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillStyle = color;
+    c.fillText(text, 0, 1);
+    c.restore();
   }
 
   private label(text: string, x: number, y: number, size: number, color: string, bg?: string) {
