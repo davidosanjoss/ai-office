@@ -61,6 +61,8 @@ const SEAT_DX = -6;
 const WALL_UP = 56;
 const WALL_LOW = 7;
 const WALL_DARK = '#2a2438';
+/** Cor do vidro das salas (a opacidade vem de cada parede). */
+const GLASS = '#9fd4f2';
 /** Altura da placa com o nome da sala, na parede do fundo. */
 const SIGN_Z = 46;
 /** Raios da mesa redonda da sala de guerra, na planta. */
@@ -734,7 +736,7 @@ export class Office {
    * ordem de desenho pela própria posição, para quem está atrás dele sumir e quem está na
    * frente aparecer. `gap` é um vão (a porta), em pixels a partir do meio da linha.
    */
-  private wall(x0: number, y0: number, x1: number, y1: number, h: number, color: string, gap = 0) {
+  private wall(x0: number, y0: number, x1: number, y1: number, h: number, color: string, gap = 0, glass?: number) {
     const len = Math.hypot(x1 - x0, y1 - y0);
     const n = Math.max(1, Math.ceil(len / 16));
     for (let i = 0; i < n; i++) {
@@ -747,7 +749,9 @@ export class Office {
       const a = { x: x0 + (x1 - x0) * Math.max(0, t0 - e), y: y0 + (y1 - y0) * Math.max(0, t0 - e) };
       const b = { x: x0 + (x1 - x0) * Math.min(1, t1 + e), y: y0 + (y1 - y0) * Math.min(1, t1 + e) };
       const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      this.upright(m, () => this.face(a, b, 0, h, color, true));
+      // No vidro, um montante a cada dois pedaços (32 px) e no começo da parede.
+      if (glass !== undefined) this.upright(m, () => this.glassFace(a, b, h, color, glass, i % 2 === 0));
+      else this.upright(m, () => this.face(a, b, 0, h, color, true));
     }
   }
 
@@ -778,6 +782,34 @@ export class Office {
     p.fill();
   }
 
+  /**
+   * Pedaço de parede de vidro: o vidro translúcido (`alpha` de opacidade), o caixilho de baixo e
+   * de cima na cor da sala e, se `mullion`, o montante no começo do pedaço.
+   */
+  private glassFace(a: Point, b: Point, h: number, frame: string, alpha: number, mullion: boolean) {
+    const p = this.pctx;
+    const A0 = this.sp(a.x, a.y);
+    const B0 = this.sp(b.x, b.y);
+    const A1 = this.sp(a.x, a.y, h);
+    const B1 = this.sp(b.x, b.y, h);
+    const quad = (pts: Point[], col: string) => {
+      p.fillStyle = col;
+      p.beginPath();
+      pts.forEach((q, i) => (i ? p.lineTo(q.x, q.y) : p.moveTo(q.x, q.y)));
+      p.closePath();
+      p.fill();
+    };
+    p.save();
+    p.globalAlpha = alpha;
+    quad([A0, B0, B1, A1], GLASS);
+    // reflexo: uma faixa mais clara perto do topo
+    quad([this.sp(a.x, a.y, h - 14), this.sp(b.x, b.y, h - 14), this.sp(b.x, b.y, h - 8), this.sp(a.x, a.y, h - 8)], '#ffffff');
+    p.restore();
+    quad([A0, B0, { x: B0.x, y: B0.y - 3 }, { x: A0.x, y: A0.y - 3 }], frame);
+    quad([A1, B1, { x: B1.x, y: B1.y + 3 }, { x: A1.x, y: A1.y + 3 }], frame);
+    if (mullion) quad([A0, { x: A0.x + 2, y: A0.y }, { x: A1.x + 2, y: A1.y }, A1], frame);
+  }
+
   /** Algo pregado na parede do fundo de uma vaga (em y = r.y), de x0 a x1 e de z0 a z1. */
   private onBackWall(r: Rect, x0: number, x1: number, z0: number, z1: number, color: string) {
     const a = { x: r.x + x0, y: r.y };
@@ -803,12 +835,23 @@ export class Office {
   }
 
   /**
-   * Paredes de uma vaga: as do fundo (em cima e à esquerda na planta) são altas, com janela; as
-   * da frente são baixas, em corte, para não esconderem quem está dentro. A porta fica na da frente.
+   * Paredes de uma vaga. As salas são de vidro, nos quatro lados e na altura cheia: dá para ver
+   * quem está dentro por qualquer lado, e o vidro da frente é mais fraco para não embaçar ninguém.
+   * O caixilho tem a cor da sala. A porta fica na da frente.
+   *
+   * Com `solid` (o hall dos elevadores, onde as portas ficam pregadas no fundo), as do fundo são
+   * de parede, altas e com janela, e as da frente são baixas, em corte.
    */
-  private drawShell(r: Rect, wallColor: string, opts: { door?: number } = {}) {
+  private drawShell(r: Rect, wallColor: string, opts: { door?: number; solid?: boolean } = {}) {
     const x1 = r.x + r.w;
     const y1 = r.y + r.h;
+    if (!opts.solid) {
+      this.wall(r.x, r.y, x1, r.y, WALL_UP, wallColor, 0, 0.32);
+      this.wall(r.x, r.y, r.x, y1, WALL_UP, shade(wallColor, 0.8), 0, 0.32);
+      this.wall(x1, r.y, x1, y1, WALL_UP, shade(wallColor, 0.8), 0, 0.14);
+      this.wall(r.x, y1, x1, y1, WALL_UP, wallColor, opts.door ?? 40, 0.14);
+      return;
+    }
     this.wall(r.x, r.y, x1, r.y, WALL_UP, wallColor);
     this.wall(r.x, r.y, r.x, y1, WALL_UP, shade(wallColor, 0.8));
     this.wall(x1, r.y, x1, y1, WALL_LOW, WALL_DARK);
@@ -961,7 +1004,7 @@ export class Office {
   /** Hall dos elevadores: duas portas de metal na parede do fundo, com o andar aceso em cima. */
   private drawElevators(r: Rect) {
     this.flat(() => this.tileFloor(r, 'corredor', '#8e94a3'));
-    this.drawShell(r, shade(this.floor.color, 0.45), { door: 120 });
+    this.drawShell(r, shade(this.floor.color, 0.45), { door: 120, solid: true });
     for (const dx of [70, r.w - 70 - 72]) {
       this.onBackWall(r, dx - 4, dx + 76, 0, 62, '#4a4f63');
       this.onBackWall(r, dx, dx + 35, 0, 56, '#9aa3b8');
