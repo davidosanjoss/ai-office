@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MAX_ROOM_W, MAX_WAR_ROOMS, autoPlace, canPlace, fixedRooms, freeCells, isValidCell, isWarColumn, nextWarCell, occupiedCells, roomSpans, roomWidth } from '../shared/building.ts';
+import { MAX_ROOM_W, MAX_WAR_ROOMS, autoPlace, canPlace, closeGap, fixedRooms, freeCells, isValidCell, isWarColumn, nextWarCell, occupiedCells, roomSpans, roomWidth } from '../shared/building.ts';
 import type { Agent, Room } from '../shared/types.ts';
 import { CELL_H, CELL_W, CORR, MAX_VISIBLE_AGENTS, ZOOMS, cellRect, fitCamera, layoutBuilding, stepZoom, visibleAgents } from '../web/office.ts';
 
@@ -124,6 +124,34 @@ describe('salas que crescem com a squad', () => {
     const free = keys(freeCells(rooms));
     expect(free).toEqual(expect.arrayContaining(['4,1', '1,2', '2,2', '3,2']));
     expect(canPlace(rooms, { x: 2, y: 1 })).toBe(false);
+  });
+});
+
+describe('sala que sai do andar', () => {
+  const plan = (id: string, x: number, y: number, w = 1) => ({ id, pos: { x, y }, w, createdAt: 0 });
+  const moved = (rooms: ReturnType<typeof plan>[], removedId: string) =>
+    Object.fromEntries([...closeGap(rooms, rooms.find((r) => r.id === removedId)!)].map(([r, c]) => [r.id, c]));
+
+  it('as salas de fora, na mesma fileira, andam para o lugar vago, uma atrás da outra', () => {
+    expect(moved([plan('a', 1, 1), plan('b', 2, 1, 2), plan('c', 4, 1)], 'a')).toEqual({ b: { x: 1, y: 1 }, c: { x: 3, y: 1 } });
+    // Do lado esquerdo, para a direita (rumo à sala de guerra).
+    expect(moved([plan('a', -1, 1, 2), plan('b', -3, 1)], 'a')).toEqual({ b: { x: -1, y: 1 } });
+  });
+
+  it('quem tem sala encostada em cima ou embaixo fica, e segura as de fora', () => {
+    const rooms = [plan('a', 1, 1), plan('b', 2, 1), plan('cima', 2, 2), plan('c', 3, 1)];
+    expect(moved(rooms, 'a')).toEqual({});
+    // Sem nada encostado, anda; a de cima de outra sala não conta para quem não está embaixo dela.
+    expect(moved([plan('a', 1, 2), plan('b', 2, 2), plan('baixo', 1, 1)], 'a')).toEqual({ b: { x: 1, y: 2 } });
+  });
+
+  it('outras fileiras, o outro lado e as salas de dentro não andam', () => {
+    expect(moved([plan('dentro', 1, 1), plan('a', 2, 1), plan('fora', 3, 1), plan('esq', -1, 1), plan('acima', 3, 2)], 'a')).toEqual({});
+    expect(moved([plan('dentro', 1, 1), plan('a', 2, 1), plan('fora', 3, 1), plan('esq', -1, 1)], 'a')).toEqual({ fora: { x: 2, y: 1 } });
+  });
+
+  it('sala larga que empurrava a vizinha: a vizinha vem até a ponta de dentro do lugar vago', () => {
+    expect(moved([plan('a', 1, 1, 3), plan('b', 2, 1)], 'a')).toEqual({ b: { x: 1, y: 1 } });
   });
 });
 

@@ -127,6 +127,49 @@ export function occupiedCells(rooms: PlanRoom[], kind: FloorKind = 'andar', warR
   return set;
 }
 
+/**
+ * Uma sala saiu do andar: as salas de fora dela, na mesma fileira e do mesmo lado, andam para
+ * dentro e ocupam o lugar vago, uma atrás da outra. Só anda quem não tem sala encostada em cima
+ * ou embaixo (andar deixaria essa sala solta); a primeira que não pode andar segura as de fora.
+ * Devolve a vaga nova (âncora) de cada sala que andou.
+ */
+export function closeGap<T extends PlanRoom>(rooms: T[], removed: T): Map<T, Cell> {
+  const out = new Map<T, Cell>();
+  const gone = roomSpans(rooms).get(removed);
+  if (!gone) return out;
+  const right = gone.x > 0;
+  // Onde as outras ficam sem ela (quem ela empurrava já volta para a própria vaga).
+  const spans = roomSpans(rooms.filter((r) => r !== removed));
+  const rest = rooms.filter((r) => r !== removed && spans.has(r));
+  const cellsOf = (r: T) => spanCells(spans.get(r)!);
+  // Vagas de todas as outras salas: é por elas que se vê quem está encostado em cima ou embaixo.
+  const taken = new Map<string, T>();
+  for (const r of rest) for (const c of cellsOf(r)) taken.set(cellKey(c), r);
+  const anchored = (r: T) =>
+    cellsOf(r).some((c) => [c.y - 1, c.y + 1].some((y) => {
+      const other = taken.get(cellKey({ x: c.x, y }));
+      return !!other && other !== r;
+    }));
+  const row = rest
+    .filter((r) => {
+      const s = spans.get(r)!;
+      return s.y === gone.y && (right ? s.x > gone.x : s.x < gone.x);
+    })
+    .sort((a, b) => (right ? spans.get(a)!.x - spans.get(b)!.x : spans.get(b)!.x - spans.get(a)!.x));
+  // Ponta de dentro do lugar vago: à direita, a primeira vaga; à esquerda, a última.
+  let cursor = right ? gone.x : gone.x + gone.w - 1;
+  for (const r of row) {
+    const s = spans.get(r)!;
+    const near = right ? s.x : s.x + s.w - 1;
+    if (near !== cursor) {
+      if (anchored(r)) break;
+      out.set(r, { x: cursor, y: s.y });
+    }
+    cursor = right ? cursor + s.w : cursor - s.w;
+  }
+  return out;
+}
+
 /** A primeira fileira de um andar de empresa é só do elevador e da copa. */
 export function isFixedRow(c: Cell, kind: FloorKind = 'andar'): boolean {
   return kind === 'andar' && c.y === 0;

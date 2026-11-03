@@ -630,6 +630,25 @@ describe('andares', () => {
     expect((await api('POST', '/api/rooms', { path: tempDir('p3'), floorId: a.id, pos: { x: -1, y: 1 } })).status).toBe(400);
   });
 
+  it('fechar ou mudar de andar uma sala traz as da mesma fileira para o lugar dela', async () => {
+    const andar = await novoAndar('Fileira junta');
+    const sala = async (name: string, x: number, y: number) =>
+      (await api<Room>('POST', '/api/rooms', { path: tempDir(name), floorId: andar.id, pos: { x, y } })).data;
+    const a = await sala('a', 1, 1);
+    const b = await sala('b', 2, 1);
+    const c = await sala('c', 3, 1);
+    const presa = await sala('presa', 4, 1);
+    await sala('em-cima', 4, 2);
+    await api('DELETE', `/api/rooms/${a.id}`);
+    expect(store.rooms.get(b.id)!.pos).toEqual({ x: 1, y: 1 });
+    expect(store.rooms.get(c.id)!.pos).toEqual({ x: 2, y: 1 });
+    // Tem sala encostada em cima: fica onde está.
+    expect(store.rooms.get(presa.id)!.pos).toEqual({ x: 4, y: 1 });
+    const outro = await novoAndar('Outro andar');
+    await api('POST', `/api/rooms/${b.id}/move`, { floorId: outro.id });
+    expect(store.rooms.get(c.id)!.pos).toEqual({ x: 1, y: 1 });
+  });
+
   it('a primeira fileira do andar é só do elevador e da copa', async () => {
     const andar = await novoAndar('Fileira');
     expect((await api('POST', '/api/rooms', { path: tempDir('baixo'), floorId: andar.id, pos: { x: 2, y: 0 } })).status).toBe(400);

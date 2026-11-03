@@ -30,7 +30,7 @@ import { detectProjects, draftSummary, insideRoot, newProject, projectOf } from 
 import { WorktreeError, mergeWorktree, openPr, removeWorktree, worktreeStatus } from './worktree.ts';
 import { PORT } from './platform.ts';
 import { DEFAULT_FLOOR, store } from './store.ts';
-import { FLOOR_COLORS, MAX_WAR_ROOMS, autoPlace, canPlace, isValidCell } from '../shared/building.ts';
+import { FLOOR_COLORS, MAX_WAR_ROOMS, autoPlace, canPlace, closeGap, isValidCell } from '../shared/building.ts';
 import type { Agent, Floor, FloorDefaults, Room } from '../shared/types.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -252,18 +252,22 @@ export async function buildApp(opts: { port?: number } = {}) {
     const floorId = String(req.body?.floorId ?? '');
     if (!store.floors.has(floorId)) return reply.code(400).send({ error: 'Andar não encontrado' });
     if (room.floorId === floorId) return room;
+    const fill = gapMoves(room.id);
     const moved = { ...room, floorId, pos: autoPlace(store.planRooms(floorId), 'andar', store.warRoomsOf(floorId)) };
     store.putRoom(moved);
+    applyGap(fill);
     return moved;
   });
 
   app.delete<{ Params: { id: string } }>('/api/rooms/:id', async (req) => {
+    const fill = gapMoves(req.params.id);
     for (const a of store.agents.values()) {
       if (a.roomId !== req.params.id) continue;
       leaveIncidents(a.id);
       removeAgent(a.id);
     }
     store.removeRoom(req.params.id);
+    applyGap(fill);
     return { ok: true };
   });
 
@@ -456,6 +460,26 @@ export async function buildApp(opts: { port?: number } = {}) {
 }
 
 /** Primeiro andar acima do térreo: destino padrão de salas novas sem andar escolhido. */
+/**
+ * Quem anda para o lugar de uma sala que vai sair do andar (fechada ou levada para outro): as
+ * salas de fora dela na mesma fileira, se não têm outra encostada em cima ou embaixo.
+ */
+function gapMoves(roomId: string): { id: string; pos: { x: number; y: number } }[] {
+  const room = store.rooms.get(roomId);
+  if (!room?.floorId) return [];
+  const plan = store.planRooms(room.floorId);
+  const removed = plan.find((r) => r.id === roomId);
+  if (!removed) return [];
+  return [...closeGap(plan, removed)].map(([r, pos]) => ({ id: r.id, pos }));
+}
+
+function applyGap(moves: { id: string; pos: { x: number; y: number } }[]) {
+  for (const m of moves) {
+    const r = store.rooms.get(m.id);
+    if (r) store.putRoom({ ...r, pos: m.pos });
+  }
+}
+
 /** Pasta de um projeto, procurando em todas as salas. */
 function projectDir(id: string): string | undefined {
   for (const r of store.rooms.values()) {
