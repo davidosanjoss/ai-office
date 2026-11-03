@@ -1,4 +1,4 @@
-// Escritório em pixel art: um prédio visto de cima. O térreo tem a recepção e a copa; cada
+// Escritório em pixel art: um prédio em isométrico. O térreo tem a recepção e a copa; cada
 // projeto é uma sala encostada no prédio, e cada funcionário é um agente. O mapa é maior que a
 // tela: arraste para navegar e use a rodinha para o zoom.
 //
@@ -8,7 +8,8 @@
 
 import { type Cell, type FixedRoom, type FloorKind, fixedRooms, freeCells, nextWarCell } from '../shared/building.ts';
 import type { Agent, AgentStatus, Incident, Room } from '../shared/types.ts';
-import { RECEPCIONISTA, Sprites, characterFor } from './sprites.ts';
+import { type Area, type Projection, type ScreenDir, depth, floorMatrix, pick, planBox, projectRect, screenDir, toScreen as project } from './iso.ts';
+import { type Anim, RECEPCIONISTA, Sprites, characterFor } from './sprites.ts';
 import {
   type Geometry,
   type Point,
@@ -40,6 +41,13 @@ const STREET_Y = CELL_H + CORR;
 const FPS = 12;
 /** Velocidade de quem anda pelos corredores, em pixels do mundo por segundo. */
 const WALK_SPEED = 28;
+/** Cadeira (os pés de quem senta) e mesa da vaga de funcionário número i de uma sala, na planta. */
+export function deskSpot(room: Rect, i: number): { seat: Point; desk: Point } {
+  const o = slotOrigin(room, i);
+  const cx = o.x + SLOT_W / 2;
+  return { seat: { x: cx + SEAT_DX, y: o.y + DESK_Y - 2 }, desk: { x: cx, y: o.y + DESK_Y + 18 } };
+}
+
 /** Onde fica a mesa dentro da vaga de funcionário: baixa o bastante para o monitor não tapar o rosto. */
 const DESK_Y = 50;
 /**
@@ -49,7 +57,22 @@ const DESK_Y = 50;
 export const HEAD_Y = 36;
 /** O funcionário senta um pouco à esquerda: o monitor (de costas para nós) fica à direita do rosto. */
 const SEAT_DX = -6;
+/** Altura das paredes do fundo de cada vaga, na tela. As da frente são baixas, em corte. */
+const WALL_UP = 56;
+const WALL_LOW = 7;
+const WALL_DARK = '#2a2438';
+/** Cor do vidro das salas (a opacidade vem de cada parede). */
+const GLASS = '#9fd4f2';
+/** Altura da placa com o nome da sala, na parede do fundo. */
+const SIGN_Z = 46;
+/** Raios da mesa redonda da sala de guerra, na planta. */
+const WAR_RX = 84;
+const WAR_RY = 54;
+/** Animação de andar que existe (de cima) mais parecida com cada diagonal da tela. */
+const WALK_FALLBACK: Partial<Record<ScreenDir, string>> = { 'south-east': 'east', 'north-west': 'west', 'south-west': 'south', 'north-east': 'north' };
 export const ZOOMS = [0.5, 0.75, 1, 1.5, 2, 3];
+/** Como o mapa é desenhado: a câmera e os cliques ficam na tela, a planta continua 2D. */
+export const VIEW: Projection = 'iso';
 
 export const STATUS_COLOR: Record<AgentStatus, string> = {
   starting: '#565f89',
@@ -78,10 +101,10 @@ interface Rect {
 }
 
 type Hit =
-  | (Rect & { kind: 'agent' | 'add' | 'room'; id: string })
-  | (Rect & { kind: 'newroom'; cell: Cell })
-  | (Rect & { kind: 'war'; slot: number })
-  | (Rect & { kind: 'newwar' });
+  | (Area & { kind: 'agent' | 'add' | 'room'; id: string })
+  | (Area & { kind: 'newroom'; cell: Cell })
+  | (Area & { kind: 'war'; slot: number })
+  | (Area & { kind: 'newwar' });
 
 export interface PlacedRoom {
   room: Room;
@@ -193,7 +216,8 @@ export interface OfficeCallbacks {
 }
 
 /** A câmera de cada andar fica salva separada: voltar a um andar volta à mesma vista. */
-const camKey = (floorId: string) => `officeCam:${floorId}`;
+// O 2 é da vista isométrica: a câmera guardada da vista de cima abriria noutro lugar.
+const camKey = (floorId: string) => `officeCam2:${floorId}`;
 
 export class Office {
   private canvas: HTMLCanvasElement;
@@ -293,7 +317,7 @@ export class Office {
   /** Mostra o prédio inteiro (as vagas "+" em volta podem ficar só pela metade). */
   fit() {
     this.userMoved = false;
-    this.setCamera(fitCamera(this.layout.core, this.cssW, this.cssH));
+    this.setCamera(fitCamera(projectRect(this.layout.core, VIEW), this.cssW, this.cssH));
   }
 
   zoom(dir: 1 | -1, at?: { x: number; y: number }) {
@@ -319,8 +343,9 @@ export class Office {
     this.revealRect(this.layout.fixed.find((f) => f.id === 'guerra' && f.slot === slot)?.rect);
   }
 
-  private revealRect(r: Rect | undefined) {
-    if (!r || !this.cssW) return;
+  private revealRect(plan: Rect | undefined) {
+    if (!plan || !this.cssW) return;
+    const r = projectRect(plan, VIEW);
     const c = this.camera;
     const view = { x: c.x - this.cssW / 2 / c.z, y: c.y - this.cssH / 2 / c.z, w: this.cssW / c.z, h: this.cssH / c.z };
     const inside = r.x >= view.x && r.y >= view.y && r.x + r.w <= view.x + view.w && r.y + r.h <= view.y + view.h;
@@ -500,9 +525,8 @@ export class Office {
   }
 
   private hitAt(e: { clientX: number; clientY: number }): Hit | undefined {
-    const p = this.toWorld(e);
-    // Agentes e mesas antes da sala, porque ficam dentro dela.
-    return [...this.hits].reverse().find((h) => p.x >= h.x && p.x < h.x + h.w && p.y >= h.y && p.y < h.y + h.h);
+    // Agentes e mesas antes da sala, porque são desenhados depois, dentro dela.
+    return pick(this.hits, this.toWorld(e), VIEW);
   }
 
   private onDown(e: PointerEvent) {
@@ -551,6 +575,36 @@ export class Office {
   }
 
   // ---------- desenho ----------
+  //
+  // Em duas passadas: o que é deitado no chão (pisos, tapetes, rua, vagas livres) é desenhado
+  // na hora, com a matriz da projeção, em coordenadas da planta. O que fica em pé (paredes,
+  // móveis, pessoas) entra numa lista e é desenhado no fim, de trás para a frente.
+
+  /** Coisas em pé deste quadro, com a profundidade de cada uma. */
+  private items: { d: number; i: number; draw: () => void }[] = [];
+  /** Canto de cima à esquerda do canvas de baixa resolução, na tela (antes da câmera). */
+  private origin: Point = { x: 0, y: 0 };
+
+  /** Ponto da planta → ponto do canvas de baixa resolução, `z` pixels acima do chão. */
+  private sp(x: number, y: number, z = 0): Point {
+    const s = project({ x, y }, VIEW, z);
+    return { x: s.x - this.origin.x, y: s.y - this.origin.y };
+  }
+
+  /** Entra na ordem de desenho pela posição na planta. */
+  private upright(at: Point, draw: () => void, bias = 0) {
+    this.items.push({ d: depth(at, VIEW) + bias, i: this.items.length, draw });
+  }
+
+  /** Desenha deitado: dentro de fn, as coordenadas são da planta. `z` levanta o plano (um tampo). */
+  private flat(fn: () => void, z = 0) {
+    const p = this.pctx;
+    const [a, b, c, d] = floorMatrix(VIEW);
+    p.save();
+    p.setTransform(a, b, c, d, -this.origin.x, -this.origin.y - z);
+    fn();
+    p.restore();
+  }
 
   private draw() {
     if (!this.cssW || !this.cam) return;
@@ -562,24 +616,33 @@ export class Office {
     const left = Math.round(c.x - this.pix.width / 2);
     const top = Math.round(c.y - this.pix.height / 2);
     const view = { x: left, y: top, w: this.pix.width, h: this.pix.height };
+    this.origin = { x: left, y: top };
+    // O que a tela enxerga na planta, com folga para as paredes que sobem de fora dela.
+    const pb = planBox(view, VIEW);
+    const plan = { x: pb.x - WALL_UP * 2, y: pb.y - WALL_UP * 2, w: pb.w + WALL_UP * 4, h: pb.h + WALL_UP * 4 };
 
     p.setTransform(1, 0, 0, 1, 0, 0);
     p.imageSmoothingEnabled = false;
     p.clearRect(0, 0, this.pix.width, this.pix.height);
-    p.setTransform(1, 0, 0, 1, -left, -top);
     this.hits = [];
+    this.items = [];
 
-    this.drawGround(view);
+    this.drawGround(view, plan);
     if (this.floor.kind === 'terreo') {
-      this.drawStreet(view);
-      this.drawTrees(view);
+      this.drawStreet(plan);
+      this.drawTrees(plan);
     }
-    for (const f of this.layout.free) if (overlaps(f.rect, view)) this.drawFreeCell(f);
-    if (this.layout.warAdd && overlaps(this.layout.warAdd.rect, view)) this.drawWarAdd(this.layout.warAdd.rect);
+    this.flat(() => {
+      for (const f of this.layout.free) if (overlaps(f.rect, plan)) this.drawFreeCell(f);
+      if (this.layout.warAdd && overlaps(this.layout.warAdd.rect, plan)) this.drawWarAdd(this.layout.warAdd.rect);
+    });
     this.drawCorridors();
-    for (const f of this.layout.fixed) if (overlaps(f.rect, view)) this.drawFixed(f);
-    for (const r of this.layout.rooms) if (overlaps(r.rect, view)) this.drawRoom(r);
-    this.drawWalkers(view);
+    for (const f of this.layout.fixed) if (overlaps(f.rect, plan)) this.drawFixed(f);
+    for (const r of this.layout.rooms) if (overlaps(r.rect, plan)) this.drawRoom(r);
+    this.drawWalkers(plan);
+    // Ordem estável: o que empata fica na ordem em que foi pedido.
+    this.items.sort((a, b) => a.d - b.d || a.i - b.i);
+    for (const it of this.items) it.draw();
 
     const ctx = this.ctx;
     const dpr = window.devicePixelRatio || 1;
@@ -587,7 +650,7 @@ export class Office {
     const offX = (left - (c.x - this.cssW / 2 / c.z)) * c.z;
     const offY = (top - (c.y - this.cssH / 2 / c.z)) * c.z;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#2f6b33';
+    ctx.fillStyle = this.floor.kind === 'terreo' ? '#2f6b33' : this.skyBackground();
     ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
     ctx.imageSmoothingEnabled = false;
     ctx.drawImage(this.pix, offX * dpr, offY * dpr, this.pix.width * c.z * dpr, this.pix.height * c.z * dpr);
@@ -596,17 +659,17 @@ export class Office {
     this.drawTexts();
   }
 
-  private drawGround(view: Rect) {
+  private drawGround(view: Rect, plan: Rect) {
     const p = this.pctx;
     if (this.floor.kind !== 'terreo') {
-      // Andares de cima: só céu em volta, com nuvens paradas nos mesmos lugares.
-      rect(p, view.x, view.y, view.w, view.h, this.skyBackground());
+      // Andares de cima: só céu em volta, com nuvens paradas nos mesmos lugares da tela.
+      rect(p, 0, 0, view.w, view.h, this.skyBackground());
       const step = 180;
       for (let gy = Math.floor(view.y / step) - 1; gy * step < view.y + view.h; gy++) {
         for (let gx = Math.floor(view.x / step) - 1; gx * step < view.x + view.w; gx++) {
           if (hash(`n${gx}:${gy}`) % 4) continue;
-          const cx = gx * step + (hash(`${gx}n${gy}`) % 80);
-          const cy = gy * step + (hash(`${gy}n${gx}`) % 60);
+          const cx = gx * step + (hash(`${gx}n${gy}`) % 80) - view.x;
+          const cy = gy * step + (hash(`${gy}n${gx}`) % 60) - view.y;
           const c = 'rgba(255,255,255,0.35)';
           rect(p, cx, cy + 8, 60, 12, c);
           rect(p, cx + 10, cy, 30, 10, c);
@@ -615,156 +678,317 @@ export class Office {
       }
       return;
     }
-    const grama = this.sprites.pisos.get('grama');
-    if (!grama) {
-      rect(p, view.x, view.y, view.w, view.h, '#2f6b33');
-      return;
-    }
-    const s = grama.width;
-    for (let y = Math.floor(view.y / s) * s; y < view.y + view.h; y += s) {
-      for (let x = Math.floor(view.x / s) * s; x < view.x + view.w; x += s) p.drawImage(grama, x, y);
-    }
+    this.flat(() => this.tileFloor(plan, 'grama', '#2f6b33', true));
   }
 
-  /** Calçada e rua de ponta a ponta, embaixo do térreo, com postes, bancos e um carro passando. */
-  private drawStreet(view: Rect) {
-    const p = this.pctx;
+  /** Calçada e rua de ponta a ponta, na frente do térreo, com postes, bancos e um carro passando. */
+  private drawStreet(plan: Rect) {
     const y = STREET_Y;
-    if (y > view.y + view.h || y + STREET_H < view.y) return;
-    rect(p, view.x, y, view.w, 18, '#b9b4a9');
-    for (let x = Math.floor(view.x / 24) * 24; x < view.x + view.w; x += 24) rect(p, x, y, 1, 18, '#a29d92');
-    rect(p, view.x, y + 18, view.w, 56, '#3b3d45');
-    for (let x = Math.floor(view.x / 40) * 40; x < view.x + view.w; x += 40) rect(p, x, y + 45, 22, 2, '#e8d48a');
-    rect(p, view.x, y + 74, view.w, 18, '#b9b4a9');
-    for (let x = Math.floor(view.x / 24) * 24; x < view.x + view.w; x += 24) rect(p, x + 12, y + 74, 1, 18, '#a29d92');
+    if (y > plan.y + plan.h || y + STREET_H < plan.y) return;
+    this.flat(() => {
+      const p = this.pctx;
+      rect(p, plan.x, y, plan.w, 18, '#b9b4a9');
+      for (let x = Math.floor(plan.x / 24) * 24; x < plan.x + plan.w; x += 24) rect(p, x, y, 1, 18, '#a29d92');
+      rect(p, plan.x, y + 18, plan.w, 56, '#3b3d45');
+      for (let x = Math.floor(plan.x / 40) * 40; x < plan.x + plan.w; x += 40) rect(p, x, y + 45, 22, 2, '#e8d48a');
+      rect(p, plan.x, y + 74, plan.w, 18, '#b9b4a9');
+      for (let x = Math.floor(plan.x / 24) * 24; x < plan.x + plan.w; x += 24) rect(p, x + 12, y + 74, 1, 18, '#a29d92');
+    });
 
-    // carro atravessando a rua, sempre para a direita
-    const carro = this.sprites.objetos.get('carro');
-    if (carro) {
-      const span = 2400;
-      const cx = view.x + ((performance.now() / 1000) * 70 - view.x + span * 1000) % span - carro.width;
-      p.drawImage(carro, Math.round(cx), y + 18 + 28 - carro.height + 6);
-    }
+    // carro atravessando a rua, sempre para a direita da planta
+    const span = 2400;
+    const cx = plan.x + (((performance.now() / 1000) * 70 - plan.x + span * 1000) % span);
+    this.objAt('carro', cx, y + 46);
 
-    // postes e bancos na calçada de baixo, em intervalos fixos do mundo
-    const poste = this.sprites.objetos.get('poste');
-    const banco = this.sprites.objetos.get('banco');
+    // postes e bancos na calçada da frente, em intervalos fixos do mundo
     const step = 260;
-    for (let x = Math.floor(view.x / step) * step - step; x < view.x + view.w + step; x += step) {
-      if (poste) p.drawImage(poste, x, y + 92 - poste.height + 4);
-      if (banco && hash(`banco${x}`) % 2) p.drawImage(banco, x + 70, y + 92 - banco.height + 6);
+    for (let x = Math.floor(plan.x / step) * step - step; x < plan.x + plan.w + step; x += step) {
+      this.objAt('poste', x + 16, y + 88);
+      if (hash(`banco${x}`) % 2) this.objAt('banco', x + 110, y + 88);
     }
   }
 
   /** Árvores espalhadas pela grama, sempre nos mesmos lugares, longe do prédio e da rua. */
-  private drawTrees(view: Rect) {
+  private drawTrees(plan: Rect) {
     const arvore = this.sprites.objetos.get('arvore');
     if (!arvore) return;
-    const keepOut = [...this.layout.rooms.map((r) => r.rect), ...this.layout.fixed.map((f) => f.rect), ...this.layout.free.map((f) => f.rect)].map(
+    const keepOut: Rect[] = [...this.layout.fixed.map((f) => f.rect), ...this.layout.rooms.map((r) => r.rect)].map(
       (r) => ({ x: r.x - 40 - CORR / 2, y: r.y - 50 - CORR / 2, w: r.w + 80 + CORR, h: r.h + 70 + CORR }),
     );
-    keepOut.push({ x: view.x - 100, y: STREET_Y - 50, w: view.w + 200, h: STREET_H + 60 });
+    keepOut.push({ x: plan.x - 100, y: STREET_Y - 50, w: plan.w + 200, h: STREET_H + 60 });
     const step = 112;
-    for (let gy = Math.floor(view.y / step) - 1; gy * step < view.y + view.h; gy++) {
-      for (let gx = Math.floor(view.x / step) - 1; gx * step < view.x + view.w; gx++) {
+    for (let gy = Math.floor(plan.y / step) - 1; gy * step < plan.y + plan.h; gy++) {
+      for (let gx = Math.floor(plan.x / step) - 1; gx * step < plan.x + plan.w; gx++) {
         // Só uma em cada três vagas do terreno ganha árvore, deslocada para não formar grade.
         if (hash(`t${gx}:${gy}`) % 3 !== 0) continue;
         const tx = gx * step + (hash(`${gx},${gy}`) % 60) - 30;
         const ty = gy * step + (hash(`${gy},${gx}`) % 50) - 25;
         const box = { x: tx + 8, y: ty + 8, w: arvore.width - 16, h: arvore.height - 8 };
-        if (!keepOut.some((k) => overlaps(box, k))) this.pctx.drawImage(arvore, tx, ty);
+        if (!keepOut.some((k) => overlaps(box, k))) this.obj('arvore', tx, ty);
       }
     }
   }
 
-  /** Paredes de uma vaga: faixa de cima (com janela), contorno escuro e a porta para o corredor. */
-  private drawShell(r: Rect, wallColor: string, opts: { door?: number } = {}) {
+  // ---------- paredes ----------
+
+  /**
+   * Parede em pé ao longo de uma linha da planta, em pedaços de 16 px: cada pedaço entra na
+   * ordem de desenho pela própria posição, para quem está atrás dele sumir e quem está na
+   * frente aparecer. `gap` é um vão (a porta), em pixels a partir do meio da linha.
+   */
+  private wall(x0: number, y0: number, x1: number, y1: number, h: number, color: string, gap = 0, glass?: number) {
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    const n = Math.max(1, Math.ceil(len / 16));
+    const at = (t: number) => ({ x: x0 + (x1 - x0) * t, y: y0 + (y1 - y0) * t });
+    // O vão de verdade: do começo do primeiro pedaço pulado ao fim do último.
+    let open: { a: Point; b: Point } | undefined;
+    for (let i = 0; i < n; i++) {
+      const t0 = i / n;
+      const t1 = (i + 1) / n;
+      const mid = ((t0 + t1) / 2) * len;
+      if (gap && Math.abs(mid - len / 2) < gap / 2) {
+        open = { a: open?.a ?? at(t0), b: at(t1) };
+        continue;
+      }
+      // Um pouco de sobra em cada ponta: sem ela, a borda suavizada deixa um fio entre os pedaços.
+      const e = 0.6 / len;
+      const a = { x: x0 + (x1 - x0) * Math.max(0, t0 - e), y: y0 + (y1 - y0) * Math.max(0, t0 - e) };
+      const b = { x: x0 + (x1 - x0) * Math.min(1, t1 + e), y: y0 + (y1 - y0) * Math.min(1, t1 + e) };
+      const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      // No vidro, um montante a cada quatro pedaços (64 px) e no começo da parede.
+      if (glass !== undefined) this.upright(m, () => this.glassFace(a, b, h, color, glass, i % 4 === 0));
+      else this.upright(m, () => this.face(a, b, 0, h, color, true));
+    }
+    return open;
+  }
+
+  /**
+   * Porta de vidro aberta no vão da parede da frente: batentes dos dois lados, a bandeira em cima
+   * e a folha girada para dentro da sala, presa no batente da esquerda, com o puxador na ponta.
+   */
+  private drawDoor(o: { a: Point; b: Point }, frame: string) {
+    const h = WALL_UP;
+    const top = h - 10;
+    const len = Math.hypot(o.b.x - o.a.x, o.b.y - o.a.y);
+    const ang = (70 * Math.PI) / 180;
+    // A parede da frente corre ao longo de x: abrir para dentro é ir para y menor.
+    const end = { x: o.a.x + Math.cos(ang) * len, y: o.a.y - Math.sin(ang) * len };
+    const post = (q: Point) =>
+      this.upright(q, () => {
+        const b0 = this.sp(q.x, q.y);
+        const b1 = this.sp(q.x, q.y, h);
+        rect(this.pctx, b0.x - 1, b1.y, 3, b0.y - b1.y, frame);
+      });
+    post(o.a);
+    post(o.b);
+    this.upright({ x: (o.a.x + o.b.x) / 2, y: o.a.y }, () => this.face(o.a, o.b, top, h, frame));
+    this.upright({ x: (o.a.x + end.x) / 2, y: (o.a.y + end.y) / 2 }, () => {
+      this.glassFace(o.a, end, top, frame, 0.45, true);
+      const e0 = this.sp(end.x, end.y);
+      const e1 = this.sp(end.x, end.y, top);
+      rect(this.pctx, e0.x - 1, e1.y, 2, e0.y - e1.y, frame);
+      // puxador
+      const k = this.sp(o.a.x + (end.x - o.a.x) * 0.85, o.a.y + (end.y - o.a.y) * 0.85, 22);
+      rect(this.pctx, k.x - 1, k.y - 5, 2, 10, '#d8dee9');
+    });
+  }
+
+  /** Painel em pé entre dois pontos do chão, de z0 a z1 (parede, janela, porta de elevador). */
+  private face(a: Point, b: Point, z0: number, z1: number, color: string, cap = false) {
     const p = this.pctx;
-    rect(p, r.x, r.y, r.w, WALL_H, wallColor);
-    rect(p, r.x, r.y, r.w, 4, 'rgba(0,0,0,0.25)');
-    rect(p, r.x, r.y + WALL_H - 5, r.w, 5, 'rgba(0,0,0,0.3)');
-    rect(p, r.x, r.y + WALL_H, r.w, 3, 'rgba(0,0,0,0.15)');
+    const A0 = this.sp(a.x, a.y, z0);
+    const B0 = this.sp(b.x, b.y, z0);
+    const A1 = this.sp(a.x, a.y, z1);
+    const B1 = this.sp(b.x, b.y, z1);
+    p.fillStyle = color;
+    p.beginPath();
+    p.moveTo(A0.x, A0.y);
+    p.lineTo(B0.x, B0.y);
+    p.lineTo(B1.x, B1.y);
+    p.lineTo(A1.x, A1.y);
+    p.closePath();
+    p.fill();
+    if (!cap) return;
+    // topo da parede, mais escuro
+    p.fillStyle = WALL_DARK;
+    p.beginPath();
+    p.moveTo(A1.x, A1.y);
+    p.lineTo(B1.x, B1.y);
+    p.lineTo(B1.x, B1.y + 3);
+    p.lineTo(A1.x, A1.y + 3);
+    p.closePath();
+    p.fill();
+  }
+
+  /**
+   * Pedaço de parede de vidro: o vidro translúcido (`alpha` de opacidade), o caixilho de baixo e
+   * de cima na cor da sala e, se `mullion`, o montante no começo do pedaço.
+   */
+  private glassFace(a: Point, b: Point, h: number, frame: string, alpha: number, mullion: boolean) {
+    const p = this.pctx;
+    const A0 = this.sp(a.x, a.y);
+    const B0 = this.sp(b.x, b.y);
+    const A1 = this.sp(a.x, a.y, h);
+    const B1 = this.sp(b.x, b.y, h);
+    const quad = (pts: Point[], col: string) => {
+      p.fillStyle = col;
+      p.beginPath();
+      pts.forEach((q, i) => (i ? p.lineTo(q.x, q.y) : p.moveTo(q.x, q.y)));
+      p.closePath();
+      p.fill();
+    };
+    p.save();
+    p.globalAlpha = alpha;
+    quad([A0, B0, B1, A1], GLASS);
+    // reflexo: uma faixa mais clara perto do topo
+    quad([this.sp(a.x, a.y, h - 14), this.sp(b.x, b.y, h - 14), this.sp(b.x, b.y, h - 8), this.sp(a.x, a.y, h - 8)], '#ffffff');
+    p.restore();
+    quad([A0, B0, { x: B0.x, y: B0.y - 3 }, { x: A0.x, y: A0.y - 3 }], frame);
+    quad([A1, B1, { x: B1.x, y: B1.y + 3 }, { x: A1.x, y: A1.y + 3 }], frame);
+    if (mullion) quad([A0, { x: A0.x + 2, y: A0.y }, { x: A1.x + 2, y: A1.y }, A1], frame);
+  }
+
+  /** Algo pregado na parede do fundo de uma vaga (em y = r.y), de x0 a x1 e de z0 a z1. */
+  private onBackWall(r: Rect, x0: number, x1: number, z0: number, z1: number, color: string) {
+    const a = { x: r.x + x0, y: r.y };
+    const b = { x: r.x + x1, y: r.y };
+    // Entra na ordem pela ponta da direita (e um pedaço além): senão o vidro dos pedaços depois
+    // do meio é desenhado por cima e corta a placa ao meio.
+    this.upright({ x: b.x + 16, y: r.y }, () => this.face(a, b, z0, z1, color), 0.5);
+  }
+
+  /** Placa para o nome da vaga no meio da parede do fundo (o texto entra no passe de texto). */
+  private signPlate(r: Rect, w: number) {
+    this.onBackWall(r, (r.w - w) / 2, (r.w + w) / 2, SIGN_Z - 10, SIGN_Z + 10, '#2a2f45');
+    this.onBackWall(r, (r.w - w) / 2 + 1, (r.w + w) / 2 - 1, SIGN_Z - 9, SIGN_Z + 9, '#3b4261');
+  }
+
+  /** Caixa em pé (bancada, balcão): tampo e as duas faces que dão para quem olha. */
+  private box(x: number, y: number, w: number, d: number, h: number, color: string) {
+    this.upright({ x: x + w / 2, y: y + d / 2 }, () => {
+      const p = this.pctx;
+      const poly = (pts: Point[], col: string) => {
+        p.fillStyle = col;
+        p.beginPath();
+        pts.forEach((q, i) => (i ? p.lineTo(q.x, q.y) : p.moveTo(q.x, q.y)));
+        p.closePath();
+        p.fill();
+      };
+      poly([this.sp(x, y + d), this.sp(x + w, y + d), this.sp(x + w, y + d, h), this.sp(x, y + d, h)], shade(color, 0.8));
+      poly([this.sp(x + w, y), this.sp(x + w, y + d), this.sp(x + w, y + d, h), this.sp(x + w, y, h)], shade(color, 0.65));
+      poly([this.sp(x, y, h), this.sp(x + w, y, h), this.sp(x + w, y + d, h), this.sp(x, y + d, h)], color);
+    });
+  }
+
+  /**
+   * Paredes de uma vaga. As salas são de vidro, nos quatro lados e na altura cheia: dá para ver
+   * quem está dentro por qualquer lado, e o vidro da frente é mais fraco para não embaçar ninguém.
+   * O caixilho tem a cor da sala. A porta fica na da frente.
+   *
+   * Com `solid` (o hall dos elevadores, onde as portas ficam pregadas no fundo), as do fundo são
+   * de parede, altas e com janela, e as da frente são baixas, em corte.
+   */
+  private drawShell(r: Rect, wallColor: string, opts: { door?: number; solid?: boolean } = {}) {
+    const x1 = r.x + r.w;
+    const y1 = r.y + r.h;
+    if (!opts.solid) {
+      this.wall(r.x, r.y, x1, r.y, WALL_UP, wallColor, 0, 0.32);
+      this.wall(r.x, r.y, r.x, y1, WALL_UP, shade(wallColor, 0.8), 0, 0.32);
+      this.wall(x1, r.y, x1, y1, WALL_UP, shade(wallColor, 0.8), 0, 0.14);
+      const door = this.wall(r.x, y1, x1, y1, WALL_UP, wallColor, opts.door ?? 40, 0.14);
+      if (door) this.drawDoor(door, wallColor);
+      return;
+    }
+    this.wall(r.x, r.y, x1, r.y, WALL_UP, wallColor);
+    this.wall(r.x, r.y, r.x, y1, WALL_UP, shade(wallColor, 0.8));
+    this.wall(x1, r.y, x1, y1, WALL_LOW, WALL_DARK);
+    this.wall(r.x, y1, x1, y1, WALL_LOW, WALL_DARK, opts.door ?? 40);
     // janela com o céu da hora atual
-    rect(p, r.x + 14, r.y + 9, 26, 20, '#1f2335');
-    rect(p, r.x + 16, r.y + 11, 22, 16, this.skyColor());
-    rect(p, r.x + 26, r.y + 11, 2, 16, '#1f2335');
-    rect(p, r.x + 16, r.y + 18, 22, 2, '#1f2335');
-    // contorno (as vagas vizinhas dividem a mesma parede)
-    const wall = '#2a2438';
-    rect(p, r.x, r.y, 3, r.h, wall);
-    rect(p, r.x + r.w - 3, r.y, 3, r.h, wall);
-    rect(p, r.x, r.y, r.w, 3, wall);
-    const dw = opts.door ?? 40;
-    const dx = r.x + (r.w - dw) / 2;
-    rect(p, r.x, r.y + r.h - 4, dx - r.x, 4, wall);
-    rect(p, dx + dw, r.y + r.h - 4, r.x + r.w - dx - dw, 4, wall);
-    // batentes da porta
-    rect(p, dx - 3, r.y + r.h - 8, 3, 8, '#5b6078');
-    rect(p, dx + dw, r.y + r.h - 8, 3, 8, '#5b6078');
+    this.onBackWall(r, 14, 46, 16, 42, '#1f2335');
+    this.onBackWall(r, 16, 44, 18, 40, this.skyColor());
+    this.onBackWall(r, 29, 31, 18, 40, '#1f2335');
   }
 
   /**
    * Corredores: o anel em volta de cada vaga construída, com piso próprio, e a parede externa
-   * nos lados que não dão para outra vaga. A entrada principal fica embaixo da recepção.
+   * nos lados que não dão para outra vaga. A entrada principal fica na frente da recepção.
    */
   private drawCorridors() {
-    const p = this.pctx;
     const built = this.builtCells();
     const has = (x: number, y: number) => built.some((c) => c.x === x && c.y === y);
-    for (const c of built) this.tileFloor(withCorridor(cellRect(c)), 'corredor', '#8e94a3');
-    const wall = '#2a2438';
+    this.flat(() => {
+      for (const c of built) this.tileFloor(withCorridor(cellRect(c)), 'corredor', '#8e94a3');
+    });
+    const outer = shade(this.floor.color, 0.3);
     for (const c of built) {
       const e = withCorridor(cellRect(c));
-      if (!has(c.x, c.y + 1)) rect(p, e.x, e.y, e.w, 4, wall);
-      if (!has(c.x - 1, c.y)) rect(p, e.x, e.y, 4, e.h, wall);
-      if (!has(c.x + 1, c.y)) rect(p, e.x + e.w - 4, e.y, 4, e.h, wall);
+      if (!has(c.x, c.y + 1)) this.wall(e.x, e.y, e.x + e.w, e.y, WALL_UP, outer);
+      if (!has(c.x - 1, c.y)) this.wall(e.x, e.y, e.x, e.y + e.h, WALL_UP, shade(outer, 0.8));
+      if (!has(c.x + 1, c.y)) this.wall(e.x + e.w, e.y, e.x + e.w, e.y + e.h, WALL_LOW, WALL_DARK);
       if (c.y === 0 || !has(c.x, c.y - 1)) {
         const isEntrance = c.y === 0 && this.layout.fixed.some((f) => f.id === 'recepcao' && f.x === c.x);
+        this.wall(e.x, e.y + e.h, e.x + e.w, e.y + e.h, WALL_LOW, WALL_DARK, isEntrance ? 72 : 0);
         if (isEntrance) {
-          // entrada principal: vão na parede e capacho
-          const dw = 72;
-          const dx = e.x + (e.w - dw) / 2;
-          rect(p, e.x, e.y + e.h - 4, dx - e.x, 4, wall);
-          rect(p, dx + dw, e.y + e.h - 4, e.x + e.w - dx - dw, 4, wall);
-          rect(p, dx + 12, e.y + e.h - 16, dw - 24, 12, '#6b3f2a');
-          rect(p, dx + 14, e.y + e.h - 14, dw - 28, 8, '#8a5236');
-        } else {
-          rect(p, e.x, e.y + e.h - 4, e.w, 4, wall);
+          // capacho da entrada principal
+          const dx = e.x + (e.w - 72) / 2;
+          this.flat(() => {
+            rect(this.pctx, dx + 12, e.y + e.h - 16, 48, 12, '#6b3f2a');
+            rect(this.pctx, dx + 14, e.y + e.h - 14, 44, 8, '#8a5236');
+          });
         }
       }
     }
   }
 
-  /** Funcionários andando, desenhados de trás para a frente (quem está mais embaixo, por cima). */
-  private drawWalkers(view: Rect) {
-    const p = this.pctx;
-    const list = [...this.walkers.values()].sort((a, b) => a.y - b.y);
+  // ---------- pessoas e objetos ----------
+
+  /** Animação de alguém olhando para uma direção da tela; cai na de frente se não houver. */
+  private animToward(who: string | undefined, name: string, dir: ScreenDir): Anim | undefined {
+    const anims = who ? this.sprites.personagens.get(who) : undefined;
+    return anims?.get(`${name}-${dir}`) ?? this.sprites.anim(who, name);
+  }
+
+  /** Funcionários andando pelos corredores, cada um na ordem de desenho pelos pés. */
+  private drawWalkers(plan: Rect) {
     const names = this.sprites.names();
-    for (const w of list) {
-      if (w.x < view.x - 50 || w.x > view.x + view.w + 50 || w.y < view.y - 80 || w.y > view.y + view.h + 20) continue;
+    for (const w of this.walkers.values()) {
+      if (w.x < plan.x || w.x > plan.x + plan.w || w.y < plan.y || w.y > plan.y + plan.h) continue;
       const seed = hash(w.agent.id);
       const who = characterFor(seed, names);
       const moving = w.path.length > 0 && (w.transit || performance.now() >= w.restUntil);
       const wx = w.x + laneOf(w.agent.id);
-      const anim = this.sprites.anim(who, moving ? `andar-${w.dir}` : 'parado');
+      const dir = screenDir(w.dir, VIEW);
+      // As animações de andar só existem nas 4 direções de cima: a diagonal usa a mais parecida.
+      const anim = moving
+        ? (this.animToward(who, 'andar', dir) ?? this.sprites.anim(who, `andar-${WALK_FALLBACK[dir] ?? w.dir}`))
+        : this.sprites.anim(who, 'parado');
       if (!anim) continue;
-      const q = Math.floor((this.frame + (seed % 5)) / (moving ? 1 : 2)) % anim.quadros;
-      // sombra
-      p.fillStyle = 'rgba(0,0,0,0.22)';
-      p.beginPath();
-      p.ellipse(wx, w.y, 11, 4, 0, 0, Math.PI * 2);
-      p.fill();
-      p.drawImage(anim.img, q * anim.w, 0, anim.w, anim.h, Math.round(wx - anim.w / 2), Math.round(w.y - anim.pesY), anim.w, anim.h);
-      if (this.selectedAgent === w.agent.id) {
-        const by = Math.round(w.y - anim.pesY + anim.cabecaY - 10 + (this.frame % 4 < 2 ? 0 : 2));
-        for (let i = 0; i < 5; i++) rect(p, wx - 6 + i, by + i, 13 - i * 2, 1, '#c0caf5');
-      }
-      this.hits.push({ x: wx - 14, y: w.y - 50, w: 28, h: 54, kind: 'agent', id: w.agent.id });
+      this.upright({ x: wx, y: w.y }, () => {
+        const p = this.pctx;
+        const s = this.sp(wx, w.y);
+        const q = Math.floor((this.frame + (seed % 5)) / (moving ? 1 : 2)) % anim.quadros;
+        p.fillStyle = 'rgba(0,0,0,0.22)';
+        p.beginPath();
+        p.ellipse(s.x, s.y, 11, 5, 0, 0, Math.PI * 2);
+        p.fill();
+        p.drawImage(anim.img, q * anim.w, 0, anim.w, anim.h, Math.round(s.x - anim.w / 2), Math.round(s.y - anim.pesY), anim.w, anim.h);
+        if (this.selectedAgent === w.agent.id) this.arrow(s.x, s.y - anim.pesY + anim.cabecaY - 10);
+        this.hits.push({ space: 'screen', x: s.x - 14 + this.origin.x, y: s.y - 50 + this.origin.y, w: 28, h: 54, kind: 'agent', id: w.agent.id });
+      });
     }
   }
 
-  /** Piso de ladrilhos do PixelLab repetidos, cortado no retângulo (cor lisa se não carregou). */
-  private tileFloor(r: Rect, name: string, fallback: string) {
+  /** Seta sobre a cabeça de quem está selecionado. */
+  private arrow(cx: number, by: number) {
+    const y = Math.round(by + (this.frame % 4 < 2 ? 0 : 2));
+    for (let i = 0; i < 5; i++) rect(this.pctx, cx - 6 + i, y + i, 13 - i * 2, 1, '#c0caf5');
+  }
+
+  /**
+   * Piso de ladrilhos do PixelLab repetidos, cortado no retângulo (cor lisa se não carregou).
+   * Chamado dentro de flat(): os ladrilhos de cima ficam deitados, como num piso de verdade.
+   */
+  private tileFloor(r: Rect, name: string, fallback: string, aligned = false) {
     const p = this.pctx;
     const tile = this.sprites.pisos.get(name);
     if (!tile) {
@@ -775,21 +999,46 @@ export class Office {
     p.beginPath();
     p.rect(r.x, r.y, r.w, r.h);
     p.clip();
-    for (let y = r.y; y < r.y + r.h; y += tile.height) {
-      for (let x = r.x; x < r.x + r.w; x += tile.width) p.drawImage(tile, x, y);
+    // A grama de fora segue a grade do mundo; o piso de cada vaga começa no canto dela.
+    const x0 = aligned ? Math.floor(r.x / tile.width) * tile.width : r.x;
+    const y0 = aligned ? Math.floor(r.y / tile.height) * tile.height : r.y;
+    for (let y = y0; y < r.y + r.h; y += tile.height) {
+      for (let x = x0; x < r.x + r.w; x += tile.width) p.drawImage(tile, x, y);
     }
     p.restore();
   }
 
   private woodFloor(r: Rect) {
-    this.tileFloor(r, 'madeira', '#c9a77a');
+    this.flat(() => this.tileFloor(r, 'madeira', '#c9a77a'));
   }
 
-  /** Desenha um objeto do PixelLab com o canto superior esquerdo em (x, y), se ele existir. */
-  private obj(name: string, x: number, y: number) {
+  /**
+   * Objeto do PixelLab em pé. (x, y) é onde o canto de cima ficava na vista de cima: o objeto é
+   * posto com a base no meio da borda de baixo dessa caixa. `z` o levanta (em cima da bancada).
+   */
+  private obj(name: string, x: number, y: number, z = 0) {
     const img = this.sprites.objetos.get(name);
-    if (img) this.pctx.drawImage(img, Math.round(x), Math.round(y));
-    return img;
+    if (img) this.objAt(name, x + img.width / 2, y + img.height - 6, z);
+  }
+
+  /** Objeto do PixelLab em pé com a base em (x, y) da planta. */
+  private objAt(name: string, x: number, y: number, z = 0) {
+    const img = this.sprites.objetos.get(name);
+    if (!img) return;
+    this.upright({ x, y }, () => {
+      const s = this.sp(x, y, z);
+      this.pctx.drawImage(img, Math.round(s.x - img.width / 2), Math.round(s.y - img.height + 6));
+    });
+  }
+
+  /** Alguém em pé ou sentado com os pés em `at` (planta), olhando para quem vê. */
+  private person(at: Point, who: string, animName: string, seed: number, dir: ScreenDir = 'south') {
+    const anim = this.animToward(who, animName, dir);
+    if (!anim) return undefined;
+    const s = this.sp(at.x, at.y);
+    const q = Math.floor((this.frame + seed) / 2) % anim.quadros;
+    this.pctx.drawImage(anim.img, q * anim.w, 0, anim.w, anim.h, Math.round(s.x - anim.w / 2), Math.round(s.y - anim.pesY), anim.w, anim.h);
+    return { x: s.x, top: s.y - anim.pesY + anim.cabecaY };
   }
 
   private drawFixed(f: FixedRoom & { rect: Rect }) {
@@ -799,27 +1048,16 @@ export class Office {
     else this.drawKitchen(f.rect);
   }
 
-  /** Hall dos elevadores: duas portas de metal com o painel do andar em cima, banco e plantas. */
+  /** Hall dos elevadores: duas portas de metal na parede do fundo, com o andar aceso em cima. */
   private drawElevators(r: Rect) {
-    const p = this.pctx;
-    this.tileFloor({ x: r.x, y: r.y + WALL_H, w: r.w, h: r.h - WALL_H }, 'corredor', '#8e94a3');
-    this.drawShell(r, shade(this.floor.color, 0.45), { door: 120 });
+    this.flat(() => this.tileFloor(r, 'corredor', '#8e94a3'));
+    this.drawShell(r, shade(this.floor.color, 0.45), { door: 120, solid: true });
     for (const dx of [70, r.w - 70 - 72]) {
-      const x = r.x + dx;
-      const y = r.y + 4;
-      // moldura e portas
-      rect(p, x - 4, y, 80, 70, '#4a4f63');
-      rect(p, x, y + 6, 72, 64, '#9aa3b8');
-      rect(p, x + 35, y + 6, 2, 64, '#5b6078');
-      rect(p, x + 4, y + 10, 2, 56, '#c3cad9');
-      rect(p, x + 40, y + 10, 2, 56, '#c3cad9');
-      // indicador do andar, na cor dele
-      rect(p, x + 24, y - 2, 24, 7, '#1f2335');
-      rect(p, x + 27, y, 18, 3, this.frame % 20 < 10 ? this.floor.color : shade(this.floor.color, 0.6));
-      // botões de chamar
-      rect(p, x + 76, y + 30, 5, 10, '#2a2f45');
-      rect(p, x + 77, y + 31, 3, 3, '#e0af68');
-      rect(p, x + 77, y + 36, 3, 3, '#e0af68');
+      this.onBackWall(r, dx - 4, dx + 76, 0, 46, '#4a4f63');
+      this.onBackWall(r, dx, dx + 35, 0, 42, '#9aa3b8');
+      this.onBackWall(r, dx + 37, dx + 72, 0, 42, '#9aa3b8');
+      this.onBackWall(r, dx + 24, dx + 48, 47, 53, '#1f2335');
+      this.onBackWall(r, dx + 27, dx + 45, 48, 52, this.frame % 20 < 10 ? this.floor.color : shade(this.floor.color, 0.6));
     }
     this.obj('banco', r.x + r.w / 2 - 40, r.y + 150);
     this.obj('vaso-grande', r.x + 10, r.y + r.h - 70);
@@ -828,41 +1066,33 @@ export class Office {
 
   /** Entrada: porta para o corredor, balcão com a recepcionista, sofás de espera, estante e plantas. */
   private drawReception(r: Rect) {
-    const p = this.pctx;
-    this.woodFloor({ x: r.x, y: r.y + WALL_H, w: r.w, h: r.h - WALL_H });
+    this.woodFloor(r);
     // tapete do caminho da porta ao balcão
-    rect(p, r.x + r.w / 2 - 30, r.y + 140, 60, r.h - 144, '#7a2f3a');
-    rect(p, r.x + r.w / 2 - 26, r.y + 144, 52, r.h - 152, '#9b3d4a');
+    this.flat(() => {
+      rect(this.pctx, r.x + r.w / 2 - 30, r.y + 140, 60, r.h - 144, '#7a2f3a');
+      rect(this.pctx, r.x + r.w / 2 - 26, r.y + 144, 52, r.h - 152, '#9b3d4a');
+    });
     this.drawShell(r, '#5a6b8c', { door: 72 });
-
-    this.obj('estante', r.x + 8, r.y + WALL_H - 18);
-    this.obj('vaso-grande', r.x + r.w - 56, r.y + WALL_H - 4);
+    this.signPlate(r, 110);
+    this.obj('estante', r.x + 8, r.y + 8);
+    this.obj('vaso-grande', r.x + r.w - 56, r.y + 12);
     // recepcionista atrás do balcão
     const cx = r.x + r.w / 2;
-    this.drawPerson(cx, r.y + 58, RECEPCIONISTA, 'parado', 7, r.y + 98);
-    const balcao = this.sprites.objetos.get('balcao');
-    if (balcao) p.drawImage(balcao, Math.round(cx - balcao.width / 2), r.y + 74);
-    // sofás de espera e bebedouro
+    this.upright({ x: cx, y: r.y + 96 }, () => this.person({ x: cx, y: r.y + 96 }, RECEPCIONISTA, 'parado', 7));
+    this.obj('balcao', cx - 64, r.y + 74);
     this.obj('sofa', r.x + 14, r.y + 168);
     this.obj('sofa', r.x + r.w - 94, r.y + 168);
     this.obj('bebedouro', r.x + r.w - 40, r.y + 108);
   }
 
-  /** Copa: piso de cerâmica, bancada com pia e cafeteira, geladeira, mesa com cadeiras e TV. */
+  /** Copa: piso de cerâmica, bancada com a cafeteira encostada no fundo, geladeira, mesa e TV. */
   private drawKitchen(r: Rect) {
-    const p = this.pctx;
-    this.tileFloor({ x: r.x, y: r.y + WALL_H, w: r.w, h: r.h - WALL_H }, 'copa', '#dfe2ea');
+    this.flat(() => this.tileFloor(r, 'copa', '#dfe2ea'));
     this.drawShell(r, '#6b8c7a');
-    // bancada encostada na parede, com pia, xícaras e a cafeteira em cima
-    const by = r.y + WALL_H + 2;
-    rect(p, r.x + 10, by, r.w - 80, 26, '#8d93a6');
-    rect(p, r.x + 10, by, r.w - 80, 5, '#b4b9c8');
-    rect(p, r.x + 40, by + 7, 34, 14, '#5f6b85');
-    rect(p, r.x + 54, by + 3, 4, 6, '#d0d4df');
-    rect(p, r.x + 170, by + 6, 8, 10, '#f5f5f5');
-    rect(p, r.x + 182, by + 6, 8, 10, '#f5f5f5');
-    this.obj('cafeteira', r.x + 110, by - 22);
-    this.obj('geladeira', r.x + r.w - 60, r.y + WALL_H - 26);
+    this.signPlate(r, 80);
+    this.box(r.x + 10, r.y + 2, r.w - 80, 26, 22, '#8d93a6');
+    this.obj('cafeteira', r.x + 110, r.y + 2 - 22 + 26, 22);
+    this.obj('geladeira', r.x + r.w - 60, r.y + 4);
     this.obj('mesa-copa', r.x + r.w / 2 - 58, r.y + 120);
     this.obj('tv', r.x + 14, r.y + 150);
     this.obj('planta', r.x + r.w - 40, r.y + r.h - 40);
@@ -877,84 +1107,99 @@ export class Office {
       .slice(0, WAR_SEATS.length);
   }
 
+  /** Centro da mesa redonda e o lugar de cada cadeira, na planta. */
+  private warTable(r: Rect) {
+    const t = { x: r.x + r.w / 2, y: r.y + r.h / 2 + 14 };
+    const seats = WAR_SEATS.map(([dx, dy]) => {
+      // Os lugares foram pensados para a mesa achatada da vista de cima: o ângulo continua o mesmo.
+      const a = Math.atan2(dy * 2.4, dx);
+      return { x: t.x + Math.cos(a) * (WAR_RX + 20), y: t.y + Math.sin(a) * (WAR_RY + 20) };
+    });
+    return { t, seats };
+  }
+
   /**
    * Sala de guerra: carpete, telão com o incidente na parede e uma mesa redonda com os participantes.
    * Sem incidente, a luz fica apagada.
    */
   private drawWarRoom(r: Rect, slot: number) {
-    const p = this.pctx;
     const incident = this.incidents.find((i) => i.slot === slot);
-    this.tileFloor({ x: r.x, y: r.y + WALL_H, w: r.w, h: r.h - WALL_H }, 'corredor', '#8e94a3');
-    rect(p, r.x + 20, r.y + WALL_H + 30, r.w - 40, r.h - WALL_H - 50, '#5b2f3a');
-    rect(p, r.x + 24, r.y + WALL_H + 34, r.w - 48, r.h - WALL_H - 58, '#6e3846');
+    this.flat(() => {
+      this.tileFloor(r, 'corredor', '#8e94a3');
+      rect(this.pctx, r.x + 20, r.y + 30, r.w - 40, r.h - 50, '#5b2f3a');
+      rect(this.pctx, r.x + 24, r.y + 34, r.w - 48, r.h - 58, '#6e3846');
+    });
     this.drawShell(r, '#3b2f45');
-    // telão na parede: aceso com o incidente, apagado sem
-    rect(p, r.x + r.w / 2 - 70, r.y + 4, 140, 32, '#1f2335');
-    rect(p, r.x + r.w / 2 - 67, r.y + 7, 134, 26, incident ? (this.frame % 12 < 6 ? '#b8434f' : '#9a3440') : '#2a2f45');
+    // telão na parede do fundo: aceso com o incidente, apagado sem
+    this.onBackWall(r, r.w / 2 - 70, r.w / 2 + 70, 14, 48, '#1f2335');
+    this.onBackWall(r, r.w / 2 - 67, r.w / 2 + 67, 17, 45, incident ? (this.frame % 12 < 6 ? '#b8434f' : '#9a3440') : '#2a2f45');
 
-    const tx = r.x + r.w / 2;
-    const ty = r.y + 160;
+    const { t, seats } = this.warTable(r);
     const seated = this.seatedAt(incident);
-    // cadeiras vazias e quem está sentado atrás da mesa (cortados na altura do tampo)
-    WAR_SEATS.forEach(([dx, dy], i) => {
+    seats.forEach((s, i) => {
       const a = seated[i];
-      const cadeira = this.sprites.objetos.get('cadeira');
-      if (cadeira && dy < 0) p.drawImage(cadeira, Math.round(tx + dx - cadeira.width / 2), ty + dy - 6);
-      if (!a || dy >= 0) return;
-      this.drawSeated(a, tx + dx, ty + dy - 34, ty - 4);
+      if (!a) {
+        this.obj('cadeira', s.x - 16, s.y - 30);
+        return;
+      }
+      this.upright(s, () => {
+        const head = this.drawSeated(a, s);
+        if (!head) return;
+        this.hits.push({ space: 'screen', x: head.x - 16 + this.origin.x, y: head.top - 6 + this.origin.y, w: 32, h: 52, kind: 'agent', id: a.id });
+      });
     });
-    // mesa redonda
-    p.fillStyle = 'rgba(0,0,0,0.25)';
-    p.beginPath();
-    p.ellipse(tx, ty + 8, 104, 34, 0, 0, Math.PI * 2);
-    p.fill();
-    p.fillStyle = '#6b4329';
-    p.beginPath();
-    p.ellipse(tx, ty + 4, 100, 32, 0, 0, Math.PI * 2);
-    p.fill();
-    p.fillStyle = '#8a5a3c';
-    p.beginPath();
-    p.ellipse(tx, ty, 100, 30, 0, 0, Math.PI * 2);
-    p.fill();
-    // papéis espalhados na mesa
-    if (incident) {
-      rect(p, tx - 40, ty - 8, 14, 10, '#e0e6ff');
-      rect(p, tx + 12, ty - 2, 12, 9, '#e0e6ff');
-      rect(p, tx - 6, ty + 8, 16, 8, '#f5e6a8');
-    }
-    // quem senta na frente da mesa
-    WAR_SEATS.forEach(([dx, dy], i) => {
-      const a = seated[i];
-      if (a && dy >= 0) this.drawSeated(a, tx + dx, ty + dy, ty + dy + 60);
+    // mesa redonda: sombra no chão, borda e tampo
+    this.upright(t, () => {
+      const p = this.pctx;
+      const ellipse = (rx: number, ry: number, col: string) => {
+        p.fillStyle = col;
+        p.beginPath();
+        p.ellipse(t.x, t.y, rx, ry, 0, 0, Math.PI * 2);
+        p.fill();
+      };
+      this.flat(() => ellipse(WAR_RX + 4, WAR_RY + 4, 'rgba(0,0,0,0.25)'));
+      this.flat(() => ellipse(WAR_RX, WAR_RY, '#6b4329'), 12);
+      this.flat(() => ellipse(WAR_RX, WAR_RY, '#8a5a3c'), 16);
+      if (incident) {
+        this.flat(() => {
+          rect(p, t.x - 40, t.y - 8, 14, 10, '#e0e6ff');
+          rect(p, t.x + 12, t.y - 2, 12, 9, '#e0e6ff');
+          rect(p, t.x - 6, t.y + 8, 16, 8, '#f5e6a8');
+        }, 17);
+      }
     });
 
-    if (!incident) rect(p, r.x + 3, r.y + 3, r.w - 6, r.h - 7, 'rgba(8,10,22,0.55)');
-    if (this.selectedWar === slot) {
-      const c = '#c0caf5';
-      rect(p, r.x + 3, r.y + 3, r.w - 6, 2, c);
-      rect(p, r.x + 3, r.y + r.h - 6, r.w - 6, 2, c);
-      rect(p, r.x + 3, r.y + 3, 2, r.h - 6, c);
-      rect(p, r.x + r.w - 5, r.y + 3, 2, r.h - 6, c);
-    }
+    if (!incident) this.dim(r, 'rgba(8,10,22,0.55)');
+    if (this.selectedWar === slot) this.flat(() => outline(this.pctx, r, '#c0caf5'));
     this.hits.push({ ...r, kind: 'war', slot });
-    for (const [i, a] of seated.entries()) {
-      const [dx, dy] = WAR_SEATS[i];
-      this.hits.push({ x: tx + dx - 16, y: ty + dy - 52, w: 32, h: 52, kind: 'agent', id: a.id });
-    }
+  }
+
+  /** Escurece a vaga inteira (piso e paredes do fundo), por cima de tudo o que está nela. */
+  private dim(r: Rect, color: string) {
+    const x1 = r.x + r.w;
+    const y1 = r.y + r.h;
+    this.upright({ x: x1, y: y1 }, () => {
+      const p = this.pctx;
+      const pts = [this.sp(r.x, y1), this.sp(x1, y1), this.sp(x1, r.y), this.sp(x1, r.y, WALL_UP), this.sp(r.x, r.y, WALL_UP), this.sp(r.x, y1, WALL_UP)];
+      p.fillStyle = color;
+      p.beginPath();
+      pts.forEach((q, i) => (i ? p.lineTo(q.x, q.y) : p.moveTo(q.x, q.y)));
+      p.closePath();
+      p.fill();
+    }, 1);
   }
 
   /** Participante na mesa redonda, com a animação do estado e a seta se estiver selecionado. */
-  private drawSeated(a: Agent, cx: number, headY: number, clipBottom: number) {
+  private drawSeated(a: Agent, at: Point) {
     const seed = hash(a.id);
     const who = characterFor(seed, this.sprites.names());
-    if (who) this.drawPerson(cx, headY, who, ANIM_FOR[a.status] ?? 'parado', seed % 7, clipBottom);
-    if (this.selectedAgent === a.id) {
-      const by = headY - 30 + (this.frame % 4 < 2 ? 0 : 2);
-      for (let i = 0; i < 5; i++) rect(this.pctx, cx - 6 + i, by + i, 13 - i * 2, 1, '#c0caf5');
-    }
+    if (!who) return undefined;
+    const head = this.person(at, who, ANIM_FOR[a.status] ?? 'parado', seed % 7);
+    if (head && this.selectedAgent === a.id) this.arrow(head.x, head.top - 14);
+    return head;
   }
 
-  /** "+" em cima da última sala de guerra: abre mais uma, para outro incidente ao mesmo tempo. */
+  /** "+" em cima da última sala de guerra: abre mais uma, para outro incidente ao mesmo tempo. Dentro de flat(). */
   private drawWarAdd(r: Rect) {
     const p = this.pctx;
     const hovered = this.hover?.kind === 'newwar';
@@ -966,7 +1211,7 @@ export class Office {
     this.hits.push({ x: cx - 40, y: cy - 30, w: 80, h: 60, kind: 'newwar' });
   }
 
-  /** Vaga livre encostada no prédio: o "+" que abre uma sala nova ali. */
+  /** Vaga livre encostada no prédio: o "+" que abre uma sala nova ali. Dentro de flat(). */
   private drawFreeCell(f: Cell & { rect: Rect }) {
     const p = this.pctx;
     const r = f.rect;
@@ -983,7 +1228,7 @@ export class Office {
       rect(p, r.x + r.w - inset - 2, y, 2, 6, col);
     }
     const cx = r.x + r.w / 2;
-    const cy = r.y + r.h / 2 - 8;
+    const cy = r.y + r.h / 2;
     rect(p, cx - 18, cy - 18, 36, 36, hovered ? '#3d59a1' : 'rgba(26,27,38,0.55)');
     rect(p, cx - 2, cy - 11, 4, 22, '#ffffff');
     rect(p, cx - 11, cy - 2, 22, 4, '#ffffff');
@@ -991,137 +1236,124 @@ export class Office {
   }
 
   private drawRoom(pr: PlacedRoom) {
-    const p = this.pctx;
     const { rect: r, room } = pr;
-    this.woodFloor({ x: r.x, y: r.y + WALL_H, w: r.w, h: r.h - WALL_H });
+    this.woodFloor(r);
     // As salas de um andar têm a parede na cor dele, cada uma num tom um pouco diferente.
-    this.drawShell(r, shade(this.floor.color, 0.42 + ((hash(room.id) % 5) - 2) * 0.03));
+    const wallColor = shade(this.floor.color, 0.42 + ((hash(room.id) % 5) - 2) * 0.03);
+    this.drawShell(r, wallColor);
 
-    // placa com o nome (o texto entra no passe de texto)
-    const signW = 150;
-    rect(p, r.x + (r.w - signW) / 2, r.y + 9, signW, 20, '#2a2f45');
-    rect(p, r.x + (r.w - signW) / 2 + 1, r.y + 10, signW - 2, 18, '#3b4261');
+    this.signPlate(r, 150);
 
     // luz de atenção: pisca quando alguém terminou ou precisa de aprovação
     const needs = pr.agents.some((a) => a.status === 'done' || a.status === 'waiting');
     const lampOn = needs && this.frame % 6 < 3;
-    rect(p, r.x + r.w - 26, r.y + 12, 11, 11, '#1f2335');
-    rect(p, r.x + r.w - 25, r.y + 13, 9, 9, lampOn ? '#e0af68' : needs ? '#7a5b2a' : '#2a2f45');
+    this.onBackWall(r, r.w - 30, r.w - 16, SIGN_Z - 7, SIGN_Z + 7, '#1f2335');
+    this.onBackWall(r, r.w - 29, r.w - 17, SIGN_Z - 6, SIGN_Z + 6, lampOn ? '#e0af68' : needs ? '#7a5b2a' : '#2a2f45');
 
-    if (this.selectedRoom === room.id) {
-      const c = '#c0caf5';
-      rect(p, r.x + 3, r.y + 3, r.w - 6, 2, c);
-      rect(p, r.x + 3, r.y + r.h - 6, r.w - 6, 2, c);
-      rect(p, r.x + 3, r.y + 3, 2, r.h - 6, c);
-      rect(p, r.x + r.w - 5, r.y + 3, 2, r.h - 6, c);
-    }
+    if (this.selectedRoom === room.id) this.flat(() => outline(this.pctx, r, '#c0caf5'));
 
     this.hits.push({ ...r, kind: 'room', id: room.id });
-    pr.agents.forEach((a, i) => {
-      const o = slotOrigin(r, i);
-      this.drawDesk(o.x, o.y, a);
-    });
-    const empty = slotOrigin(r, pr.agents.length);
-    this.drawEmptyDesk(empty.x, empty.y, room.id);
+    pr.agents.forEach((a, i) => this.drawDesk(r, i, a));
+    this.drawEmptyDesk(r, pr.agents.length, room.id);
   }
 
-  private drawEmptyDesk(sx: number, sy: number, roomId: string) {
+  /** Mesa isométrica (espelhada: o tampo corre ao longo da fileira), ou a antiga se faltar. */
+  private drawDeskSprite(at: Point, alpha = 1) {
     const p = this.pctx;
-    const cx = sx + SLOT_W / 2;
-    const hovered = this.hover?.kind === 'add' && this.hover.id === roomId;
-    const mesa = this.deskSprite();
-    if (mesa) {
-      p.save();
-      p.globalAlpha = hovered ? 0.7 : 0.35;
-      p.drawImage(mesa, Math.round(cx - mesa.width / 2), sy + DESK_Y);
-      p.restore();
+    const s = this.sp(at.x, at.y);
+    const iso = this.sprites.objetos.get('mesa-iso');
+    const img = iso ?? this.deskSprite();
+    if (!img) return { x: s.x - 32, y: s.y - 40, w: 64, h: 48 };
+    p.save();
+    p.globalAlpha = alpha;
+    if (iso) {
+      p.translate(Math.round(s.x), 0);
+      p.scale(-1, 1);
+      p.drawImage(iso, -48, Math.round(s.y - 58));
+    } else {
+      p.drawImage(img, Math.round(s.x - img.width / 2), Math.round(s.y - img.height + 8));
     }
-    const col = hovered ? '#ffffff' : '#e0e6ff';
-    rect(p, cx - 9, sy + DESK_Y - 12, 18, 18, hovered ? '#3d59a1' : 'rgba(26,27,38,0.7)');
-    rect(p, cx - 1, sy + DESK_Y - 8, 2, 10, col);
-    rect(p, cx - 5, sy + DESK_Y - 4, 10, 2, col);
-    this.hits.push({ x: sx + 4, y: sy + 8, w: SLOT_W - 8, h: SLOT_H - 12, kind: 'add', id: roomId });
+    p.restore();
+    return { x: s.x - 34, y: s.y - 52, w: 68, h: 60 };
   }
 
-  /** Mesa do funcionário: a nova, com o monitor virado para ele; a antiga se a nova faltar. */
+  private drawEmptyDesk(r: Rect, i: number, roomId: string) {
+    const { desk } = deskSpot(r, i);
+    this.upright(desk, () => {
+      const p = this.pctx;
+      const hovered = this.hover?.kind === 'add' && this.hover.id === roomId;
+      const box = this.drawDeskSprite(desk, hovered ? 0.7 : 0.35);
+      const s = this.sp(desk.x, desk.y, 34);
+      const col = hovered ? '#ffffff' : '#e0e6ff';
+      rect(p, s.x - 9, s.y - 9, 18, 18, hovered ? '#3d59a1' : 'rgba(26,27,38,0.7)');
+      rect(p, s.x - 1, s.y - 5, 2, 10, col);
+      rect(p, s.x - 5, s.y - 1, 10, 2, col);
+      this.hits.push({ space: 'screen', x: box.x + this.origin.x, y: box.y - 20 + this.origin.y, w: box.w, h: box.h + 20, kind: 'add', id: roomId });
+    });
+  }
+
+  /** Mesa do funcionário antiga (de cima), usada quando a isométrica falta. */
   private deskSprite() {
     return this.sprites.objetos.get('mesa-costas') ?? this.sprites.objetos.get('mesa');
   }
 
-  /** Alguém sentado com a cabeça em headY, cortado em clipBottom (a altura do tampo). */
-  private drawPerson(cx: number, headY: number, who: string, animName: string, seed: number, clipBottom: number) {
-    const anim = this.sprites.anim(who, animName);
-    if (!anim) return;
-    const p = this.pctx;
-    const q = Math.floor((this.frame + seed) / 2) % anim.quadros;
-    p.save();
-    p.beginPath();
-    p.rect(cx - anim.w, headY - anim.h, anim.w * 2, clipBottom - (headY - anim.h));
-    p.clip();
-    p.drawImage(anim.img, q * anim.w, 0, anim.w, anim.h, Math.round(cx - anim.w / 2), headY - anim.cabecaY, anim.w, anim.h);
-    p.restore();
-  }
-
-  private drawDesk(sx: number, sy: number, a: Agent) {
-    const p = this.pctx;
-    const cx = sx + SLOT_W / 2;
+  private drawDesk(r: Rect, i: number, a: Agent) {
+    const sx = slotOrigin(r, i).x;
+    const { seat, desk } = deskSpot(r, i);
     const seed = hash(a.id);
     const f = this.frame + (seed % 7);
     const names = this.sprites.names();
     const who = characterFor(seed, names);
-
-    // cadeira atrás do funcionário
-    const cadeira = this.sprites.objetos.get('cadeira');
-    if (cadeira) p.drawImage(cadeira, Math.round(cx - cadeira.width / 2) + SEAT_DX, sy + HEAD_Y + 6);
+    // Quem está atrás da mesa e a mesa formam um alvo só: a caixa é guardada até a mesa ser desenhada.
+    let top = Infinity;
 
     // Na sala de guerra (ou indo para lá): a mesa fica vazia, com uma bandeirinha.
     const away = !!a.incidentId || this.inTransit(a.id);
-    if (away) {
-      const mesa = this.deskSprite();
-      if (mesa) p.drawImage(mesa, Math.round(cx - mesa.width / 2), sy + DESK_Y);
-      rect(p, cx + 18, sy + DESK_Y - 14, 2, 16, '#c0caf5');
-      rect(p, cx + 20, sy + DESK_Y - 14, 10, 7, '#b8434f');
-      this.hits.push({ x: sx + 2, y: sy + 8, w: SLOT_W - 4, h: SLOT_H - 10, kind: 'agent', id: a.id });
-      return;
+    if (!away) {
+      // funcionário (some quando sai do escritório; pisca enquanto chega)
+      const animName = ANIM_FOR[a.status];
+      const fading = a.status === 'starting' && f % 4 < 2;
+      if (animName && !fading) {
+        this.upright(seat, () => {
+          const anim = this.animToward(who, animName, 'south-west');
+          if (!anim) return;
+          const p = this.pctx;
+          const s = this.sp(seat.x, seat.y);
+          const speed = a.status === 'working' ? 1 : 2;
+          const q = Math.floor(f / speed) % anim.quadros;
+          const y = Math.round(s.y - anim.pesY);
+          p.drawImage(anim.img, q * anim.w, 0, anim.w, anim.h, Math.round(s.x - anim.w / 2), y, anim.w, anim.h);
+          top = y + anim.cabecaY;
+          if (this.selectedAgent === a.id) this.arrow(s.x, top - 14);
+        });
+      }
     }
 
-    // funcionário (some quando sai do escritório; pisca enquanto chega)
-    const animName = ANIM_FOR[a.status];
-    const fading = a.status === 'starting' && f % 4 < 2;
-    const anim = animName && !fading ? this.sprites.anim(who, animName) : undefined;
-    if (anim) {
-      const speed = a.status === 'working' ? 1 : 2;
-      const q = Math.floor(f / speed) % anim.quadros;
-      // Corta na altura do tampo: as pernas ficariam aparecendo no vão entre os pés da mesa.
-      p.save();
-      p.beginPath();
-      p.rect(sx, sy, SLOT_W, DESK_Y + 24);
-      p.clip();
-      p.drawImage(anim.img, q * anim.w, 0, anim.w, anim.h, Math.round(cx - anim.w / 2) + SEAT_DX, sy + seatTop(anim), anim.w, anim.h);
-      p.restore();
-    }
-
-    // mesa na frente (esconde as pernas)
-    const mesa = this.deskSprite();
-    if (mesa) p.drawImage(mesa, Math.round(cx - mesa.width / 2), sy + DESK_Y);
+    this.upright(desk, () => {
+      const p = this.pctx;
+      const box = this.drawDeskSprite(desk);
+      if (away) {
+        const s = this.sp(desk.x + 18, desk.y - 6, 30);
+        rect(p, s.x, s.y - 16, 2, 16, '#c0caf5');
+        rect(p, s.x + 2, s.y - 16, 10, 7, '#b8434f');
+      }
+      const y0 = Math.min(box.y, top - 6);
+      this.hits.push({ space: 'screen', x: box.x + this.origin.x, y: y0 + this.origin.y, w: box.w, h: box.y + box.h - y0, kind: 'agent', id: a.id });
+    });
 
     // ajudantes (subagentes): colegas em miniatura ao lado da mesa
+    if (away) return;
     for (let i = 0; i < Math.min(2, a.subagents); i++) {
-      const helper = this.sprites.anim(characterFor(seed + 1 + i, names), 'parado');
-      if (!helper) continue;
-      const hx = i === 0 ? sx + SLOT_W - 18 : sx - 2;
-      const hop = (f + i * 3) % 6 < 3 ? 0 : -1;
-      const q = Math.floor((f + i) / 2) % helper.quadros;
-      p.drawImage(helper.img, q * helper.w, 0, helper.w, helper.h, hx - helper.w / 4, sy + 74 - helper.pesY / 2 + hop, helper.w / 2, helper.h / 2);
+      const at = { x: i === 0 ? sx + SLOT_W - 6 : sx + 4, y: desk.y + 4 };
+      this.upright(at, () => {
+        const helper = this.sprites.anim(characterFor(seed + 1 + i, names), 'parado');
+        if (!helper) return;
+        const s = this.sp(at.x, at.y);
+        const hop = (f + i * 3) % 6 < 3 ? 0 : -1;
+        const q = Math.floor((f + i) / 2) % helper.quadros;
+        this.pctx.drawImage(helper.img, q * helper.w, 0, helper.w, helper.h, Math.round(s.x - helper.w / 4), Math.round(s.y - helper.pesY / 2 + hop), helper.w / 2, helper.h / 2);
+      });
     }
-
-    // seta sobre o selecionado
-    if (this.selectedAgent === a.id) {
-      const by = sy + 6 + (f % 4 < 2 ? 0 : 2);
-      for (let i = 0; i < 5; i++) rect(p, cx - 6 + i, by + i, 13 - i * 2, 1, '#c0caf5');
-    }
-
-    this.hits.push({ x: sx + 2, y: sy + 8, w: SLOT_W - 4, h: SLOT_H - 10, kind: 'agent', id: a.id });
   }
 
   private skyBackground() {
@@ -1140,9 +1372,11 @@ export class Office {
 
   // ---------- textos (em escala de tela) ----------
 
-  private toScreen(x: number, y: number) {
+  /** Ponto da planta (`z` pixels acima do chão) → pixel do canvas na tela, já com a câmera. */
+  private toScreen(x: number, y: number, z = 0) {
     const c = this.camera;
-    return { x: (x - c.x) * c.z + this.cssW / 2, y: (y - c.y) * c.z + this.cssH / 2 };
+    const s = project({ x, y }, VIEW, z);
+    return { x: (s.x - c.x) * c.z + this.cssW / 2, y: (s.y - c.y) * c.z + this.cssH / 2 };
   }
 
   private drawTexts() {
@@ -1155,8 +1389,12 @@ export class Office {
         this.drawWarTexts(f.rect, f.slot ?? 0, signFont);
         continue;
       }
-      const s = this.toScreen(f.rect.x + f.rect.w / 2, f.rect.y + 19);
-      this.label(f.name, s.x, s.y, signFont, '#ffffff', 'rgba(26,27,38,0.75)');
+      if (f.id === 'elevadores') {
+        const s = this.toScreen(f.rect.x + f.rect.w / 2, f.rect.y, WALL_UP + 12);
+        this.label(f.name, s.x, s.y, signFont, '#ffffff', 'rgba(26,27,38,0.75)');
+      } else {
+        this.wallText(f.name, f.rect.x + f.rect.w / 2, f.rect.y, SIGN_Z, signFont, '#ffffff');
+      }
     }
     if (this.layout.warAdd && this.hover?.kind === 'newwar') {
       const r = this.layout.warAdd.rect;
@@ -1166,45 +1404,44 @@ export class Office {
 
     for (const f of this.layout.free) {
       if (!(this.hover?.kind === 'newroom' && this.hover.cell.x === f.x && this.hover.cell.y === f.y)) continue;
-      const s = this.toScreen(f.rect.x + f.rect.w / 2, f.rect.y + f.rect.h / 2 + 26);
+      const s = this.toScreen(f.rect.x + f.rect.w / 2, f.rect.y + f.rect.h / 2 + 40);
       this.label('Nova sala aqui', s.x, s.y, Math.max(11, Math.round(9 * z)), '#ffffff', 'rgba(61,89,161,0.9)');
     }
 
     for (const pr of this.layout.rooms) {
       const r = pr.rect;
-      const s = this.toScreen(r.x + r.w / 2, r.y + 19);
       c.font = `${signFont}px "Silkscreen", monospace`;
-      this.label(fit(c, pr.room.name, 140 * z), s.x, s.y, signFont, '#e0e6ff');
+      this.wallText(fit(c, pr.room.name, 140 * z), r.x + r.w / 2, r.y, SIGN_Z, signFont, '#e0e6ff');
       if (pr.overflow) {
-        const o = this.toScreen(r.x + r.w - 52, r.y + 19);
+        const o = this.toScreen(r.x + r.w - 52, r.y, SIGN_Z);
         this.label(`+${pr.overflow}`, o.x, o.y, Math.max(9, Math.round(8 * z)), '#1a1b26', '#e0af68');
       }
 
       pr.agents.forEach((a, i) => {
         const o = slotOrigin(r, i);
-        const cx = o.x + SLOT_W / 2;
+        const { seat, desk } = deskSpot(r, i);
         if (a.incidentId || this.inTransit(a.id)) {
           if (z >= 0.75) {
             const size = Math.max(9, Math.round(8 * z));
-            const n = this.toScreen(cx, o.y + DESK_Y + 53);
+            const n = this.toScreen(desk.x, desk.y + 22);
             this.label('na guerra', n.x, n.y, size, '#f7768e', 'rgba(26,27,38,0.85)');
           }
           return;
         }
         if (z >= 0.75) {
           const size = Math.max(9, Math.round(9 * z));
-          const n = this.toScreen(cx, o.y + DESK_Y + 53);
+          const n = this.toScreen(desk.x, desk.y + 22);
           c.font = `${size}px "Silkscreen", monospace`;
           this.label(fit(c, a.name, (SLOT_W - 4) * z), n.x, n.y, size, STATUS_COLOR[a.status], 'rgba(26,27,38,0.85)');
         }
         if (a.subagents > 2) {
-          const h = this.toScreen(cx + 34, o.y + 54);
+          const h = this.toScreen(o.x + SLOT_W - 6, desk.y + 4, 40);
           this.label(`+${a.subagents - 2}`, h.x, h.y, 11, '#c0caf5');
         }
         // balão de estado sobre a cabeça
         const hovered = this.hover?.kind === 'agent' && this.hover.id === a.id;
         const icon = { waiting: '!', done: '✓', working: '…', starting: '…' }[a.status as string];
-        const head = this.toScreen(cx, o.y + 30);
+        const head = this.toScreen(seat.x, seat.y, 62);
         if (hovered) this.bubble(head.x, head.y, a.activity, STATUS_COLOR[a.status], true);
         else if (icon) this.bubble(head.x, head.y, icon, STATUS_COLOR[a.status], false);
       });
@@ -1212,10 +1449,10 @@ export class Office {
 
     for (const w of this.walkers.values()) {
       const wx = w.x + laneOf(w.agent.id);
-      const head = this.toScreen(wx, w.y - 46);
+      const head = this.toScreen(wx, w.y, 50);
       if (head.x < -50 || head.x > this.cssW + 50 || head.y < -50 || head.y > this.cssH + 80) continue;
       if (z >= 0.75) {
-        const n = this.toScreen(wx, w.y + 9);
+        const n = this.toScreen(wx, w.y + 12);
         const size = Math.max(9, Math.round(8 * z));
         this.label(w.agent.name, n.x, n.y, size, '#c0caf5', 'rgba(26,27,38,0.7)');
       }
@@ -1226,8 +1463,9 @@ export class Office {
 
     // Dica de primeira sala: só nos andares de empresa (o térreo não recebe salas).
     if (!this.layout.rooms.length && this.floor.kind !== 'terreo') {
+      // Acima do canto de trás do prédio, que é o ponto mais alto dele na tela.
       const b = this.layout.bounds;
-      const s = this.toScreen(b.x + b.w / 2, b.y - 10);
+      const s = this.toScreen(b.x, b.y, WALL_UP + 24);
       this.label('Clique num + para abrir a sala do seu primeiro projeto', s.x, s.y, 13, '#ffffff', 'rgba(26,27,38,0.85)');
     }
   }
@@ -1237,9 +1475,8 @@ export class Office {
     const c = this.ctx;
     const z = this.camera.z;
     const incident = this.incidents.find((i) => i.slot === slot);
-    const screen = this.toScreen(r.x + r.w / 2, r.y + 20);
     c.font = `${signFont}px "Silkscreen", monospace`;
-    this.label(incident ? fit(c, incident.title, 126 * z) : 'Sala de guerra · livre', screen.x, screen.y, signFont, incident ? '#ffffff' : '#a9b1d6');
+    this.wallText(incident ? fit(c, incident.title, 126 * z) : 'Sala de guerra · livre', r.x + r.w / 2, r.y, 31, signFont, incident ? '#ffffff' : '#a9b1d6');
     if (!incident) {
       if (this.hover?.kind === 'war' && this.hover.slot === slot) {
         const s = this.toScreen(r.x + r.w / 2, r.y + r.h / 2 + 40);
@@ -1247,28 +1484,45 @@ export class Office {
       }
       return;
     }
-    const tx = r.x + r.w / 2;
-    const ty = r.y + 160;
+    const { seats } = this.warTable(r);
     this.seatedAt(incident).forEach((a, i) => {
-      const [dx, dy] = WAR_SEATS[i];
-      const headY = dy < 0 ? ty + dy - 34 : ty + dy;
+      const s = seats[i];
       if (z >= 0.75) {
         const size = Math.max(9, Math.round(8 * z));
-        // Quem senta atrás tem o nome na borda da mesa, logo abaixo dele.
-        const n = this.toScreen(tx + dx, dy < 0 ? ty - 14 - dy / 4 : ty + dy + 48);
+        const n = this.toScreen(s.x, s.y + 10);
         this.label(a.name, n.x, n.y, size, STATUS_COLOR[a.status], 'rgba(26,27,38,0.85)');
       }
       const hovered = this.hover?.kind === 'agent' && this.hover.id === a.id;
       const icon = { waiting: '!', done: '✓', working: '…', starting: '…' }[a.status as string];
-      const head = this.toScreen(tx + dx, headY - 6);
+      const head = this.toScreen(s.x, s.y, 58);
       if (hovered) this.bubble(head.x, head.y, a.activity, STATUS_COLOR[a.status], true);
       else if (icon) this.bubble(head.x, head.y, icon, STATUS_COLOR[a.status], false);
     });
     const extra = incident.participants.length - this.seatedAt(incident).length;
     if (extra > 0 && incident.participants.length > WAR_SEATS.length) {
-      const o = this.toScreen(r.x + r.w - 40, r.y + 19);
+      const o = this.toScreen(r.x + r.w - 40, r.y, 31);
       this.label(`+${incident.participants.length - WAR_SEATS.length}`, o.x, o.y, Math.max(9, Math.round(8 * z)), '#1a1b26', '#e0af68');
     }
+  }
+
+  /**
+   * Texto pintado numa parede do fundo (as que correm ao longo de x na planta): inclinado junto
+   * com ela, centrado no ponto (x, y) da planta, `z` acima do chão.
+   */
+  private wallText(text: string, x: number, y: number, z: number, size: number, color: string) {
+    const c = this.ctx;
+    const s = this.toScreen(x, y, z);
+    // Na tela, andar ao longo de x na planta é ir na direção (a, b) da matriz do chão.
+    const [a, b] = floorMatrix(VIEW);
+    c.save();
+    c.translate(s.x, s.y);
+    c.transform(a, b, 0, 1, 0, 0);
+    c.font = `${size}px "Silkscreen", monospace`;
+    c.textAlign = 'center';
+    c.textBaseline = 'middle';
+    c.fillStyle = color;
+    c.fillText(text, 0, 1);
+    c.restore();
   }
 
   private label(text: string, x: number, y: number, size: number, color: string, bg?: string) {
@@ -1341,6 +1595,14 @@ export function shade(hex: string, factor: number): string {
   const g = mix((n >> 8) & 255, 0x24);
   const b = mix(n & 255, 0x38);
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
+
+/** Contorno de um retângulo da planta (a seleção), dentro de flat(). */
+function outline(p: CanvasRenderingContext2D, r: Rect, c: string) {
+  rect(p, r.x + 3, r.y + 3, r.w - 6, 2, c);
+  rect(p, r.x + 3, r.y + r.h - 6, r.w - 6, 2, c);
+  rect(p, r.x + 3, r.y + 3, 2, r.h - 6, c);
+  rect(p, r.x + r.w - 5, r.y + 3, 2, r.h - 6, c);
 }
 
 function overlaps(a: Rect, b: Rect) {
