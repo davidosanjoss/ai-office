@@ -749,8 +749,8 @@ export class Office {
       const a = { x: x0 + (x1 - x0) * Math.max(0, t0 - e), y: y0 + (y1 - y0) * Math.max(0, t0 - e) };
       const b = { x: x0 + (x1 - x0) * Math.min(1, t1 + e), y: y0 + (y1 - y0) * Math.min(1, t1 + e) };
       const m = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
-      // No vidro, um montante a cada dois pedaços (32 px) e no começo da parede.
-      if (glass !== undefined) this.upright(m, () => this.glassFace(a, b, h, color, glass, i % 2 === 0));
+      // No vidro, um montante a cada quatro pedaços (64 px) e no começo da parede.
+      if (glass !== undefined) this.upright(m, () => this.glassFace(a, b, h, color, glass, i % 4 === 0));
       else this.upright(m, () => this.face(a, b, 0, h, color, true));
     }
   }
