@@ -17,7 +17,7 @@ import { buildApp } from '../server/app.ts';
 import { which } from '../server/platform.ts';
 import { store } from '../server/store.ts';
 import { toScreen } from '../web/iso.ts';
-import { VIEW, cellRect } from '../web/office.ts';
+import { VIEW, cellRect, deskSpot } from '../web/office.ts';
 import { BASE, PORT, api, makeRepo, tempDir, waitFor } from './helpers.ts';
 
 function findChrome(): string | undefined {
@@ -351,6 +351,27 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     } finally {
       health.close();
     }
+  });
+
+  it('isométrico: clicar na mesa de um agente no mapa abre o terminal dele', async () => {
+    const room = [...store.rooms.values()].find((r) => r.path.includes('e2e-repo'))!;
+    // Um colega novo, que ninguém abriu ainda.
+    const hired = (await api<Agent>('POST', '/api/agents', { roomId: room.id, name: 'Mesa' })).data;
+    await page.waitForFunction((n) => [...document.querySelectorAll('#tabs .tab')].some((t) => t.textContent?.includes(n)), {}, hired.name);
+    // As mesas são ocupadas na ordem de chegada; terminais comuns não sentam.
+    const seated = agents()
+      .filter((a) => a.roomId === room.id && a.kind !== 'shell')
+      .sort((a, b) => a.createdAt - b.createdAt);
+    const i = seated.findIndex((a) => a.id === hired.id);
+    expect(i).toBeGreaterThanOrEqual(0);
+    expect(i).toBeLessThan(7);
+    expect(await page.$eval('#tabs .tab.active', (t) => t.textContent ?? '').catch(() => '')).not.toContain(hired.name);
+    const target = hired;
+    const { desk } = deskSpot(cellRect(room.pos!), i);
+    // Clica no tampo, um pouco atrás da base: é a mesa em pé, não o chão da sala.
+    await revealWorld(desk.x, desk.y);
+    await clickWorld(desk.x - 6, desk.y - 6);
+    await page.waitForFunction((n) => document.querySelector('#tabs .tab.active')?.textContent?.includes(n), {}, target.name);
   });
 
   it('arrastar o mapa move a câmera e não conta como clique', async () => {
