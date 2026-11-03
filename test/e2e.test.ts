@@ -835,6 +835,46 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     });
   });
 
+  it('sala com vários projetos: escolhe o projeto, contrata nele e edita as fichas', async () => {
+    const root = tempDir('e2e-saff');
+    for (const name of ['ms-arquivos', 'ms-sales']) fs.renameSync(makeRepo(name), path.join(root, name));
+    const { data: room } = await api('POST', '/api/rooms', { path: root, name: 'SAFF' });
+    const head = `#directory .dir-room-head[data-room="${room.id}"]`;
+    await page.waitForSelector(head);
+    await page.click(head);
+    await page.waitForFunction(() => document.querySelector('.room-title')?.textContent === 'SAFF');
+    // Os projetos aparecem como opções; o escolhido é o que o git mostra.
+    const chips = await page.$$eval('.room-projects .chip', (els) => els.map((e) => e.textContent));
+    expect(chips).toEqual(['ms-arquivos', 'ms-sales']);
+    await page.click('.room-projects .chip:nth-child(2)');
+    await page.waitForFunction(() => document.querySelector('.room-projects .chip.active')?.textContent === 'ms-sales');
+    await page.waitForFunction((p) => document.querySelector('.room-path')?.textContent === p, {}, path.join(root, 'ms-sales'));
+    await page.waitForFunction(() => document.querySelector('#git .branch')?.textContent?.includes('main'));
+
+    // Contratar já vem com o projeto escolhido.
+    const before = new Set(agents().map((a) => a.id));
+    await page.click('#tabs .tab.add[title="Contratar agente"]');
+    await page.waitForSelector('#dlg-agent[open]');
+    expect(await page.$eval('#agent-project', (e) => (e as HTMLSelectElement).selectedOptions[0].textContent)).toBe('ms-sales');
+    await page.type('#dlg-agent input[name=name]', 'Saulo');
+    await page.keyboard.press('Enter');
+    const a = await waitFor(() => agents().find((x) => !before.has(x.id)), 5000, 'agente novo');
+    expect(a.cwd).toBe(path.join(root, 'ms-sales'));
+    await waitScreen('Você trabalha no projeto **ms-sales**');
+
+    // Fichas e resumo do sistema pelo diálogo de projetos.
+    await page.click('#room-info [data-act=projects]');
+    await page.waitForSelector('#dlg-projects[open] .project-row');
+    await page.type('#projects-brief', 'arquivos depois sales');
+    const summary = '#projects-list .project-row:first-child .project-summary';
+    await page.$eval(summary, (e) => ((e as HTMLTextAreaElement).value = ''));
+    await page.type(summary, 'Valida os arquivos de venda.');
+    await page.click('#dlg-projects button[value=ok]');
+    await page.waitForFunction(() => !document.querySelector('#dlg-projects[open]'));
+    await waitFor(() => store.rooms.get(room.id)?.brief === 'arquivos depois sales', 3000, 'resumo salvo');
+    expect(store.rooms.get(room.id)!.projects![0]).toMatchObject({ summary: 'Valida os arquivos de venda.', summaryEdited: true });
+  });
+
   it('a página não tem erros de JavaScript', async () => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(String(e)));

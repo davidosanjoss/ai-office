@@ -23,6 +23,8 @@ let currentFloor: string = (() => {
 })();
 let selectedRoom: string | undefined;
 let selectedAgent: string | undefined;
+/** Projeto escolhido em cada sala: é o que o git, o explorador e o terminal da sala mostram. */
+const roomProjectSel = new Map<string, string>();
 /** Sala de guerra selecionada no andar da tela: as abas viram os participantes e o painel vira o chat. */
 let selectedWar: number | undefined;
 let activityScope: 'room' | 'all' = 'room';
@@ -188,7 +190,12 @@ function explorerTarget(worktree: boolean): ExplorerTarget | undefined {
   if (agent) {
     return { base: `/api/agents/${agent.id}`, roomId: room.id, tab: `Arquivos · ${agent.name}`, label: `${room.name} · worktree de ${agent.name} (${agent.worktreeBranch})` };
   }
-  return { base: `/api/rooms/${room.id}`, roomId: room.id, tab: 'Arquivos', label: `${room.name} · ${room.path}` };
+  // Com um agente da sala selecionado, a pasta é a do projeto dele; senão, a do projeto escolhido.
+  const selected = state.agents.find((a) => a.id === selectedAgent && a.roomId === room.id);
+  const folder = logic.roomFolder(room, selected?.projectId ?? roomProjectSel.get(room.id));
+  const multi = (room.projects?.length ?? 0) > 1;
+  const project = logic.roomProject(room, selected?.projectId ?? roomProjectSel.get(room.id));
+  return { base: folder.base, roomId: room.id, tab: multi && project ? `Arquivos · ${project.name}` : 'Arquivos', label: folder.label };
 }
 
 function roomAgents(roomId?: string) {
@@ -504,16 +511,39 @@ function renderRoomInfo() {
   box.innerHTML = `
     <div class="room-title"></div>
     <div class="room-path"></div>
+    <div class="room-projects"></div>
     <div class="agent-line"></div>
     <div class="room-actions">
       <button class="btn small" data-act="hire">+ Agente</button>
+      <button class="btn small ghost" data-act="projects" title="Resumo do sistema e fichas dos projetos">Projetos</button>
       <button class="btn small" data-act="shell">&gt;_ Terminal</button>
       <button class="btn small ghost" data-act="remove">Fechar sala</button>
     </div>
     <label class="move-room">Andar <select data-act="move"></select></label>`;
   box.querySelector('.room-title')!.textContent = room.name;
-  box.querySelector('.room-path')!.textContent = agent?.worktreeBranch ? agent.cwd : room.path;
-  box.querySelector('.agent-line')!.textContent = agent ? `${agent.name}: ${agent.activity}` : '';
+  const agentProject = agent?.kind !== 'shell' ? logic.agentProject(room, agent) : undefined;
+  const shown = agentProject ?? logic.roomProject(room, roomProjectSel.get(room.id));
+  box.querySelector('.room-path')!.textContent = agent?.worktreeBranch ? agent.cwd : agent ? agent.cwd : (shown?.path ?? room.path);
+  // Os projetos da sala: o escolhido é o que o git, o explorador e o terminal mostram.
+  const chips = box.querySelector<HTMLElement>('.room-projects')!;
+  const projects = room.projects ?? [];
+  chips.hidden = projects.length < 2;
+  for (const p of projects) {
+    const chip = document.createElement('button');
+    chip.className = `chip${p.id === shown?.id ? ' active' : ''}`;
+    chip.textContent = p.name;
+    chip.title = p.summary || p.path;
+    chip.addEventListener('click', () => {
+      roomProjectSel.set(room.id, p.id);
+      // Escolher um projeto mostra a pasta dele, e não a do agente que estava selecionado.
+      if (selectedAgent) selectedAgent = undefined;
+      renderAll();
+    });
+    chips.appendChild(chip);
+  }
+  const where = agentProject && projects.length > 1 ? ` (${agentProject.name})` : '';
+  box.querySelector('.agent-line')!.textContent = agent ? `${agent.name}${where}: ${agent.activity}` : '';
+  box.querySelector('[data-act=projects]')!.addEventListener('click', () => openProjectsDialog(room.id));
   box.querySelector('[data-act=hire]')!.addEventListener('click', () => openAgentDialog(room.id));
   box.querySelector('[data-act=shell]')!.addEventListener('click', () => openShell(room.id));
   box.querySelector('[data-act=remove]')!.addEventListener('click', () => closeRoom(room));
@@ -1196,7 +1226,9 @@ function scheduleGitRefresh() {
 function gitBase(): string {
   // Com o explorador na tela, o git é o da pasta dele (a sala, ou o worktree de um agente).
   if (explorer.isShown()) return explorer.tab()?.base ?? '';
-  return selectedAgent ? `/api/agents/${selectedAgent}` : selectedRoom ? `/api/rooms/${selectedRoom}` : '';
+  if (selectedAgent) return `/api/agents/${selectedAgent}`;
+  const room = state.rooms.find((r) => r.id === selectedRoom);
+  return room ? logic.roomFolder(room, roomProjectSel.get(room.id)).base : '';
 }
 
 let lastGit: { base: string; info: GitInfo } | undefined;
@@ -1576,6 +1608,7 @@ let agentRoom = '';
 formDialog(dlgAgent, async (data) => {
   const agent = (await api('POST', '/api/agents', {
     roomId: agentRoom,
+    projectId: data.get('project') || undefined,
     name: data.get('name'),
     worktree: data.get('worktree') === 'on',
   })) as Agent;
@@ -1584,7 +1617,12 @@ formDialog(dlgAgent, async (data) => {
 });
 function openAgentDialog(roomId: string) {
   agentRoom = roomId;
-  $('#dlg-agent-room').textContent = `Sala: ${state.rooms.find((r) => r.id === roomId)?.name ?? ''}`;
+  const room = state.rooms.find((r) => r.id === roomId);
+  $('#dlg-agent-room').textContent = `Sala: ${room?.name ?? ''}`;
+  const projects = room?.projects ?? [];
+  const current = logic.roomProject(room, roomProjectSel.get(roomId))?.id;
+  $('#agent-project').replaceChildren(...projects.map((p) => new Option(p.name, p.id, false, p.id === current)));
+  $('#agent-project-row').hidden = projects.length < 2;
   dlgAgent.querySelector<HTMLElement>('.error')!.hidden = true;
   dlgAgent.showModal();
 }
@@ -1604,7 +1642,10 @@ async function openWarShell(incidentId: string) {
 }
 
 async function openShell(roomId: string) {
-  const shell = (await api('POST', '/api/shells', { roomId })) as Agent;
+  // Numa sala com vários projetos, o terminal abre na pasta do projeto escolhido.
+  const room = state.rooms.find((r) => r.id === roomId);
+  const projectId = (room?.projects?.length ?? 0) > 1 ? logic.roomProject(room, roomProjectSel.get(roomId))?.id : undefined;
+  const shell = (await api('POST', '/api/shells', { roomId, projectId })) as Agent;
   upsert(state.agents, shell);
   selectAgent(shell.id);
 }
@@ -1626,6 +1667,94 @@ async function fireAgent(a: Agent) {
   );
   if (ok) await api('DELETE', `/api/agents/${a.id}`);
 }
+
+// ---------- projetos da sala ----------
+
+const dlgProjects = $<HTMLDialogElement>('#dlg-projects');
+let projectsRoom = '';
+
+/** Uma linha por projeto: nome, pasta, ficha editável, refazer o rascunho e tirar da sala. */
+function renderProjectsList() {
+  const room = state.rooms.find((r) => r.id === projectsRoom);
+  const list = $('#projects-list');
+  list.replaceChildren();
+  for (const p of room?.projects ?? []) {
+    const row = document.createElement('fieldset');
+    row.className = 'project-row';
+    row.dataset.id = p.id;
+    row.innerHTML = `
+      <legend><input class="project-name" autocomplete="off" /> <small class="muted project-path"></small></legend>
+      <textarea class="project-summary" rows="3" placeholder="O que este projeto faz, o que expõe e o que consome."></textarea>
+      <div class="project-actions">
+        <small class="muted project-auto"></small>
+        <button type="button" class="btn small ghost" data-act="redraft" title="Refaz o rascunho a partir do README">Refazer rascunho</button>
+        <button type="button" class="btn small ghost" data-act="remove">Tirar da sala</button>
+      </div>`;
+    row.querySelector<HTMLInputElement>('.project-name')!.value = p.name;
+    row.querySelector('.project-path')!.textContent = p.path;
+    row.querySelector<HTMLTextAreaElement>('.project-summary')!.value = p.summary;
+    row.querySelector('.project-auto')!.textContent = p.summaryEdited ? 'ficha editada por você' : 'rascunho automático';
+    row.querySelector('[data-act=redraft]')!.addEventListener('click', () => projectAction(() => api('PATCH', `/api/rooms/${projectsRoom}/projects/${p.id}`, { redraft: true })));
+    row.querySelector('[data-act=remove]')!.addEventListener('click', () => projectAction(() => api('DELETE', `/api/rooms/${projectsRoom}/projects/${p.id}`)));
+    list.appendChild(row);
+  }
+}
+
+/** Ação de um projeto no diálogo: atualiza a sala e a lista, ou mostra o erro sem fechar. */
+async function projectAction(fn: () => Promise<unknown>) {
+  const error = dlgProjects.querySelector<HTMLElement>('.error')!;
+  error.hidden = true;
+  try {
+    upsert(state.rooms, (await fn()) as Room);
+    renderProjectsList();
+    renderAll();
+  } catch (err) {
+    error.textContent = (err as Error).message;
+    error.hidden = false;
+  }
+}
+
+function openProjectsDialog(roomId: string) {
+  projectsRoom = roomId;
+  const room = state.rooms.find((r) => r.id === roomId);
+  $('#dlg-projects-title').textContent = `Projetos da sala ${room?.name ?? ''}`;
+  $<HTMLTextAreaElement>('#projects-brief').value = room?.brief ?? '';
+  $<HTMLInputElement>('#project-new-path').value = '';
+  dlgProjects.querySelector<HTMLElement>('.error')!.hidden = true;
+  renderProjectsList();
+  dlgProjects.showModal();
+}
+
+$('#btn-project-add').addEventListener('click', () => {
+  const input = $<HTMLInputElement>('#project-new-path');
+  if (!input.value.trim()) return;
+  void projectAction(async () => {
+    const room = await api('POST', `/api/rooms/${projectsRoom}/projects`, { path: input.value.trim() });
+    input.value = '';
+    return room;
+  });
+});
+
+// Salvar: o resumo da sala e o nome e a ficha de cada projeto que mudou.
+formDialog(dlgProjects, async (data) => {
+  const room = state.rooms.find((r) => r.id === projectsRoom);
+  if (!room) return;
+  let updated = room;
+  const brief = String(data.get('brief') ?? '').trim();
+  if (brief !== (room.brief ?? '')) updated = (await api('PATCH', `/api/rooms/${room.id}`, { brief })) as Room;
+  for (const row of $('#projects-list').querySelectorAll<HTMLElement>('.project-row')) {
+    const p = room.projects?.find((x) => x.id === row.dataset.id);
+    if (!p) continue;
+    const name = row.querySelector<HTMLInputElement>('.project-name')!.value.trim();
+    const summary = row.querySelector<HTMLTextAreaElement>('.project-summary')!.value.trim();
+    const patch: Record<string, string> = {};
+    if (name && name !== p.name) patch.name = name;
+    if (summary !== p.summary) patch.summary = summary;
+    if (Object.keys(patch).length) updated = (await api('PATCH', `/api/rooms/${room.id}/projects/${p.id}`, patch)) as Room;
+  }
+  upsert(state.rooms, updated);
+  renderAll();
+});
 
 async function closeRoom(room: Room) {
   const n = roomAgents(room.id).filter((a) => a.status !== 'exited').length;

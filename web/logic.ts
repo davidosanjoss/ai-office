@@ -1,6 +1,6 @@
 // Regras de decisão da interface, sem DOM, para poderem ser testadas.
 
-import type { Agent, FileChange, Floor, Incident, IncidentMessage, MemoryStatus, Room, WorktreeStatus } from '../shared/types.ts';
+import type { Agent, FileChange, Floor, Incident, IncidentMessage, MemoryStatus, Project, Room, WorktreeStatus } from '../shared/types.ts';
 import { canDeleteBranch } from '../shared/worktree.ts';
 
 /** Depois da última tecla, quanto esperar antes de trocar de terminal sozinho. */
@@ -418,4 +418,27 @@ const GIT_SECTIONS_OPEN: Record<GitSection, boolean> = { worktree: true, working
 /** A seção está aberta: o que você escolheu por último, ou o padrão dela. */
 export function gitSectionOpen(saved: Partial<Record<GitSection, boolean>>, sec: GitSection): boolean {
   return saved[sec] ?? GIT_SECTIONS_OPEN[sec];
+}
+
+// ---------- projetos da sala ----------
+
+/** Projeto que os painéis da sala mostram: o escolhido, se ainda é da sala; senão o primeiro. */
+export function roomProject(room: Room | undefined, selected?: string): Project | undefined {
+  const all = room?.projects ?? [];
+  return all.find((p) => p.id === selected) ?? all[0];
+}
+
+/** Projeto de um agente (registros antigos, sem projeto, ficam no primeiro da sala). */
+export function agentProject(room: Room | undefined, agent: Agent | undefined): Project | undefined {
+  return agent && roomProject(room, agent.projectId);
+}
+
+/**
+ * Pasta do git e do explorador quando nenhum agente está selecionado: a do projeto escolhido.
+ * Uma sala de um projeto só, na própria pasta, continua usando a rota da sala.
+ */
+export function roomFolder(room: Room, selected?: string): { base: string; label: string } {
+  const p = roomProject(room, selected);
+  if (!p || (room.projects!.length === 1 && p.path === room.path)) return { base: `/api/rooms/${room.id}`, label: `${room.name} · ${room.path}` };
+  return { base: `/api/projects/${p.id}`, label: `${room.name} · ${p.name} (${p.path})` };
 }

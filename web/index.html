@@ -186,7 +186,8 @@
       <form method="dialog">
         <h2>Nova sala</h2>
         <p class="muted" id="dlg-room-where"></p>
-        <label>Pasta do projeto
+        <label>Pasta raiz do sistema
+          <small class="muted">Cada repositório dentro dela vira um projeto da sala (ou a própria pasta, se for um repositório).</small>
           <span class="path-row">
             <input name="path" list="projects" required placeholder="/home/voce/projetos/meu-app" autocomplete="off" />
             <button type="button" id="btn-browse" class="btn">📁 Procurar…</button>
@@ -207,6 +208,7 @@
       <form method="dialog">
         <h2>Contratar agente</h2>
         <p class="muted" id="dlg-agent-room"></p>
+        <label id="agent-project-row">Projeto <select name="project" id="agent-project"></select></label>
         <label>Nome (opcional) <input name="name" autocomplete="off" placeholder="sorteado se vazio" /></label>
         <label class="check">
           <input type="checkbox" name="worktree" />
@@ -216,6 +218,28 @@
         <menu>
           <button value="ok" class="btn">Contratar</button>
           <button value="cancel" formnovalidate class="btn ghost">Cancelar</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-projects">
+      <form method="dialog">
+        <h2 id="dlg-projects-title">Projetos da sala</h2>
+        <p class="muted">Cada agente da sala recebe o resumo do sistema e as fichas dos outros projetos, para não ficar preso ao próprio escopo.</p>
+        <label>Resumo do sistema (o fluxo entre os projetos)
+          <textarea name="brief" id="projects-brief" rows="3" placeholder="Ex.: o arquivos recebe e valida os arquivos de venda, o motor calcula e o sales monta as vendas."></textarea>
+        </label>
+        <div id="projects-list"></div>
+        <label>Mais um projeto (pasta dentro da raiz)
+          <span class="path-row">
+            <input id="project-new-path" autocomplete="off" placeholder="nome-da-pasta" />
+            <button type="button" id="btn-project-add" class="btn">+ Adicionar</button>
+          </span>
+        </label>
+        <p class="error" hidden></p>
+        <menu>
+          <button value="ok" class="btn">Salvar</button>
+          <button value="cancel" formnovalidate class="btn ghost">Fechar</button>
         </menu>
       </form>
     </dialog>

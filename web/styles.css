@@ -1699,3 +1699,20 @@ body.dir-hidden #directory {
   padding: 8px;
   min-height: 0;
 }
+
+/* Projetos da sala: o escolhido é o que o git, o explorador e o terminal mostram. */
+.room-projects { display: flex; flex-wrap: wrap; gap: 4px; margin: 4px 0; }
+.room-projects[hidden] { display: none; }
+.room-projects .chip {
+  font: inherit; font-size: 11px; padding: 2px 8px; border-radius: 10px; cursor: pointer;
+  background: transparent; color: var(--muted, #a9b1d6); border: 1px solid #414868;
+}
+.room-projects .chip.active { color: #1a1b26; background: #7aa2f7; border-color: #7aa2f7; }
+#dlg-projects { width: min(640px, 92vw); }
+#dlg-projects textarea { width: 100%; box-sizing: border-box; resize: vertical; }
+#projects-list { display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow: auto; margin: 8px 0; }
+.project-row { border: 1px solid #414868; border-radius: 6px; padding: 6px 8px; margin: 0; }
+.project-row legend { display: flex; gap: 6px; align-items: baseline; padding: 0 4px; }
+.project-row .project-name { font-weight: bold; width: 14em; }
+.project-actions { display: flex; gap: 6px; align-items: center; margin-top: 4px; }
+.project-actions .project-auto { flex: 1; }

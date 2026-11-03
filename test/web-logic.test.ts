@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import * as logic from '../web/logic.ts';
 import type { Agent, Floor, Incident, IncidentMessage, MemoryStatus, Room } from '../shared/types.ts';
 import {
   IDLE_RELEASE_MS,
@@ -443,5 +444,23 @@ describe('seções do painel de git', () => {
     expect(gitSectionOpen({}, 'commits')).toBe(false);
     expect(gitSectionOpen({ working: false, commits: true }, 'working')).toBe(false);
     expect(gitSectionOpen({ working: false, commits: true }, 'commits')).toBe(true);
+  });
+});
+
+describe('projetos da sala', () => {
+  const sala = (projects: { id: string; path: string }[], path = '/saff') =>
+    ({ id: 'r1', name: 'SAFF', path, createdAt: 1, projects: projects.map((p) => ({ ...p, name: p.id, summary: '' })) }) as Room;
+
+  it('o projeto escolhido vale enquanto for da sala; senão, o primeiro', () => {
+    const r = sala([{ id: 'a', path: '/saff/a' }, { id: 'b', path: '/saff/b' }]);
+    expect(logic.roomProject(r, 'b')?.id).toBe('b');
+    expect(logic.roomProject(r, 'sumiu')?.id).toBe('a');
+    expect(logic.agentProject(r, { projectId: undefined } as Agent)?.id).toBe('a');
+  });
+
+  it('git e explorador da sala vão para o projeto; sala de um projeto só na própria pasta continua na rota da sala', () => {
+    expect(logic.roomFolder(sala([{ id: 'a', path: '/saff/a' }, { id: 'b', path: '/saff/b' }]), 'b').base).toBe('/api/projects/b');
+    expect(logic.roomFolder(sala([{ id: 'a', path: '/app' }], '/app')).base).toBe('/api/rooms/r1');
+    expect(logic.roomFolder(sala([{ id: 'a', path: '/saff/a' }])).base).toBe('/api/projects/a');
   });
 });
