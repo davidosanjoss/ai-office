@@ -16,7 +16,8 @@ import { killAll } from '../server/agents.ts';
 import { buildApp } from '../server/app.ts';
 import { which } from '../server/platform.ts';
 import { store } from '../server/store.ts';
-import { cellRect } from '../web/office.ts';
+import { toScreen } from '../web/iso.ts';
+import { VIEW, cellRect } from '../web/office.ts';
 import { BASE, PORT, api, makeRepo, tempDir, waitFor } from './helpers.ts';
 
 function findChrome(): string | undefined {
@@ -77,11 +78,12 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     return { x, y, z };
   }
 
-  /** Ponto do mundo → ponto da tela. */
+  /** Ponto da planta → ponto da página (a câmera está na tela: projeta antes). */
   async function worldToPage(wx: number, wy: number) {
     const box = (await (await page.$('#office canvas'))!.boundingBox())!;
     const c = await camera();
-    return { x: box.x + box.width / 2 + (wx - c.x) * c.z, y: box.y + box.height / 2 + (wy - c.y) * c.z };
+    const s = toScreen({ x: wx, y: wy }, VIEW);
+    return { x: box.x + box.width / 2 + (s.x - c.x) * c.z, y: box.y + box.height / 2 + (s.y - c.y) * c.z };
   }
 
   async function clickWorld(wx: number, wy: number) {

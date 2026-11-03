@@ -8,6 +8,7 @@
 
 import { type Cell, type FixedRoom, type FloorKind, fixedRooms, freeCells, nextWarCell } from '../shared/building.ts';
 import type { Agent, AgentStatus, Incident, Room } from '../shared/types.ts';
+import { type Area, type Projection, pick, projectRect, toScreen as project } from './iso.ts';
 import { RECEPCIONISTA, Sprites, characterFor } from './sprites.ts';
 import {
   type Geometry,
@@ -50,6 +51,8 @@ export const HEAD_Y = 36;
 /** O funcionário senta um pouco à esquerda: o monitor (de costas para nós) fica à direita do rosto. */
 const SEAT_DX = -6;
 export const ZOOMS = [0.5, 0.75, 1, 1.5, 2, 3];
+/** Como o mapa é desenhado: a câmera e os cliques ficam na tela, a planta continua 2D. */
+export const VIEW: Projection = 'topo';
 
 export const STATUS_COLOR: Record<AgentStatus, string> = {
   starting: '#565f89',
@@ -78,10 +81,10 @@ interface Rect {
 }
 
 type Hit =
-  | (Rect & { kind: 'agent' | 'add' | 'room'; id: string })
-  | (Rect & { kind: 'newroom'; cell: Cell })
-  | (Rect & { kind: 'war'; slot: number })
-  | (Rect & { kind: 'newwar' });
+  | (Area & { kind: 'agent' | 'add' | 'room'; id: string })
+  | (Area & { kind: 'newroom'; cell: Cell })
+  | (Area & { kind: 'war'; slot: number })
+  | (Area & { kind: 'newwar' });
 
 export interface PlacedRoom {
   room: Room;
@@ -293,7 +296,7 @@ export class Office {
   /** Mostra o prédio inteiro (as vagas "+" em volta podem ficar só pela metade). */
   fit() {
     this.userMoved = false;
-    this.setCamera(fitCamera(this.layout.core, this.cssW, this.cssH));
+    this.setCamera(fitCamera(projectRect(this.layout.core, VIEW), this.cssW, this.cssH));
   }
 
   zoom(dir: 1 | -1, at?: { x: number; y: number }) {
@@ -319,8 +322,9 @@ export class Office {
     this.revealRect(this.layout.fixed.find((f) => f.id === 'guerra' && f.slot === slot)?.rect);
   }
 
-  private revealRect(r: Rect | undefined) {
-    if (!r || !this.cssW) return;
+  private revealRect(plan: Rect | undefined) {
+    if (!plan || !this.cssW) return;
+    const r = projectRect(plan, VIEW);
     const c = this.camera;
     const view = { x: c.x - this.cssW / 2 / c.z, y: c.y - this.cssH / 2 / c.z, w: this.cssW / c.z, h: this.cssH / c.z };
     const inside = r.x >= view.x && r.y >= view.y && r.x + r.w <= view.x + view.w && r.y + r.h <= view.y + view.h;
@@ -500,9 +504,8 @@ export class Office {
   }
 
   private hitAt(e: { clientX: number; clientY: number }): Hit | undefined {
-    const p = this.toWorld(e);
-    // Agentes e mesas antes da sala, porque ficam dentro dela.
-    return [...this.hits].reverse().find((h) => p.x >= h.x && p.x < h.x + h.w && p.y >= h.y && p.y < h.y + h.h);
+    // Agentes e mesas antes da sala, porque são desenhados depois, dentro dela.
+    return pick(this.hits, this.toWorld(e), VIEW);
   }
 
   private onDown(e: PointerEvent) {
@@ -1140,9 +1143,11 @@ export class Office {
 
   // ---------- textos (em escala de tela) ----------
 
+  /** Ponto da planta → pixel do canvas na tela, já com a câmera. */
   private toScreen(x: number, y: number) {
     const c = this.camera;
-    return { x: (x - c.x) * c.z + this.cssW / 2, y: (y - c.y) * c.z + this.cssH / 2 };
+    const s = project({ x, y }, VIEW);
+    return { x: (s.x - c.x) * c.z + this.cssW / 2, y: (s.y - c.y) * c.z + this.cssH / 2 };
   }
 
   private drawTexts() {
