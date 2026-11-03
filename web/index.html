@@ -230,6 +230,7 @@
       <form method="dialog">
         <h2 id="dlg-projects-title">Projetos da sala</h2>
         <p class="muted">Cada agente da sala recebe o resumo do sistema e as fichas dos outros projetos, para não ficar preso ao próprio escopo.</p>
+        <label>Nome da sala <input name="roomName" id="projects-room-name" required autocomplete="off" /></label>
         <label>Resumo do sistema (o fluxo entre os projetos)
           <textarea name="brief" id="projects-brief" rows="3" placeholder="Ex.: o arquivos recebe e valida os arquivos de venda, o motor calcula e o sales monta as vendas."></textarea>
         </label>
@@ -237,6 +238,7 @@
         <label>Mais um projeto (pasta dentro da raiz)
           <span class="path-row">
             <input id="project-new-path" autocomplete="off" placeholder="nome-da-pasta" />
+            <button type="button" id="btn-project-browse" class="btn" title="Escolher a pasta, começando na raiz da sala">📁 Procurar…</button>
             <button type="button" id="btn-project-add" class="btn">+ Adicionar</button>
           </span>
         </label>

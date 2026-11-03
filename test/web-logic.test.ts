@@ -464,3 +464,13 @@ describe('projetos da sala', () => {
     expect(logic.roomFolder(sala([{ id: 'a', path: '/saff/a' }])).base).toBe('/api/projects/a');
   });
 });
+
+describe('pathInRoot', () => {
+  it('pasta escolhida dentro da raiz vira relativa; a própria raiz vira "."; fora dela fica inteira', () => {
+    expect(logic.pathInRoot('/home/v/saff', '/home/v/saff/ms-motor')).toBe('ms-motor');
+    expect(logic.pathInRoot('/home/v/saff/', '/home/v/saff/a/b')).toBe('a/b');
+    expect(logic.pathInRoot('/home/v/saff', '/home/v/saff')).toBe('.');
+    expect(logic.pathInRoot('/home/v/saff', '/home/v/saff-2/x')).toBe('/home/v/saff-2/x');
+    expect(logic.pathInRoot('C:\\ampm\\saff', 'C:\\ampm\\saff\\ms-motor')).toBe('ms-motor');
+  });
+});

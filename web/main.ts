@@ -1717,11 +1717,33 @@ function openProjectsDialog(roomId: string) {
   const room = state.rooms.find((r) => r.id === roomId);
   $('#dlg-projects-title').textContent = `Projetos da sala ${room?.name ?? ''}`;
   $<HTMLTextAreaElement>('#projects-brief').value = room?.brief ?? '';
+  $<HTMLInputElement>('#projects-room-name').value = room?.name ?? '';
   $<HTMLInputElement>('#project-new-path').value = '';
   dlgProjects.querySelector<HTMLElement>('.error')!.hidden = true;
   renderProjectsList();
   dlgProjects.showModal();
 }
+
+// O seletor de pastas do sistema já abre na raiz da sala.
+$('#btn-project-browse').addEventListener('click', async () => {
+  const room = state.rooms.find((r) => r.id === projectsRoom);
+  if (!room) return;
+  const btn = $<HTMLButtonElement>('#btn-project-browse');
+  const error = dlgProjects.querySelector<HTMLElement>('.error')!;
+  btn.disabled = true;
+  btn.textContent = 'Aguardando…';
+  error.hidden = true;
+  try {
+    const { path } = (await api('POST', '/api/pick-folder', { start: room.path })) as { path: string | null };
+    if (path) $<HTMLInputElement>('#project-new-path').value = logic.pathInRoot(room.path, path);
+  } catch (err) {
+    error.textContent = (err as Error).message;
+    error.hidden = false;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '📁 Procurar…';
+  }
+});
 
 $('#btn-project-add').addEventListener('click', () => {
   const input = $<HTMLInputElement>('#project-new-path');
@@ -1739,7 +1761,11 @@ formDialog(dlgProjects, async (data) => {
   if (!room) return;
   let updated = room;
   const brief = String(data.get('brief') ?? '').trim();
-  if (brief !== (room.brief ?? '')) updated = (await api('PATCH', `/api/rooms/${room.id}`, { brief })) as Room;
+  const roomName = String(data.get('roomName') ?? '').trim();
+  const roomPatch: Record<string, string> = {};
+  if (brief !== (room.brief ?? '')) roomPatch.brief = brief;
+  if (roomName && roomName !== room.name) roomPatch.name = roomName;
+  if (Object.keys(roomPatch).length) updated = (await api('PATCH', `/api/rooms/${room.id}`, roomPatch)) as Room;
   for (const row of $('#projects-list').querySelectorAll<HTMLElement>('.project-row')) {
     const p = room.projects?.find((x) => x.id === row.dataset.id);
     if (!p) continue;

@@ -442,3 +442,16 @@ export function roomFolder(room: Room, selected?: string): { base: string; label
   if (!p || (room.projects!.length === 1 && p.path === room.path)) return { base: `/api/rooms/${room.id}`, label: `${room.name} · ${room.path}` };
   return { base: `/api/projects/${p.id}`, label: `${room.name} · ${p.name} (${p.path})` };
 }
+
+/**
+ * Pasta escolhida no seletor, para o campo "mais um projeto": relativa à raiz da sala quando fica
+ * dentro dela (o servidor resolve a partir da raiz); fora dela, o caminho inteiro (o servidor recusa).
+ */
+export function pathInRoot(root: string, picked: string): string {
+  const norm = (p: string) => p.replace(/[\\/]+$/, '');
+  const r = norm(root);
+  const p = norm(picked);
+  if (p === r) return '.';
+  for (const sep of ['/', '\\']) if (p.startsWith(r + sep)) return p.slice(r.length + 1);
+  return picked;
+}

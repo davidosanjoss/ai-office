@@ -869,6 +869,27 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.click('#room-info [data-act=projects]');
     await page.waitForSelector('#dlg-projects[open] .project-row');
     await page.type('#projects-brief', 'arquivos depois sales');
+    // O nome da sala se edita no mesmo diálogo.
+    expect(await page.$eval('#projects-room-name', (e) => (e as HTMLInputElement).value)).toBe('SAFF');
+    await page.$eval('#projects-room-name', (e) => ((e as HTMLInputElement).value = ''));
+    await page.type('#projects-room-name', 'SAFF Faturamento');
+    // O 📁 abre o seletor de pastas já na raiz da sala (o seletor nativo é trocado por uma resposta pronta).
+    await page.evaluate((picked) => {
+      const real = window.fetch;
+      (window as any).__pickStart = undefined;
+      window.fetch = async (url, init) => {
+        if (String(url).includes('/api/pick-folder')) {
+          (window as any).__pickStart = JSON.parse(String(init?.body)).start;
+          return new Response(JSON.stringify({ path: picked }), { headers: { 'content-type': 'application/json' } });
+        }
+        return real(url, init);
+      };
+    }, path.join(root, 'ms-sales', 'sub'));
+    await page.click('#btn-project-browse');
+    await page.waitForFunction(() => (document.querySelector('#project-new-path') as HTMLInputElement).value !== '');
+    expect(await page.evaluate(() => (window as any).__pickStart)).toBe(root);
+    expect(await page.$eval('#project-new-path', (e) => (e as HTMLInputElement).value)).toBe(path.join('ms-sales', 'sub'));
+    await page.$eval('#project-new-path', (e) => ((e as HTMLInputElement).value = ''));
     const summary = '#projects-list .project-row:first-child .project-summary';
     await page.$eval(summary, (e) => ((e as HTMLTextAreaElement).value = ''));
     await page.type(summary, 'Valida os arquivos de venda.');
@@ -876,6 +897,9 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForFunction(() => !document.querySelector('#dlg-projects[open]'));
     await waitFor(() => store.rooms.get(room.id)?.brief === 'arquivos depois sales', 3000, 'resumo salvo');
     expect(store.rooms.get(room.id)!.projects![0]).toMatchObject({ summary: 'Valida os arquivos de venda.', summaryEdited: true });
+    expect(store.rooms.get(room.id)!.name).toBe('SAFF Faturamento');
+    await page.waitForFunction(() => document.querySelector('.room-title')?.textContent === 'SAFF Faturamento');
+    await page.reload();
   });
 
   it('a página não tem erros de JavaScript', async () => {
