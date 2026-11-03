@@ -4,6 +4,8 @@
 Entrada:
   personagens/<nome>/anim/<animação>/<direção>/frame_NNN.png   (pacotes baixados do PixelLab)
   objetos/*.png                                                 (todos os objetos, das duas fases)
+  piloto-iso/objetos/*.png                                      (objetos do piloto isométrico)
+  piloto-iso/<nome>/anim/<animação>/<direção>/frame_NNN.png     (animações nas diagonais)
   fase-*/piso*/tileset.png                                      (tilesets: grama + outro terreno)
 
 Saída em web/public/sprites/: uma tira horizontal por animação de cada personagem, um PNG por
@@ -111,6 +113,11 @@ def main() -> None:
         img.save(OUT / f.name)
         manifest["objetos"][f.stem] = {"arquivo": f.name, "w": img.width, "h": img.height}
 
+    for f in sorted((SRC / "piloto-iso" / "objetos").glob("*.png")):
+        img = Image.open(f).convert("RGBA")
+        img.save(OUT / f.name)
+        manifest["objetos"][f.stem] = {"arquivo": f.name, "w": img.width, "h": img.height}
+
     for nome, origem, terreno in PISOS:
         t = pure_tile(Image.open(SRC / origem).convert("RGBA"), terreno == "grama")
         t.save(OUT / f"{nome}.png")
@@ -141,6 +148,28 @@ def main() -> None:
                     "cabecaY": head_y(frames),
                 }
         manifest["personagens"][pasta.name] = anims
+
+    # Piloto isométrico: animações nas diagonais, sempre com a direção no nome (digitando-south-west).
+    piloto = SRC / "piloto-iso"
+    for pasta in sorted(p for p in piloto.iterdir() if (p / "anim").is_dir()):
+        anims = manifest["personagens"].setdefault(pasta.name, {})
+        for anim in sorted(os.listdir(pasta / "anim")):
+            escolha = QUADROS.get(anim)
+            for direcao in sorted(os.listdir(pasta / "anim" / anim)):
+                base = pasta / "anim" / anim / direcao
+                todos = [Image.open(base / a).convert("RGBA") for a in sorted(os.listdir(base))]
+                frames = [todos[i] for i in escolha if i < len(todos)] if escolha else todos
+                chave = f"{anim}-{direcao}"
+                arquivo = f"personagens/{pasta.name}-{chave}.png"
+                strip(frames).save(OUT / arquivo)
+                anims[chave] = {
+                    "arquivo": arquivo,
+                    "w": frames[0].width,
+                    "h": frames[0].height,
+                    "quadros": len(frames),
+                    "pesY": feet_y(frames),
+                    "cabecaY": head_y(frames),
+                }
 
     (OUT / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False) + "\n")
     total = len(list(OUT.rglob("*.png")))

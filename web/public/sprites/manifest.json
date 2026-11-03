@@ -84,6 +84,11 @@
       "arquivo": "vaso-grande.png",
       "w": 48,
       "h": 64
+    },
+    "mesa-iso": {
+      "arquivo": "mesa-iso.png",
+      "w": 96,
+      "h": 80
     }
   },
   "pisos": {
@@ -381,6 +386,14 @@
         "quadros": 6,
         "pesY": 61,
         "cabecaY": 10
+      },
+      "digitando-south-west": {
+        "arquivo": "personagens/funcionario-1-digitando-south-west.png",
+        "w": 76,
+        "h": 76,
+        "quadros": 4,
+        "pesY": 64,
+        "cabecaY": 17
       }
     },
     "funcionario-3": {
