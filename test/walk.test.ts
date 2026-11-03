@@ -99,3 +99,28 @@ describe('andar', () => {
     expect(facing({ x: 0, y: 0 }, { x: -10, y: 2 })).toBe('west');
   });
 });
+
+describe('sala larga', () => {
+  const G = { cellW: 100, cellH: 80, corr: 20 };
+
+  it('ocupa as vagas e o corredor entre elas, com uma porta só, no meio', () => {
+    expect(cellBox({ x: 1, y: 1, w: 3 }, G)).toEqual({ x: 120, y: -100, w: 340, h: 80 });
+    expect(doorPoint({ x: 1, y: 1, w: 3 }, G).x).toBe(120 + 170);
+    expect(doorPoint({ x: 1, y: 1, w: 2 }, G).x).toBe(lineX(2, G));
+  });
+
+  it('ninguém atravessa a sala pelo corredor que ela engoliu', () => {
+    const g = buildGraph([{ x: 1, y: 1, w: 3 }], G);
+    // As linhas verticais do meio (x = 2 e x = 3) não ligam a fileira de baixo à de cima.
+    for (const i of [2, 3]) expect(g.edges.get(`${i},1`)?.has(`${i},2`) ?? false).toBe(false);
+    expect(g.edges.get('1,1')!.has('1,2')).toBe(true);
+    expect(g.edges.get('4,1')!.has('4,2')).toBe(true);
+    expect([...g.nodes.keys()].filter((k) => k.startsWith('porta:'))).toEqual(['porta:1,1']);
+  });
+
+  it('dá para ir de uma sala larga até outra sala pelos corredores', () => {
+    const g = buildGraph([{ x: 1, y: 1, w: 2 }, { x: 1, y: 2 }, { x: 3, y: 1 }], G);
+    expect(routeBetween(g, { x: 1, y: 1, w: 2 }, { x: 3, y: 1 }, G).length).toBeGreaterThan(2);
+    expect(routeBetween(g, { x: 1, y: 2 }, { x: 1, y: 1, w: 2 }, G).length).toBeGreaterThan(2);
+  });
+});

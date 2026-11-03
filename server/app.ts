@@ -26,10 +26,11 @@ import { handleHook } from './hooks.ts';
 import { IncidentError, addParticipants, closeIncident, incidentAt, leaveIncidents, openIncident, openWarShell, sendMessage, shareMessage } from './incidents.ts';
 import { MemoryError, memoryEvents, memoryStatus, openDataDir, startInstall, startUninstall } from './memory.ts';
 import { pickFolder } from './picker.ts';
+import { detectProjects, draftSummary, insideRoot, newProject, projectOf } from './projects.ts';
 import { WorktreeError, mergeWorktree, openPr, removeWorktree, worktreeStatus } from './worktree.ts';
 import { PORT } from './platform.ts';
 import { DEFAULT_FLOOR, store } from './store.ts';
-import { FLOOR_COLORS, MAX_WAR_ROOMS, autoPlace, canPlace, isValidCell } from '../shared/building.ts';
+import { FLOOR_COLORS, MAX_WAR_ROOMS, autoPlace, canPlace, closeGap, isValidCell } from '../shared/building.ts';
 import type { Agent, Floor, FloorDefaults, Room } from '../shared/types.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -164,15 +165,84 @@ export async function buildApp(opts: { port?: number } = {}) {
     if (existing) return existing;
     const floorId = req.body.floorId ?? firstFloorId();
     if (!floorId || !store.floors.has(floorId)) return reply.code(400).send({ error: 'Escolha um andar para a sala' });
-    const rooms = store.roomsOn(floorId);
+    const rooms = store.planRooms(floorId);
     const wanted = req.body.pos;
     if (wanted !== undefined && !(isValidCell(wanted) && canPlace(rooms, wanted, 'andar', store.warRoomsOf(floorId)))) {
       return reply.code(400).send({ error: 'Essa vaga do andar não está livre' });
     }
     const pos = wanted ? { x: wanted.x, y: wanted.y } : autoPlace(rooms, 'andar', store.warRoomsOf(floorId));
-    const room: Room = { id: randomUUID().slice(0, 8), name: req.body.name?.trim() || path.basename(dir), path: dir, createdAt: Date.now(), floorId, pos };
+    const room: Room = {
+      id: randomUUID().slice(0, 8),
+      name: req.body.name?.trim() || path.basename(dir),
+      path: dir,
+      // A pasta é a raiz do sistema: cada repositório dentro dela vira um projeto da sala.
+      projects: detectProjects(dir).map(newProject),
+      createdAt: Date.now(),
+      floorId,
+      pos,
+    };
     store.putRoom(room);
     return room;
+  });
+
+  /** Renomeia a sala ou muda o resumo do sistema que os agentes dela recebem. */
+  app.patch<{ Params: { id: string }; Body: { name?: string; brief?: string } }>('/api/rooms/:id', async (req, reply) => {
+    const room = store.rooms.get(req.params.id);
+    if (!room) return reply.code(404).send({ error: 'Sala não encontrada' });
+    const name = typeof req.body?.name === 'string' && req.body.name.trim() ? req.body.name.trim() : room.name;
+    const brief = typeof req.body?.brief === 'string' ? req.body.brief.trim().slice(0, 4000) : room.brief;
+    const updated: Room = { ...room, name, brief: brief || undefined };
+    store.putRoom(updated);
+    return updated;
+  });
+
+  /** Mais um projeto na sala: uma pasta na raiz dela. */
+  app.post<{ Params: { id: string }; Body: { path?: string } }>('/api/rooms/:id/projects', async (req, reply) => {
+    const room = store.rooms.get(req.params.id);
+    if (!room) return reply.code(404).send({ error: 'Sala não encontrada' });
+    const raw = String(req.body?.path ?? '').trim();
+    const dir = path.resolve(room.path, raw);
+    if (!raw || !fs.existsSync(dir) || !fs.statSync(dir).isDirectory()) return reply.code(400).send({ error: 'Pasta não existe' });
+    if (!insideRoot(room.path, dir)) return reply.code(400).send({ error: `O projeto precisa ficar dentro da pasta da sala (${room.path})` });
+    const projects = room.projects ?? [];
+    if (projects.some((p) => p.path === dir)) return reply.code(400).send({ error: 'Esse projeto já está na sala' });
+    const updated: Room = { ...room, projects: [...projects, newProject(dir)] };
+    store.putRoom(updated);
+    return updated;
+  });
+
+  /** Edita a ficha de um projeto. `redraft` refaz o rascunho automático e volta a deixá-lo automático. */
+  app.patch<{ Params: { id: string; pid: string }; Body: { name?: string; summary?: string; redraft?: boolean } }>(
+    '/api/rooms/:id/projects/:pid',
+    async (req, reply) => {
+      const room = store.rooms.get(req.params.id);
+      const project = room?.projects?.find((p) => p.id === req.params.pid);
+      if (!room || !project) return reply.code(404).send({ error: 'Projeto não encontrado' });
+      const next = { ...project };
+      if (typeof req.body?.name === 'string' && req.body.name.trim()) next.name = req.body.name.trim();
+      if (req.body?.redraft) {
+        next.summary = draftSummary(project.path);
+        delete next.summaryEdited;
+      } else if (typeof req.body?.summary === 'string') {
+        next.summary = req.body.summary.trim().slice(0, 2000);
+        next.summaryEdited = true;
+      }
+      const updated: Room = { ...room, projects: room.projects!.map((p) => (p.id === project.id ? next : p)) };
+      store.putRoom(updated);
+      return updated;
+    },
+  );
+
+  app.delete<{ Params: { id: string; pid: string } }>('/api/rooms/:id/projects/:pid', async (req, reply) => {
+    const room = store.rooms.get(req.params.id);
+    const project = room?.projects?.find((p) => p.id === req.params.pid);
+    if (!room || !project) return reply.code(404).send({ error: 'Projeto não encontrado' });
+    if (room.projects!.length === 1) return reply.code(400).send({ error: 'A sala precisa de pelo menos um projeto' });
+    const busy = [...store.agents.values()].filter((a) => a.roomId === room.id && projectOf(room, a.projectId).id === project.id);
+    if (busy.length) return reply.code(400).send({ error: `Ainda tem gente trabalhando nele: ${busy.map((a) => a.name).join(', ')}` });
+    const updated: Room = { ...room, projects: room.projects!.filter((p) => p.id !== project.id) };
+    store.putRoom(updated);
+    return updated;
   });
 
   /** Leva a sala (com os agentes, que continuam trabalhando) para uma vaga livre de outro andar. */
@@ -182,18 +252,22 @@ export async function buildApp(opts: { port?: number } = {}) {
     const floorId = String(req.body?.floorId ?? '');
     if (!store.floors.has(floorId)) return reply.code(400).send({ error: 'Andar não encontrado' });
     if (room.floorId === floorId) return room;
-    const moved = { ...room, floorId, pos: autoPlace(store.roomsOn(floorId), 'andar', store.warRoomsOf(floorId)) };
+    const fill = gapMoves(room.id);
+    const moved = { ...room, floorId, pos: autoPlace(store.planRooms(floorId), 'andar', store.warRoomsOf(floorId)) };
     store.putRoom(moved);
+    applyGap(fill);
     return moved;
   });
 
   app.delete<{ Params: { id: string } }>('/api/rooms/:id', async (req) => {
+    const fill = gapMoves(req.params.id);
     for (const a of store.agents.values()) {
       if (a.roomId !== req.params.id) continue;
       leaveIncidents(a.id);
       removeAgent(a.id);
     }
     store.removeRoom(req.params.id);
+    applyGap(fill);
     return { ok: true };
   });
 
@@ -201,6 +275,12 @@ export async function buildApp(opts: { port?: number } = {}) {
     const room = store.rooms.get(req.params.id);
     if (!room) return reply.code(404).send({ error: 'Sala não encontrada' });
     return gitInfo(room.path);
+  });
+
+  app.get<{ Params: { id: string } }>('/api/projects/:id/git', async (req, reply) => {
+    const dir = projectDir(req.params.id);
+    if (!dir) return reply.code(404).send({ error: 'Projeto não encontrado' });
+    return gitInfo(dir);
   });
 
   app.get<{ Params: { id: string } }>('/api/agents/:id/git', async (req, reply) => {
@@ -214,7 +294,7 @@ export async function buildApp(opts: { port?: number } = {}) {
     '/api/:kind/:id/diff',
     async (req, reply) => {
       const { kind, id } = req.params;
-      const cwd = kind === 'agents' ? store.agents.get(id)?.cwd : kind === 'rooms' ? store.rooms.get(id)?.path : undefined;
+      const cwd = folderOf(kind, id);
       if (!cwd) return reply.code(404).send({ error: 'Não encontrado' });
       const scope = req.query.scope === 'branch' ? 'branch' : 'working';
       try {
@@ -229,8 +309,7 @@ export async function buildApp(opts: { port?: number } = {}) {
 
   /** Acha a pasta (agente ou sala); erros de caminho, conflito ou ref viram a mensagem para você. */
   const folderRoute = (fn: (cwd: string, req: any) => unknown) => async (req: any, reply: any) => {
-    const { kind, id } = req.params;
-    const cwd = kind === 'agents' ? store.agents.get(id)?.cwd : kind === 'rooms' ? store.rooms.get(id)?.path : undefined;
+    const cwd = folderOf(req.params.kind, req.params.id);
     if (!cwd) return reply.code(404).send({ error: 'Não encontrado' });
     try {
       return await fn(cwd, req);
@@ -261,17 +340,18 @@ export async function buildApp(opts: { port?: number } = {}) {
   app.get('/api/:kind/:id/history/tree', folderRoute((cwd, req) => treeAt(cwd, req.query.ref, req.query.path ?? '')));
   app.get('/api/:kind/:id/history/show', folderRoute((cwd, req) => fileAt(cwd, req.query.ref, req.query.path)));
 
-  app.post<{ Body: { roomId: string; name?: string; worktree?: boolean } }>('/api/agents', async (req, reply) => {
+  app.post<{ Body: { roomId: string; name?: string; worktree?: boolean; projectId?: string } }>('/api/agents', async (req, reply) => {
     try {
-      return await createAgent(String(req.body?.roomId), { name: req.body?.name, worktree: !!req.body?.worktree });
+      const projectId = req.body?.projectId ? String(req.body.projectId) : undefined;
+      return await createAgent(String(req.body?.roomId), { name: req.body?.name, worktree: !!req.body?.worktree, projectId });
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
   });
 
-  app.post<{ Body: { roomId: string } }>('/api/shells', async (req, reply) => {
+  app.post<{ Body: { roomId: string; projectId?: string } }>('/api/shells', async (req, reply) => {
     try {
-      return createShell(String(req.body?.roomId));
+      return createShell(String(req.body?.roomId), { projectId: req.body?.projectId ? String(req.body.projectId) : undefined });
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
     }
@@ -318,8 +398,10 @@ export async function buildApp(opts: { port?: number } = {}) {
     (fn: (agent: Agent, room: Room, req: any) => unknown) =>
     async (req: any, reply: any) => {
       const agent = store.agents.get(req.params.id);
-      const room = agent && store.rooms.get(agent.roomId);
-      if (!agent || !room) return reply.code(404).send({ error: 'Agente não encontrado' });
+      const sala = agent && store.rooms.get(agent.roomId);
+      if (!agent || !sala) return reply.code(404).send({ error: 'Agente não encontrado' });
+      // O worktree sai do repositório do projeto do agente, e é para ele que o trabalho volta.
+      const room = { ...sala, path: projectOf(sala, agent.projectId).path };
       try {
         return await fn(agent, room, req);
       } catch (err) {
@@ -378,6 +460,43 @@ export async function buildApp(opts: { port?: number } = {}) {
 }
 
 /** Primeiro andar acima do térreo: destino padrão de salas novas sem andar escolhido. */
+/**
+ * Quem anda para o lugar de uma sala que vai sair do andar (fechada ou levada para outro): as
+ * salas de fora dela na mesma fileira, se não têm outra encostada em cima ou embaixo.
+ */
+function gapMoves(roomId: string): { id: string; pos: { x: number; y: number } }[] {
+  const room = store.rooms.get(roomId);
+  if (!room?.floorId) return [];
+  const plan = store.planRooms(room.floorId);
+  const removed = plan.find((r) => r.id === roomId);
+  if (!removed) return [];
+  return [...closeGap(plan, removed)].map(([r, pos]) => ({ id: r.id, pos }));
+}
+
+function applyGap(moves: { id: string; pos: { x: number; y: number } }[]) {
+  for (const m of moves) {
+    const r = store.rooms.get(m.id);
+    if (r) store.putRoom({ ...r, pos: m.pos });
+  }
+}
+
+/** Pasta de um projeto, procurando em todas as salas. */
+function projectDir(id: string): string | undefined {
+  for (const r of store.rooms.values()) {
+    const p = r.projects?.find((x) => x.id === id);
+    if (p) return p.path;
+  }
+  return undefined;
+}
+
+/** Pasta das rotas de arquivos, diff e histórico: a do agente (worktree incluso), a de um projeto ou a raiz da sala. */
+function folderOf(kind: string, id: string): string | undefined {
+  if (kind === 'agents') return store.agents.get(id)?.cwd;
+  if (kind === 'projects') return projectDir(id);
+  if (kind === 'rooms') return store.rooms.get(id)?.path;
+  return undefined;
+}
+
 function firstFloorId(): string | undefined {
   return [...store.floors.values()].sort((a, b) => a.order - b.order)[0]?.id;
 }

@@ -31,10 +31,32 @@ export interface FloorDefaults {
   instructions?: string;
 }
 
+/** Um projeto (repositório) dentro de uma sala. */
+export interface Project {
+  id: string;
+  name: string;
+  /** Pasta do projeto: a própria raiz da sala ou uma pasta dentro dela. */
+  path: string;
+  /** Ficha curta que os agentes dos outros projetos da sala recebem. Começa como rascunho automático. */
+  summary: string;
+  /** Você editou a ficha: o rascunho automático não a substitui mais. */
+  summaryEdited?: boolean;
+}
+
+/**
+ * Uma sala é a pasta raiz de um sistema (ex.: ~/ampm/saff) e reúne os projetos dele. Cada agente
+ * trabalha num projeto e recebe o contexto da sala: o fluxo, as fichas dos outros projetos e quem
+ * está fazendo o quê.
+ */
 export interface Room {
   id: string;
   name: string;
+  /** Pasta raiz da sala. */
   path: string;
+  /** Projetos da sala. Salas de antes disso ganham um, com a própria pasta, ao carregar. */
+  projects?: Project[];
+  /** Resumo do sistema como um todo (o fluxo entre os projetos), escrito por você. */
+  brief?: string;
   createdAt: number;
   /** Andar da sala. Salas de antes dos andares vão para o primeiro andar ao carregar. */
   floorId?: string;
@@ -47,6 +69,8 @@ export interface Agent {
   /** 'shell' é um terminal comum, sem Claude. Ausente nos registros antigos = 'claude'. */
   kind?: 'claude' | 'shell';
   roomId: string;
+  /** Projeto da sala em que o agente trabalha. Ausente nos registros antigos = o primeiro da sala. */
+  projectId?: string;
   name: string;
   /** Pasta onde o agente roda: a do projeto ou a de um worktree. */
   cwd: string;

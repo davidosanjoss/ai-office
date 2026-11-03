@@ -57,6 +57,14 @@ describe('cleanEnv', () => {
     expect(env.CLAUDE_CODE_SESSION_ID).toBeUndefined();
   });
 
+  it('regressão: não repassa o endereço de outro escritório para os terminais', () => {
+    process.env.AI_OFFICE_URL = 'http://127.0.0.1:7420';
+    process.env.AI_OFFICE_AGENT_ID = 'pai';
+    const env = cleanEnv();
+    expect(env.AI_OFFICE_URL).toBeUndefined();
+    expect(env.AI_OFFICE_AGENT_ID).toBeUndefined();
+  });
+
   it('mantém as configurações do usuário (ex.: Bedrock)', () => {
     process.env.CLAUDE_CODE_USE_BEDROCK = '1';
     process.env.ANTHROPIC_MODEL = 'x';

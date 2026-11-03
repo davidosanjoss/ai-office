@@ -114,9 +114,25 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     throw new Error(`não consegui levar o ponto (${wx}, ${wy}) para o meio do mapa`);
   }
 
+  /** O git fica só no explorador: abre o 📁 Arquivos (se ainda não está aberto) no modo Git. */
+  async function openGit() {
+    if (await page.$('#files-view[hidden]')) {
+      await page.click('#act-files');
+      await page.waitForSelector('#files-view:not([hidden])');
+    }
+    await page.click('#files-modes button[data-mode="git"]');
+    await page.waitForSelector('#git-pane:not([hidden]) #git .branch');
+  }
+
+  async function closeExplorer() {
+    if (!(await page.$('#tabs .tab.files'))) return;
+    await page.click('#tabs .tab.files .close');
+    await page.waitForSelector('#files-view[hidden]');
+  }
+
   async function hireViaTab(name: string): Promise<Agent> {
     const before = new Set(agents().map((a) => a.id));
-    await page.click('#tabs .tab.add[title="Contratar agente"]');
+    await page.click('#tab-actions [title="Contratar agente"]');
     await page.waitForSelector('#dlg-agent[open]');
     await page.type('#dlg-agent input[name=name]', name);
     await page.keyboard.press('Enter');
@@ -125,11 +141,16 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     return a;
   }
 
-  it('regressão: o painel de git carrega ao abrir a página', async () => {
+  it('regressão: o git carrega no explorador logo depois de abrir a página', async () => {
     const repo = makeRepo('e2e-repo');
     await api('POST', '/api/rooms', { path: repo });
     await page.goto(BASE);
-    await page.waitForFunction(() => document.querySelector('#git')?.textContent?.includes('main'), { timeout: 5000 });
+    // O painel lateral não tem mais git: ele fica só no modo Git do explorador.
+    expect(await page.$('#sidebar #git')).toBeNull();
+    await page.waitForSelector('#tab-actions:not([hidden]) #act-files');
+    await openGit();
+    expect(await page.$eval('#git', (e) => e.textContent)).toContain('main');
+    await closeExplorer();
   });
 
   it('regressão: Enter no diálogo cria a sala (antes acionava "Cancelar")', async () => {
@@ -147,6 +168,9 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await waitStatus(a.id, 'idle');
     const tabs = await page.$$eval('#tabs .tab', (els) => els.map((e) => e.textContent));
     expect(tabs.some((t) => t?.includes('Ana'))).toBe(true);
+    // Contratar, terminal e arquivos ficam à direita das abas, e não mais no painel lateral.
+    expect(await page.$$eval('#tab-actions:not([hidden]) button:not([hidden])', (els) => els.map((e) => e.textContent))).toEqual(['+ Agente', '>_ Terminal', '📁 Arquivos']);
+    expect(await page.$('#room-info [data-act=hire], #room-info [data-act=shell], #git-panel')).toBeNull();
   });
 
   it('regressão: as respostas automáticas do terminal não marcam como visto quem terminou', async () => {
@@ -167,7 +191,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForSelector('#exited:not([hidden])');
 
     // Sai da aba e volta: antes, o terminal de quem encerrou ficava escondido e o erro sumia.
-    await page.click('#tabs .tab.add[title^="Novo terminal"]');
+    await page.click('#tab-actions [title^="Novo terminal"]');
     const shell = await waitFor(() => agents().find((x) => x.kind === 'shell'), 5000, 'terminal');
     await page.waitForFunction(() => document.querySelector('#tabs .tab.active')?.textContent?.includes('Terminal'));
     await page.evaluate(() => [...document.querySelectorAll<HTMLElement>('#tabs .tab')].find((t) => t.textContent?.includes('Ana'))?.click());
@@ -198,7 +222,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
 
   it('terminal comum: abre, roda comando e `exit` fecha a aba', async () => {
     const before = new Set(agents().map((a) => a.id));
-    await page.click('#tabs .tab.add[title^="Novo terminal"]');
+    await page.click('#tab-actions [title^="Novo terminal"]');
     const sh = await waitFor(() => agents().find((x) => !before.has(x.id) && x.kind === 'shell'), 5000, 'terminal novo');
     await page.waitForFunction(() => document.querySelector('#tabs .tab.active')?.textContent?.includes('Terminal'));
     await typeInTerminal(process.platform === 'win32' ? 'echo ola-terminal' : 'echo ola-$((1+1))');
@@ -212,7 +236,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     // Com permissão de ler a área de transferência, como num navegador em que você já permitiu.
     await browser.defaultBrowserContext().overridePermissions(BASE, ['clipboard-read', 'clipboard-write', 'clipboard-sanitized-write']);
     const before = new Set(agents().map((a) => a.id));
-    await page.click('#tabs .tab.add[title^="Novo terminal"]');
+    await page.click('#tab-actions [title^="Novo terminal"]');
     const sh = await waitFor(() => agents().find((x) => !before.has(x.id) && x.kind === 'shell'), 5000, 'terminal novo');
     await page.waitForFunction(() => document.querySelector('#tabs .tab.active')?.textContent?.includes('Terminal'));
     const cmd = process.platform === 'win32' ? 'echo colado' : 'echo col$((2+3))';
@@ -264,10 +288,11 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await revealWorld(r.x + r.w / 2, r.y + 20);
     await clickWorld(r.x + 40, r.y + 20);
     await page.waitForFunction((n) => document.querySelector('.room-title')?.textContent === n, {}, room.name);
+    await openGit();
     await page.waitForSelector('#git button.file[data-path="README.md"]', { timeout: 8000 });
 
     await page.click('#git button.file[data-path="README.md"]');
-    await page.waitForSelector('#diff-view:not([hidden]) .dl.add');
+    await page.waitForSelector('#git-main #diff-view:not([hidden]) .dl.add');
     const added = await page.$$eval('#diff-view .dl.add .code', (els) => els.map((e) => e.textContent));
     expect(added).toContain('+ linha nova do e2e');
     expect(await page.$eval('#diff-path', (e) => e.textContent)).toBe('README.md');
@@ -280,11 +305,12 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
 
     await page.keyboard.press('Escape');
     await page.waitForSelector('#diff-view[hidden]');
+    await closeExplorer();
     expect(await page.$eval('#terminals', (e) => getComputedStyle(e).display)).not.toBe('none');
   });
 
   it('regressão: atualizar o painel de git sem mudança não recria os botões (o clique que caía no meio se perdia)', async () => {
-    await page.waitForSelector('#git .branch');
+    await openGit();
     const branch = (await page.$('#git .branch'))!;
     const refreshed = page.waitForResponse((r) => r.url().endsWith('/git'));
     await page.click('#btn-git-refresh');
@@ -313,12 +339,13 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     fs.rmSync(path.join(room.path, 'secoes.txt'));
     await page.click('#btn-git-refresh');
     await page.waitForFunction(() => !document.querySelector('#git button.file[data-path="secoes.txt"]'));
+    await closeExplorer();
   });
 
   it('worktree: o painel de git traz o trabalho do agente para a main e encerra o worktree', async () => {
     const room = [...store.rooms.values()].find((r) => r.path.includes('e2e-repo'))!;
     const before = new Set(agents().map((a) => a.id));
-    await page.click('#tabs .tab.add[title="Contratar agente"]');
+    await page.click('#tab-actions [title="Contratar agente"]');
     await page.waitForSelector('#dlg-agent[open]');
     await page.type('#dlg-agent input[name=name]', 'Wanda');
     await page.click('#dlg-agent input[name=worktree]');
@@ -330,6 +357,9 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     fs.writeFileSync(path.join(a.cwd, 'wt-e2e.ts'), 'export const w = 1;\n');
     git('add', '.');
     git('commit', '-q', '-m', 'Trabalho da Wanda');
+    // Com a Wanda selecionada, o 📁 Arquivos abre o worktree dela.
+    await openGit();
+    expect(await page.$eval('#act-files', (e) => e.getAttribute('title'))).toContain('worktree de Wanda');
     await page.click('#btn-git-refresh');
     await page.waitForSelector('#git button[data-wt=merge]:not([disabled])', { timeout: 8000 });
     expect(await page.$eval('#git .worktree h4', (e) => e.textContent)).toContain('1 commit a mais que main');
@@ -350,6 +380,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForSelector('#dlg-worktree-end:not([open])');
     expect(fs.existsSync(a.cwd)).toBe(false);
     expect(execFileSync('git', ['-C', room.path, 'branch', '--list', a.worktreeBranch!]).toString()).toBe('');
+    await closeExplorer();
   });
 
   it.skipIf(process.platform === 'win32')('memória: o indicador mostra desligada, e instalar pelo diálogo liga', async () => {
@@ -584,7 +615,6 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await clickWorld(r.x + 40, r.y + 60);
     await page.waitForSelector('#war-panel:not([hidden])');
     expect(await page.$eval('#war-title', (e) => e.textContent)).toContain('livre');
-    expect(await page.$eval('#git-panel', (e) => (e as HTMLElement).hidden)).toBe(true);
 
     await page.click('#war-open');
     await page.waitForSelector('#dlg-incident[open]');
@@ -679,11 +709,10 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
       await page.waitForSelector(head);
       await page.click(head);
       await page.waitForFunction((n) => document.querySelector('.room-title')?.textContent === n, {}, room.name);
-      await page.waitForFunction(() => document.querySelector('#git .branch')?.textContent?.includes('main'));
     });
 
     it('o 📁 abre o explorador numa aba da sala; um arquivo da árvore abre, edita e salva com Ctrl+S', async () => {
-      await page.click('#tabs .tab.add[title="Arquivos e histórico da sala"]');
+      await page.click('#tab-actions [title="Arquivos e histórico da sala"]');
       await page.waitForSelector(`#files-view:not([hidden]) ${node('src')}`);
       await page.waitForSelector('#tabs .tab.files.active');
       expect(await page.$eval('#terminals', (e) => getComputedStyle(e).display)).toBe('none');
@@ -812,7 +841,6 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
       fs.writeFileSync(path.join(repo, 'README.md'), '# teste\nmudou no modo git\n');
       await page.click('#files-modes button[data-mode="git"]');
       await page.waitForSelector('#git-pane:not([hidden]) #git .branch');
-      expect(await page.$eval('#git-panel', (e) => (e as HTMLElement).hidden)).toBe(true);
       // A lista vem da atualização ao entrar no modo Git: espera o arquivo aparecer.
       await page.waitForSelector('#git-pane button.file[data-path="README.md"]');
       await page.click('#git-pane button.file[data-path="README.md"]');
@@ -824,15 +852,90 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
       expect(await page.$eval('#files-view', (e) => (e as HTMLElement).hidden)).toBe(false);
       await page.waitForFunction(() => getComputedStyle(document.querySelector('#git-main .git-empty')!).display !== 'none');
 
-      // O × da aba fecha o explorador; o painel de git e o diff voltam para os lugares de antes.
+      // O × da aba fecha o explorador; o diff volta para o lugar do terminal, e o git fica no explorador.
       await page.click('#tabs .tab.files .close');
       await page.waitForSelector('#files-view[hidden]');
       expect(await page.$('#tabs .tab.files')).toBeNull();
-      expect(await page.$eval('#git-panel', (e) => (e as HTMLElement).hidden)).toBe(false);
-      expect(await page.$('#git-panel #git')).not.toBeNull();
+      expect(await page.$('#git-pane #git')).not.toBeNull();
       expect(await page.$eval('#diff-view', (e) => e.parentElement?.classList.contains('terminal-pane'))).toBe(true);
       fs.writeFileSync(path.join(repo, 'README.md'), '# teste\n');
     });
+  });
+
+  it('sala com vários projetos: escolhe o projeto, contrata nele e edita as fichas', async () => {
+    const root = tempDir('e2e-saff');
+    for (const name of ['ms-arquivos', 'ms-sales']) fs.renameSync(makeRepo(name), path.join(root, name));
+    const { data: room } = await api('POST', '/api/rooms', { path: root, name: 'SAFF' });
+    const head = `#directory .dir-room-head[data-room="${room.id}"]`;
+    await page.waitForSelector(head);
+    await page.click(head);
+    await page.waitForFunction(() => document.querySelector('.room-title')?.textContent === 'SAFF');
+    // Os projetos aparecem como opções; o escolhido é o que o git mostra.
+    const chips = await page.$$eval('.room-projects .chip', (els) => els.map((e) => e.textContent));
+    expect(chips).toEqual(['ms-arquivos', 'ms-sales']);
+    await page.click('.room-projects .chip:nth-child(2)');
+    await page.waitForFunction(() => document.querySelector('.room-projects .chip.active')?.textContent === 'ms-sales');
+    await page.waitForFunction((p) => document.querySelector('.room-path')?.textContent === p, {}, path.join(root, 'ms-sales'));
+    // O explorador (e o git dele) abre no projeto escolhido.
+    await openGit();
+    expect(await page.$eval('#tabs .tab.files', (e) => e.getAttribute('title'))).toContain('ms-sales');
+    await closeExplorer();
+
+    // Contratar já vem com o projeto escolhido.
+    const before = new Set(agents().map((a) => a.id));
+    await page.click('#tab-actions [title="Contratar agente"]');
+    await page.waitForSelector('#dlg-agent[open]');
+    expect(await page.$eval('#agent-project', (e) => (e as HTMLSelectElement).selectedOptions[0].textContent)).toBe('ms-sales');
+    await page.type('#dlg-agent input[name=name]', 'Saulo');
+    await page.keyboard.press('Enter');
+    const a = await waitFor(() => agents().find((x) => !before.has(x.id)), 5000, 'agente novo');
+    expect(a.cwd).toBe(path.join(root, 'ms-sales'));
+    await waitScreen('Você trabalha no projeto **ms-sales**');
+    // O quadro da sala mostra quem está em cada projeto e no que está trabalhando; a aba diz o projeto.
+    await waitStatus(a.id, 'idle');
+    await typeInTerminal('prompt revisar o contrato de vendas');
+    await waitStatus(a.id, 'done');
+    await page.waitForFunction(
+      () => [...document.querySelectorAll('#squad-list .squad-row')].some((r) => r.textContent?.includes('Saulo') && r.textContent.includes('revisar o contrato de vendas')),
+    );
+    expect(await page.$eval('#squad-list .squad-project', (e) => e.textContent)).toBe('ms-sales');
+    expect(await page.$eval(`#tabs .tab[data-id="${a.id}"] .tab-project`, (e) => e.textContent)).toBe('ms-sales');
+
+    // Fichas e resumo do sistema pelo diálogo de projetos.
+    await page.click('#room-info [data-act=projects]');
+    await page.waitForSelector('#dlg-projects[open] .project-row');
+    await page.type('#projects-brief', 'arquivos depois sales');
+    // O nome da sala se edita no mesmo diálogo.
+    expect(await page.$eval('#projects-room-name', (e) => (e as HTMLInputElement).value)).toBe('SAFF');
+    await page.$eval('#projects-room-name', (e) => ((e as HTMLInputElement).value = ''));
+    await page.type('#projects-room-name', 'SAFF Faturamento');
+    // O 📁 abre o seletor de pastas já na raiz da sala (o seletor nativo é trocado por uma resposta pronta).
+    await page.evaluate((picked) => {
+      const real = window.fetch;
+      (window as any).__pickStart = undefined;
+      window.fetch = async (url, init) => {
+        if (String(url).includes('/api/pick-folder')) {
+          (window as any).__pickStart = JSON.parse(String(init?.body)).start;
+          return new Response(JSON.stringify({ path: picked }), { headers: { 'content-type': 'application/json' } });
+        }
+        return real(url, init);
+      };
+    }, path.join(root, 'ms-sales', 'sub'));
+    await page.click('#btn-project-browse');
+    await page.waitForFunction(() => (document.querySelector('#project-new-path') as HTMLInputElement).value !== '');
+    expect(await page.evaluate(() => (window as any).__pickStart)).toBe(root);
+    expect(await page.$eval('#project-new-path', (e) => (e as HTMLInputElement).value)).toBe(path.join('ms-sales', 'sub'));
+    await page.$eval('#project-new-path', (e) => ((e as HTMLInputElement).value = ''));
+    const summary = '#projects-list .project-row:first-child .project-summary';
+    await page.$eval(summary, (e) => ((e as HTMLTextAreaElement).value = ''));
+    await page.type(summary, 'Valida os arquivos de venda.');
+    await page.click('#dlg-projects button[value=ok]');
+    await page.waitForFunction(() => !document.querySelector('#dlg-projects[open]'));
+    await waitFor(() => store.rooms.get(room.id)?.brief === 'arquivos depois sales', 3000, 'resumo salvo');
+    expect(store.rooms.get(room.id)!.projects![0]).toMatchObject({ summary: 'Valida os arquivos de venda.', summaryEdited: true });
+    expect(store.rooms.get(room.id)!.name).toBe('SAFF Faturamento');
+    await page.waitForFunction(() => document.querySelector('.room-title')?.textContent === 'SAFF Faturamento');
+    await page.reload();
   });
 
   it('a página não tem erros de JavaScript', async () => {

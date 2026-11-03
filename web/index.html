@@ -57,6 +57,11 @@
       <section class="terminal-pane">
         <div class="tabs-row">
           <nav id="tabs"></nav>
+          <div id="tab-actions" hidden>
+            <button id="act-hire" class="btn small">+ Agente</button>
+            <button id="act-shell" class="btn small">&gt;_ Terminal</button>
+            <button id="act-files" class="btn small ghost">📁 Arquivos</button>
+          </div>
           <button id="btn-sidebar" class="icon" title="Esconder o painel da direita">⇥</button>
         </div>
         <!-- Faixa acima do terminal (e não por cima): a saída de quem encerrou continua legível. -->
@@ -100,8 +105,14 @@
                 </div>
                 <div id="hist-list"></div>
               </div>
-              <!-- Modo Git: o painel de git da lateral vem para cá enquanto o explorador está na tela. -->
-              <div id="git-pane" hidden></div>
+              <!-- Modo Git: o git da pasta do explorador (o worktree do agente, se ele tiver um). -->
+              <div id="git-pane" hidden>
+                <div class="git-pane-head">
+                  <span>Git</span>
+                  <button id="btn-git-refresh" class="icon" title="Atualizar">↻</button>
+                </div>
+                <div id="git"></div>
+              </div>
             </aside>
             <section class="files-main">
               <div id="files-work">
@@ -147,6 +158,10 @@
 
       <aside id="sidebar">
         <div id="room-info"></div>
+        <section id="squad-board" class="panel grow" hidden>
+          <h3>Quem está fazendo o quê</h3>
+          <div id="squad-list"></div>
+        </section>
         <section id="war-panel" class="panel grow" hidden>
           <header class="war-head">
             <h3 id="war-title"></h3>
@@ -168,15 +183,6 @@
             <button id="war-remove" class="btn small ghost" type="button">Tirar esta sala de guerra</button>
           </div>
         </section>
-        <section id="git-panel" class="panel grow">
-          <h3>Git
-            <span class="h3-actions">
-              <button id="btn-files" class="btn small ghost" title="Arquivos e histórico desta pasta">Arquivos</button>
-              <button id="btn-git-refresh" class="icon" title="Atualizar">↻</button>
-            </span>
-          </h3>
-          <div id="git"></div>
-        </section>
       </aside>
     </main>
     </div>
@@ -186,7 +192,8 @@
       <form method="dialog">
         <h2>Nova sala</h2>
         <p class="muted" id="dlg-room-where"></p>
-        <label>Pasta do projeto
+        <label>Pasta raiz do sistema
+          <small class="muted">Cada repositório dentro dela vira um projeto da sala (ou a própria pasta, se for um repositório).</small>
           <span class="path-row">
             <input name="path" list="projects" required placeholder="/home/voce/projetos/meu-app" autocomplete="off" />
             <button type="button" id="btn-browse" class="btn">📁 Procurar…</button>
@@ -207,6 +214,7 @@
       <form method="dialog">
         <h2>Contratar agente</h2>
         <p class="muted" id="dlg-agent-room"></p>
+        <label id="agent-project-row">Projeto <select name="project" id="agent-project"></select></label>
         <label>Nome (opcional) <input name="name" autocomplete="off" placeholder="sorteado se vazio" /></label>
         <label class="check">
           <input type="checkbox" name="worktree" />
@@ -216,6 +224,30 @@
         <menu>
           <button value="ok" class="btn">Contratar</button>
           <button value="cancel" formnovalidate class="btn ghost">Cancelar</button>
+        </menu>
+      </form>
+    </dialog>
+
+    <dialog id="dlg-projects">
+      <form method="dialog">
+        <h2 id="dlg-projects-title">Projetos da sala</h2>
+        <p class="muted">Cada agente da sala recebe o resumo do sistema e as fichas dos outros projetos, para não ficar preso ao próprio escopo.</p>
+        <label>Nome da sala <input name="roomName" id="projects-room-name" required autocomplete="off" /></label>
+        <label>Resumo do sistema (o fluxo entre os projetos)
+          <textarea name="brief" id="projects-brief" rows="3" placeholder="Ex.: o arquivos recebe e valida os arquivos de venda, o motor calcula e o sales monta as vendas."></textarea>
+        </label>
+        <div id="projects-list"></div>
+        <label>Mais um projeto (pasta dentro da raiz)
+          <span class="path-row">
+            <input id="project-new-path" autocomplete="off" placeholder="nome-da-pasta" />
+            <button type="button" id="btn-project-browse" class="btn" title="Escolher a pasta, começando na raiz da sala">📁 Procurar…</button>
+            <button type="button" id="btn-project-add" class="btn">+ Adicionar</button>
+          </span>
+        </label>
+        <p class="error" hidden></p>
+        <menu>
+          <button value="ok" class="btn">Salvar</button>
+          <button value="cancel" formnovalidate class="btn ghost">Fechar</button>
         </menu>
       </form>
     </dialog>

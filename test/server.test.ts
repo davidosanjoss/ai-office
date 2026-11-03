@@ -489,6 +489,88 @@ describe('worktree: PR, trazer para a sala e encerrar', () => {
   });
 });
 
+describe('sala com vários projetos', () => {
+  /** Raiz com dois repositórios e um documento solto, como ~/ampm/saff. */
+  function sistema() {
+    const root = tempDir('saff');
+    for (const name of ['ms-arquivos', 'ms-sales']) fs.renameSync(makeRepo(name), path.join(root, name));
+    fs.writeFileSync(path.join(root, 'ms-sales', 'README.md'), '# sales\n\nMonta as vendas a partir dos arquivos validados.\n');
+    fs.writeFileSync(path.join(root, 'plano.md'), '# plano\n');
+    return root;
+  }
+
+  it('a sala é a raiz: cada repositório dentro dela vira um projeto, com o rascunho da ficha', async () => {
+    const root = sistema();
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: root });
+    expect(room.path).toBe(root);
+    expect(room.projects!.map((p) => p.name)).toEqual(['ms-arquivos', 'ms-sales']);
+    expect(room.projects![1].summary).toBe('Monta as vendas a partir dos arquivos validados.');
+  });
+
+  it('o agente trabalha na pasta do projeto escolhido e recebe a raiz e o contexto da sala', async () => {
+    const root = sistema();
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: root });
+    await api('PATCH', `/api/rooms/${room.id}`, { brief: 'arquivos depois sales' });
+    const sales = room.projects![1];
+    const a = await hire(room, { projectId: sales.id });
+    expect(a).toMatchObject({ projectId: sales.id, cwd: sales.path });
+    await waitOutput(a.id, `add-dir=${root}`);
+    await waitOutput(a.id, 'Você trabalha no projeto **ms-sales**');
+    await waitOutput(a.id, 'arquivos depois sales');
+    await waitOutput(a.id, '- plano.md');
+    await waitStatus(a.id, 'idle');
+    // O quadro de quem está fazendo o quê acompanha os agentes da sala.
+    const now = path.join(process.env.AI_OFFICE_DATA!, 'salas', room.id, 'agora.md');
+    await waitFor(() => fs.existsSync(now) && fs.readFileSync(now, 'utf8').includes(`**${a.name}** (ms-sales)`), 4000, 'quadro da sala');
+  });
+
+  it('o worktree sai do repositório do projeto do agente', async () => {
+    const root = sistema();
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: root });
+    const arquivos = room.projects![0];
+    const a = await hire(room, { projectId: arquivos.id, worktree: true });
+    // O worktree compartilha o .git do projeto. Compara as pastas de verdade: no Windows o git escreve o
+    // caminho com "/" e o nome longo, e a pasta temporária vem com barra invertida e o nome curto (RUNNER~1).
+    const common = execFileSync('git', ['-C', a.cwd, 'rev-parse', '--git-common-dir'], { encoding: 'utf8' }).trim();
+    expect(fs.realpathSync.native(path.resolve(a.cwd, common))).toBe(fs.realpathSync.native(path.join(arquivos.path, '.git')));
+    const { data: st } = await api<WorktreeStatus>('GET', `/api/agents/${a.id}/worktree`);
+    expect(st).toMatchObject({ branch: a.worktreeBranch, target: 'main' });
+    const { data: git } = await api<{ isRepo: boolean; branch: string }>('GET', `/api/projects/${arquivos.id}/git`);
+    expect(git).toMatchObject({ isRepo: true, branch: 'main' });
+  });
+
+  it('adiciona, edita e tira projetos, só de dentro da raiz e sem ninguém trabalhando neles', async () => {
+    const root = sistema();
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: root });
+    fs.renameSync(makeRepo('ms-motor'), path.join(root, 'ms-motor'));
+    const fora = await api('POST', `/api/rooms/${room.id}/projects`, { path: tempDir('fora') });
+    expect(fora.status).toBe(400);
+    const { data: com3 } = await api<Room>('POST', `/api/rooms/${room.id}/projects`, { path: 'ms-motor' });
+    const motor = com3.projects!.find((p) => p.name === 'ms-motor')!;
+    expect(motor.path).toBe(path.join(root, 'ms-motor'));
+    expect((await api('POST', `/api/rooms/${room.id}/projects`, { path: 'ms-motor' })).status).toBe(400);
+
+    const { data: editada } = await api<Room>('PATCH', `/api/rooms/${room.id}/projects/${motor.id}`, { summary: 'Calcula o faturamento.' });
+    expect(editada.projects!.find((p) => p.id === motor.id)).toMatchObject({ summary: 'Calcula o faturamento.', summaryEdited: true });
+    const { data: refeita } = await api<Room>('PATCH', `/api/rooms/${room.id}/projects/${motor.id}`, { redraft: true });
+    expect(refeita.projects!.find((p) => p.id === motor.id)?.summaryEdited).toBeUndefined();
+
+    const a = await hire(room, { projectId: motor.id });
+    const ocupado = await api<{ error: string }>('DELETE', `/api/rooms/${room.id}/projects/${motor.id}`);
+    expect(ocupado.status).toBe(400);
+    expect(ocupado.data.error).toContain(a.name);
+    await api('DELETE', `/api/agents/${a.id}`);
+    const { data: sem } = await api<Room>('DELETE', `/api/rooms/${room.id}/projects/${motor.id}`);
+    expect(sem.projects!.map((p) => p.name)).toEqual(['ms-arquivos', 'ms-sales']);
+  });
+
+  it('recusa projeto que não é da sala', async () => {
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: sistema() });
+    const { status } = await api('POST', '/api/agents', { roomId: room.id, projectId: 'outro' });
+    expect(status).toBe(400);
+  });
+});
+
 describe('terminal comum', () => {
   it('abre o shell na pasta da sala, sem hooks do escritório', async () => {
     const room = await newRoom('shell');
@@ -542,13 +624,37 @@ describe('andares', () => {
   it('cada andar tem a própria planta: a mesma vaga pode ter uma sala em cada andar', async () => {
     const a = await novoAndar('Empresa');
     const b = await novoAndar('Pessoal');
-    const r1 = await api<Room>('POST', '/api/rooms', { path: tempDir('p1'), floorId: a.id, pos: { x: -1, y: 0 } });
-    const r2 = await api<Room>('POST', '/api/rooms', { path: tempDir('p2'), floorId: b.id, pos: { x: -1, y: 0 } });
+    const r1 = await api<Room>('POST', '/api/rooms', { path: tempDir('p1'), floorId: a.id, pos: { x: -1, y: 1 } });
+    const r2 = await api<Room>('POST', '/api/rooms', { path: tempDir('p2'), floorId: b.id, pos: { x: -1, y: 1 } });
     expect(r1.status).toBe(200);
     expect(r2.status).toBe(200);
-    expect(r2.data).toMatchObject({ floorId: b.id, pos: { x: -1, y: 0 } });
+    expect(r2.data).toMatchObject({ floorId: b.id, pos: { x: -1, y: 1 } });
     // No mesmo andar, a vaga já está ocupada.
-    expect((await api('POST', '/api/rooms', { path: tempDir('p3'), floorId: a.id, pos: { x: -1, y: 0 } })).status).toBe(400);
+    expect((await api('POST', '/api/rooms', { path: tempDir('p3'), floorId: a.id, pos: { x: -1, y: 1 } })).status).toBe(400);
+  });
+
+  it('fechar ou mudar de andar uma sala traz as da mesma fileira para o lugar dela', async () => {
+    const andar = await novoAndar('Fileira junta');
+    const sala = async (name: string, x: number, y: number) =>
+      (await api<Room>('POST', '/api/rooms', { path: tempDir(name), floorId: andar.id, pos: { x, y } })).data;
+    const a = await sala('a', 1, 1);
+    const b = await sala('b', 2, 1);
+    const c = await sala('c', 3, 1);
+    const presa = await sala('presa', 4, 1);
+    await sala('em-cima', 4, 2);
+    await api('DELETE', `/api/rooms/${a.id}`);
+    expect(store.rooms.get(b.id)!.pos).toEqual({ x: 1, y: 1 });
+    expect(store.rooms.get(c.id)!.pos).toEqual({ x: 2, y: 1 });
+    // Tem sala encostada em cima: fica onde está.
+    expect(store.rooms.get(presa.id)!.pos).toEqual({ x: 4, y: 1 });
+    const outro = await novoAndar('Outro andar');
+    await api('POST', `/api/rooms/${b.id}/move`, { floorId: outro.id });
+    expect(store.rooms.get(c.id)!.pos).toEqual({ x: 1, y: 1 });
+  });
+
+  it('a primeira fileira do andar é só do elevador e da copa', async () => {
+    const andar = await novoAndar('Fileira');
+    expect((await api('POST', '/api/rooms', { path: tempDir('baixo'), floorId: andar.id, pos: { x: 2, y: 0 } })).status).toBe(400);
   });
 
   it('sala em andar que não existe dá erro', async () => {
@@ -609,7 +715,9 @@ describe('andares', () => {
     const b = await hire(salaPessoal);
     await waitOutput(b.id, 'coautoria=sim');
     await waitStatus(b.id, 'idle');
-    expect(ws.out(b.id)).not.toContain('instrucoes=');
+    // Sem instruções no andar, o prompt acrescentado é só o contexto da sala.
+    expect(ws.out(b.id)).toContain('instrucoes=# Sala ');
+    expect(ws.out(b.id)).not.toContain('Commits resumidos');
 
     // Mudou os padrões do Pessoal: quem volta ao trabalho já abre com eles.
     await api('PATCH', `/api/floors/${pessoal.id}`, { defaults: { coAuthor: false } });

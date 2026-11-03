@@ -3,9 +3,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import pty, { type IPty } from '@lydell/node-pty';
-import type { Agent, Floor } from '../shared/types.ts';
+import type { Agent, Floor, Room } from '../shared/types.ts';
 import { findTranscript } from './discover.ts';
 import { addWorktree } from './git.ts';
+import { claudeWiring } from './memory.ts';
+import { nowText, projectOf, roomContext } from './projects.ts';
 import { DATA_DIR, HOST, PORT, claudeBin, defaultShell, isWindows, ptyCommand } from './platform.ts';
 import { store } from './store.ts';
 
@@ -66,6 +68,44 @@ export function floorSessionFiles(floor: Floor | undefined): { settings: string;
   return { settings, prompt };
 }
 
+// O quadro de cada sala acompanha os agentes: regravado logo depois de cada mudança (agrupando as seguidas).
+const nowTimers = new Map<string, NodeJS.Timeout>();
+store.on('msg', (msg: { t: string; agent?: Agent }) => {
+  const roomId = msg.t === 'agent' ? msg.agent?.roomId : undefined;
+  if (!roomId || nowTimers.has(roomId)) return;
+  nowTimers.set(
+    roomId,
+    setTimeout(() => {
+      nowTimers.delete(roomId);
+      const room = store.rooms.get(roomId);
+      if (room && fs.existsSync(roomDir(roomId))) writeNowFile(room);
+    }, 500),
+  );
+});
+
+const roomDir = (roomId: string) => path.join(DATA_DIR, 'salas', roomId);
+/** Quadro vivo de quem está fazendo o quê na sala, que os agentes dela leem. */
+export const nowFile = (roomId: string) => path.join(roomDir(roomId), 'agora.md');
+
+/** Regrava o quadro da sala (chamado a cada mudança de um agente dela). */
+export function writeNowFile(room: Room) {
+  fs.mkdirSync(roomDir(room.id), { recursive: true });
+  fs.writeFileSync(nowFile(room.id), nowText(room, [...store.agents.values()]));
+}
+
+/**
+ * Prompt de sistema acrescentado a um agente: as instruções do andar e o contexto da sala (o
+ * sistema, os projetos vizinhos, os documentos da raiz e a memória compartilhada).
+ */
+export function agentPromptFile(agent: Agent, room: Room, floor: Floor | undefined): string {
+  const parts = [floor?.defaults?.instructions?.trim(), roomContext(room, agent, { memory: claudeWiring().mcp, nowFile: nowFile(room.id) })];
+  const file = path.join(roomDir(room.id), `prompt-${agent.id}.md`);
+  fs.mkdirSync(roomDir(room.id), { recursive: true });
+  fs.writeFileSync(file, parts.filter(Boolean).join('\n\n---\n\n'));
+  writeNowFile(room);
+  return file;
+}
+
 function pickName(roomId: string): string {
   const used = new Set([...store.agents.values()].filter((a) => a.roomId === roomId).map((a) => a.name));
   const free = NAMES.filter((n) => !used.has(n));
@@ -110,15 +150,18 @@ function shellName(roomId: string, incidentId?: string): string {
  * Abre uma aba de terminal comum (o seu shell) na pasta da sala, sem Claude. Com `incidentId`,
  * o terminal é da sala de guerra: aparece nas abas dela e fecha quando o incidente é encerrado.
  */
-export function createShell(roomId: string, opts: { incidentId?: string } = {}): Agent {
+export function createShell(roomId: string, opts: { incidentId?: string; projectId?: string } = {}): Agent {
   const room = store.rooms.get(roomId);
   if (!room) throw new Error('Sala não encontrada');
+  // Sem projeto escolhido, o terminal abre na raiz da sala.
+  const project = opts.projectId ? room.projects?.find((p) => p.id === opts.projectId) : undefined;
   const agent: Agent = {
     id: randomUUID().slice(0, 8),
     kind: 'shell',
     roomId,
     name: shellName(roomId, opts.incidentId),
-    cwd: room.path,
+    ...(project ? { projectId: project.id } : {}),
+    cwd: project?.path ?? room.path,
     sessionId: '',
     status: 'idle',
     activity: path.basename(defaultShell()),
@@ -131,25 +174,31 @@ export function createShell(roomId: string, opts: { incidentId?: string } = {}):
   return agent;
 }
 
-export async function createAgent(roomId: string, opts: { name?: string; worktree?: boolean; incidentId?: string }): Promise<Agent> {
+export async function createAgent(
+  roomId: string,
+  opts: { name?: string; worktree?: boolean; incidentId?: string; projectId?: string },
+): Promise<Agent> {
   const room = store.rooms.get(roomId);
   if (!room) throw new Error('Sala não encontrada');
+  if (opts.projectId && !room.projects?.some((p) => p.id === opts.projectId)) throw new Error('Projeto não encontrado na sala');
+  const project = projectOf(room, opts.projectId);
   const name = opts.name?.trim() || pickName(roomId);
   const id = randomUUID().slice(0, 8);
 
-  let cwd = room.path;
+  let cwd = project.path;
   let worktreeBranch: string | undefined;
   if (opts.worktree) {
     const slug = slugify(name);
     worktreeBranch = `office/${slug}-${id}`;
-    cwd = path.join(DATA_DIR, 'worktrees', path.basename(room.path), `${slug}-${id}`);
-    await addWorktree(room.path, cwd, worktreeBranch);
+    cwd = path.join(DATA_DIR, 'worktrees', path.basename(project.path), `${slug}-${id}`);
+    await addWorktree(project.path, cwd, worktreeBranch);
   }
 
   const agent: Agent = {
     id,
     kind: 'claude',
     roomId,
+    projectId: project.id,
     name,
     cwd,
     worktreeBranch,
@@ -199,9 +248,12 @@ export function resumeAgent(id: string) {
  * Argumentos do `claude`: sessão nova usa o ID que escolhemos; retomada continua a mesma conversa.
  * As instruções do andar valem por execução, então entram também ao retomar.
  */
-export function claudeArgs(sessionId: string, resume: boolean, settingsFile = SETTINGS_FILE, promptFile?: string): string[] {
+export function claudeArgs(sessionId: string, resume: boolean, settingsFile = SETTINGS_FILE, promptFile?: string, addDirs: string[] = []): string[] {
   const args = ['--settings', settingsFile, resume ? '--resume' : '--session-id', sessionId];
-  return promptFile ? [...args, '--append-system-prompt-file', promptFile] : args;
+  if (promptFile) args.push('--append-system-prompt-file', promptFile);
+  // A raiz da sala: o agente lê os projetos vizinhos e os documentos dela sem pedir permissão.
+  for (const dir of addDirs) args.push('--add-dir', dir);
+  return args;
 }
 
 function appendScrollback(id: string, data: string) {
@@ -228,12 +280,15 @@ function spawn(agent: Agent, resume: boolean) {
     return;
   }
   let args: string[] = [];
+  const room = store.rooms.get(agent.roomId)!;
   if (!isShell) {
-    const files = floorSessionFiles(store.floors.get(store.rooms.get(agent.roomId)?.floorId ?? ''));
-    args = claudeArgs(agent.sessionId, resume, files.settings, files.prompt);
+    const floor = store.floors.get(room.floorId ?? '');
+    const files = floorSessionFiles(floor);
+    const project = projectOf(room, agent.projectId);
+    args = claudeArgs(agent.sessionId, resume, files.settings, agentPromptFile(agent, room, floor), project.path === room.path ? [] : [room.path]);
   }
   const cmd = ptyCommand(bin, args);
-  const cwd = fs.existsSync(agent.cwd) ? agent.cwd : store.rooms.get(agent.roomId)!.path;
+  const cwd = fs.existsSync(agent.cwd) ? agent.cwd : projectOf(room, agent.projectId).path;
   // Só as sessões do Claude reportam eventos ao escritório.
   const officeEnv = isShell ? {} : { AI_OFFICE_URL: `http://${HOST}:${PORT}`, AI_OFFICE_AGENT_ID: agent.id };
 
@@ -296,6 +351,10 @@ const INHERITED_SESSION_VARS = [
   'CLAUDE_CODE_MESSAGING_SOCKET',
   'CLAUDE_CODE_MESSAGING_TOKEN',
   'CLAUDE_CODE_SSE_PORT',
+  // Do próprio escritório: um servidor aberto de dentro de um agente não passa o endereço do outro
+  // escritório para os terminais (as sessões do Claude ganham os seus logo em seguida).
+  'AI_OFFICE_URL',
+  'AI_OFFICE_AGENT_ID',
 ];
 
 export function cleanEnv() {
