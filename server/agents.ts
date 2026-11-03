@@ -296,6 +296,10 @@ const INHERITED_SESSION_VARS = [
   'CLAUDE_CODE_MESSAGING_SOCKET',
   'CLAUDE_CODE_MESSAGING_TOKEN',
   'CLAUDE_CODE_SSE_PORT',
+  // Do próprio escritório: um servidor aberto de dentro de um agente não passa o endereço do outro
+  // escritório para os terminais (as sessões do Claude ganham os seus logo em seguida).
+  'AI_OFFICE_URL',
+  'AI_OFFICE_AGENT_ID',
 ];
 
 export function cleanEnv() {
