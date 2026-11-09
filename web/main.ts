@@ -9,6 +9,8 @@ import * as logic from './logic.ts';
 import { Office, STATUS_COLOR, hash } from './office.ts';
 import { characterFor, type Manifest } from './sprites.ts';
 import { Terminals } from './terminals.ts';
+import { UsagePanel } from './usage.ts';
+import { type UsageSummary, formatTokens } from '../shared/usage.ts';
 import './styles.css';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -24,6 +26,8 @@ let currentFloor: string = (() => {
 })();
 let selectedRoom: string | undefined;
 let selectedAgent: string | undefined;
+/** Consumo da janela do plano, para a linha do projeto no painel da direita (atualizado a cada minuto). */
+let windowUsage: UsageSummary | undefined;
 /** Projeto escolhido em cada sala: é o que o git, o explorador e o terminal da sala mostram. */
 const roomProjectSel = new Map<string, string>();
 /** Sala de guerra selecionada no andar da tela: as abas viram os participantes e o painel vira o chat. */
@@ -366,6 +370,7 @@ function renderAll(full = true) {
   renderTabs();
   renderRoomInfo();
   renderModelsPanel();
+  renderRoomUsage();
   renderSquadBoard();
   renderInbox();
   renderExited();
@@ -564,6 +569,41 @@ function renderRoomInfo() {
     goToFloor(moved.floorId!);
     office.reveal(moved.id);
   });
+}
+
+// ---------- consumo ----------
+
+const usagePanel = new UsagePanel(api, (roomId) => {
+  const room = state.rooms.find((r) => r.id === roomId);
+  if (!room) return;
+  if (room.floorId) goToFloor(room.floorId);
+  selectRoom(room.id);
+  office.reveal(room.id);
+});
+
+async function refreshWindowUsage() {
+  try {
+    windowUsage = (await api('GET', `/api/uso?from=${Date.now() - 5 * 3600_000}`)) as UsageSummary;
+    renderRoomUsage();
+  } catch {}
+}
+setInterval(() => !document.hidden && refreshWindowUsage(), 60_000);
+void refreshWindowUsage();
+
+// Esc fecha o painel de consumo (fora dos diálogos).
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && usagePanel.isShown() && !document.querySelector('dialog[open]')) usagePanel.hide();
+});
+
+function renderRoomUsage() {
+  const t = modelsTarget();
+  const box = $('#room-usage');
+  const u = t && logic.projectWindowUsage(windowUsage, t.project.id);
+  box.hidden = !u;
+  if (!u || !t) return;
+  const until = new Date(u.end).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  const name = (t.room.projects?.length ?? 0) > 1 ? t.project.name : 'esta sala';
+  box.innerHTML = `Janela do plano (até ${until}): <b>${formatTokens(u.tokens)}</b> tokens em ${name} · ${Math.round(u.share * 100)}% da janela`;
 }
 
 // ---------- modelos por projeto ----------

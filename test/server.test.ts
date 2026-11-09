@@ -7,10 +7,11 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { Agent, Floor, Incident, Room, WorktreeStatus } from '../shared/types.ts';
+import type { UsageSummary } from '../shared/usage.ts';
 import { killAll } from '../server/agents.ts';
 import { buildApp } from '../server/app.ts';
 import { store } from '../server/store.ts';
-import { BASE, PORT, WsClient, api, makeRepo, tempDir, waitFor } from './helpers.ts';
+import { BASE, PORT, WsClient, api, makeRepo, tempDir, transcriptLine, waitFor } from './helpers.ts';
 
 let app: FastifyInstance;
 let ws: WsClient;
@@ -591,6 +592,52 @@ describe('sala com vários projetos', () => {
     // Voltar ao padrão da conta tira a escolha do projeto.
     const { data: padrao } = await api<Room>('PATCH', `/api/rooms/${room.id}/projects/${sales.id}`, { models: null });
     expect(padrao.projects![1].models).toBeUndefined();
+  });
+
+  it('consumo: cada resposta vai para a sala e o projeto da pasta, inclusive a de um worktree', async () => {
+    const root = sistema();
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: root, name: 'SAFF Uso' });
+    const [arquivos, sales] = room.projects!;
+    const a = await hire(room, { projectId: sales.id, worktree: true });
+    const now = Date.now();
+    const at = (min: number) => new Date(now - min * 60_000).toISOString();
+    // Worktree de outro escritório na mesma máquina (o de testes): o .git dele aponta o repositório.
+    const outro = path.join(tempDir('casa'), '.ai-office-teste', 'worktrees', 'ms-sales', 'ana-1');
+    fs.mkdirSync(path.join(outro, 'src'), { recursive: true });
+    fs.writeFileSync(path.join(outro, '.git'), `gitdir: ${path.join(sales.path, '.git', 'worktrees', 'ana-1')}\n`);
+    const dir = path.join(process.env.AI_OFFICE_CLAUDE_DIR!, 'projects', `-uso-${now}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, 'uso.jsonl'),
+      [
+        transcriptLine({ id: `u1-${now}`, ts: at(30), cwd: arquivos.path, output: 1000 }),
+        transcriptLine({ id: `u2-${now}`, ts: at(20), cwd: a.cwd, output: 500 }),
+        transcriptLine({ id: `u3-${now}`, ts: at(10), cwd: path.join(sales.path, 'src'), output: 250 }),
+        transcriptLine({ id: `u4-${now}`, ts: at(5), cwd: root, output: 1 }),
+        // Worktree de outro escritório na mesma máquina (o de testes).
+        transcriptLine({ id: `u5-${now}`, ts: at(4), cwd: path.join(outro, 'src'), output: 2 }),
+      ].join('\n') + '\n',
+    );
+    const { data: uso } = await api<UsageSummary>('GET', `/api/uso?from=${now - 3600_000}`);
+    const out = (label: string) => uso.places.find((p) => p.place.label === label)?.tokens.output;
+    expect(out('SAFF Uso · ms-sales')).toBe(752);
+    expect(out('SAFF Uso · ms-arquivos')).toBe(1000);
+    expect(out('SAFF Uso (raiz)')).toBe(1);
+    expect(uso.window!.places.find((p) => p.place.projectId === sales.id)?.tokens.output).toBe(752);
+    expect(uso.totals.cost).toBeGreaterThan(0);
+
+    // Outra fonte pela rota, e o preço dela.
+    expect((await api('POST', '/api/uso', { source: 'x' })).status).toBe(400);
+    await api('POST', '/api/uso', [{ source: 'gemini', id: `g-${now}`, ts: now - 60_000, cwd: sales.path, model: 'gemini-3-pro', input: 1_000_000 }]);
+    await api('PUT', '/api/uso/precos', { model: 'gemini-3-pro', price: { input: 2, output: 12, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0.2 } });
+    expect((await api('PUT', '/api/uso/precos', { model: 'gemini-3-pro', price: { input: -1 } })).status).toBe(400);
+    const { data: depois } = await api<UsageSummary>('GET', `/api/uso?from=${now - 3600_000}`);
+    const gem = depois.byModel.find((m) => m.model === 'gemini-3-pro')!;
+    expect(gem).toMatchObject({ source: 'gemini', cost: 2 });
+    expect(depois.places.find((p) => p.place.projectId === sales.id)!.bySource.gemini).toBe(1_000_000);
+    const { data: precos } = await api<{ custom: string[]; seen: string[] }>('GET', '/api/uso/precos');
+    expect(precos.custom).toContain('gemini-3-pro');
+    expect(precos.seen).toContain('claude-opus-5-5');
   });
 
   it('recusa projeto que não é da sala', async () => {

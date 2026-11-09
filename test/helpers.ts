@@ -102,3 +102,27 @@ export class WsClient {
     this.ws.close();
   }
 }
+
+/** Linha de transcript no formato do Claude Code real (resposta com uso, cache de 1 h). */
+export function transcriptLine(o: { id: string; ts: string; cwd: string; model?: string; input?: number; output?: number; write1h?: number; write5m?: number; read?: number }) {
+  return JSON.stringify({
+    type: 'assistant',
+    cwd: o.cwd,
+    timestamp: o.ts,
+    sessionId: 's1',
+    requestId: `req_${o.id}`,
+    message: {
+      id: o.id,
+      model: o.model ?? 'claude-opus-5-5',
+      usage: {
+        input_tokens: o.input ?? 2,
+        cache_creation_input_tokens: (o.write1h ?? 0) + (o.write5m ?? 0),
+        cache_read_input_tokens: o.read ?? 0,
+        output_tokens: o.output ?? 100,
+        output_tokens_details: { thinking_tokens: 10 },
+        cache_creation: { ephemeral_1h_input_tokens: o.write1h ?? 0, ephemeral_5m_input_tokens: o.write5m ?? 0 },
+      },
+    },
+  });
+}
+

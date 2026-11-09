@@ -3,6 +3,7 @@
 import type { ActivityEvent, Agent, FileChange, Floor, Incident, IncidentMessage, MemoryStatus, Project, Room, WorktreeStatus } from '../shared/types.ts';
 import { canDeleteBranch } from '../shared/worktree.ts';
 import { modelsLabel } from '../shared/models.ts';
+import { type UsageRow, type UsageSummary, dayKey, totalTokens } from '../shared/usage.ts';
 
 /** Depois da última tecla, quanto esperar antes de trocar de terminal sozinho. */
 export const TYPING_GRACE_MS = 3500;
@@ -541,4 +542,79 @@ export function staleModelAgents(room: Room, project: Project, agents: Agent[]):
   return agents.filter(
     (a) => a.roomId === room.id && a.kind !== 'shell' && a.status !== 'exited' && agentProject(room, a)?.id === project.id && (a.models ?? 'padrão da conta') !== want,
   );
+}
+
+// ---------- consumo ----------
+
+export type UsagePeriod = 'hoje' | '7d' | '30d';
+
+/** Começo e fim do período do painel: hoje é desde a meia-noite; 7 e 30 dias contam o dia de hoje. */
+export function periodRange(period: UsagePeriod, now: number): { from: number; to: number } {
+  const midnight = new Date(now);
+  midnight.setHours(0, 0, 0, 0);
+  const days = period === 'hoje' ? 0 : period === '7d' ? 6 : 29;
+  midnight.setDate(midnight.getDate() - days);
+  return { from: midnight.getTime(), to: now + 1 };
+}
+
+/** Os dias do período, em ordem (data local "AAAA-MM-DD"): o gráfico mostra também os dias sem uso. */
+export function periodDays(period: UsagePeriod, now: number): string[] {
+  const { from } = periodRange(period, now);
+  const out: string[] = [];
+  const d = new Date(from);
+  while (d.getTime() <= now) {
+    out.push(dayKey(d.getTime()));
+    d.setDate(d.getDate() + 1);
+  }
+  return out;
+}
+
+/** Topo do eixo: o próximo número "redondo" (1, 2 ou 5 vezes uma potência de 10). */
+export function niceMax(v: number): number {
+  if (v <= 0) return 0;
+  const p = 10 ** Math.floor(Math.log10(v));
+  return [1, 2, 5, 10].map((m) => m * p).find((m) => m >= v)!;
+}
+
+/**
+ * Cor de cada fonte: as quatro primeiras na ordem fixa (validada no fundo escuro do escritório);
+ * da quinta em diante, todas em cinza ("outras").
+ */
+export const SOURCE_COLORS = ['#3987e5', '#d95926', '#199e70', '#c98500'];
+export function sourceColor(sources: string[], source: string): string {
+  const i = sources.indexOf(source);
+  return i >= 0 && i < SOURCE_COLORS.length ? SOURCE_COLORS[i] : '#737aa2';
+}
+
+/** Consumo de um projeto na janela aberta do plano: tokens e a parte dele na janela. */
+export function projectWindowUsage(summary: UsageSummary | undefined, projectId: string): { tokens: number; share: number; end: number } | undefined {
+  const w = summary?.window;
+  if (!w) return undefined;
+  const row = w.places.find((p) => p.place.projectId === projectId);
+  const tokens = row ? totalTokens(row.tokens) : 0;
+  return { tokens, share: w.total ? tokens / w.total : 0, end: w.end };
+}
+
+/**
+ * As salas e os projetos do escritório sempre aparecem; das pastas de fora dele, só as maiores, e o
+ * resto vira uma linha só ("outras N pastas"), para a tabela não ficar enorme.
+ */
+export function topPlaces(rows: UsageRow[], keep: number): UsageRow[] {
+  const inside = rows.filter((r) => r.place.roomId);
+  const outside = rows.filter((r) => !r.place.roomId);
+  const shown = outside.slice(0, Math.max(0, keep - inside.length));
+  const rest = outside.slice(shown.length);
+  const out = [...inside, ...shown].sort((a, b) => totalTokens(b.tokens) - totalTokens(a.tokens));
+  if (rest.length) {
+    const sum = { place: { key: 'outras', label: `Outras ${rest.length} pastas fora do escritório` }, tokens: { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 }, cost: 0, bySource: {} as Record<string, number> };
+    for (const r of rest) {
+      sum.tokens.input += r.tokens.input;
+      sum.tokens.output += r.tokens.output;
+      sum.tokens.cacheWrite += r.tokens.cacheWrite;
+      sum.tokens.cacheRead += r.tokens.cacheRead;
+      sum.cost += r.cost;
+    }
+    out.push(sum);
+  }
+  return out;
 }

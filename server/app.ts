@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import fastifyStatic from '@fastify/static';
@@ -27,9 +28,11 @@ import { IncidentError, addParticipants, closeIncident, incidentAt, leaveInciden
 import { MemoryError, memoryEvents, memoryStatus, openDataDir, startInstall, startUninstall } from './memory.ts';
 import { pickFolder } from './picker.ts';
 import { parseModels } from '../shared/models.ts';
+import { type Place, type Price, summarize } from '../shared/usage.ts';
+import { customPrices, prices, receiveRecords, setPrice, usageRecords } from './usage.ts';
 import { detectProjects, draftSummary, insideRoot, newProject, projectOf } from './projects.ts';
 import { WorktreeError, mergeWorktree, openPr, removeWorktree, worktreeStatus } from './worktree.ts';
-import { PORT } from './platform.ts';
+import { DATA_DIR, PORT } from './platform.ts';
 import { DEFAULT_FLOOR, store } from './store.ts';
 import { FLOOR_COLORS, MAX_WAR_ROOMS, autoPlace, canPlace, closeGap, isValidCell } from '../shared/building.ts';
 import type { Agent, Floor, FloorDefaults, Room } from '../shared/types.ts';
@@ -383,6 +386,47 @@ export async function buildApp(opts: { port?: number } = {}) {
     return { ok: true };
   });
 
+  // ---------- consumo de tokens ----------
+
+  /** Resumo do período (padrão: últimos 7 dias), por sala, projeto, modelo, dia e janela do plano. */
+  app.get<{ Querystring: { from?: string; to?: string; ler?: string } }>('/api/uso', async (req) => {
+    const now = Date.now();
+    const from = Number(req.query.from) || now - 7 * 24 * 3600 * 1000;
+    const to = Number(req.query.to) || now + 1;
+    // ler=1 (o painel aberto agora): lê o que há de novo mesmo que a última leitura seja recente.
+    return summarize(await usageRecords(req.query.ler === '1'), { from, to, now, locate: placeOf, prices: prices() });
+  });
+
+  /** Outras fontes (Codex, Gemini, um script seu): um registro ou uma lista no formato UsageRecord. */
+  app.post<{ Body: unknown }>('/api/uso', async (req, reply) => {
+    const result = receiveRecords(req.body);
+    if (!result.accepted) return reply.code(400).send({ error: 'Nenhum registro válido: veja o formato em shared/usage.ts (UsageRecord)', ...result });
+    await usageRecords(true);
+    return result;
+  });
+
+  app.get('/api/uso/precos', async () => {
+    const seen = [...new Set((await usageRecords()).map((r) => r.model))].sort();
+    return { prices: prices(), custom: Object.keys(customPrices()), seen };
+  });
+
+  /** Preço de um modelo (USD por milhão de tokens); price null volta ao padrão. */
+  app.put<{ Body: { model?: string; price?: Price | null } }>('/api/uso/precos', async (req, reply) => {
+    const model = String(req.body?.model ?? '').trim();
+    if (!/^[\w.\-[\]:/]{1,100}$/.test(model)) return reply.code(400).send({ error: 'Nome de modelo inválido' });
+    const p = req.body?.price;
+    if (p === null || p === undefined) {
+      setPrice(model, null);
+      return { ok: true };
+    }
+    const keys = ['input', 'output', 'cacheWrite5m', 'cacheWrite1h', 'cacheRead'] as const;
+    if (!keys.every((k) => typeof p[k] === 'number' && Number.isFinite(p[k]) && p[k] >= 0 && p[k] < 10_000)) {
+      return reply.code(400).send({ error: 'Preço inválido: cinco números (USD por milhão de tokens)' });
+    }
+    setPrice(model, Object.fromEntries(keys.map((k) => [k, p[k]])) as unknown as Price);
+    return { ok: true };
+  });
+
   // ---------- ai-memory (memória dos agentes) ----------
 
   const memoryRoute = (fn: () => unknown) => async (_req: unknown, reply: any) => {
@@ -486,6 +530,71 @@ function applyGap(moves: { id: string; pos: { x: number; y: number } }[]) {
     const r = store.rooms.get(m.id);
     if (r) store.putRoom({ ...r, pos: m.pos });
   }
+}
+
+/**
+ * Onde uma pasta fica no escritório, para o consumo: a do agente (worktree incluso), a de um
+ * projeto (ou dentro dele), a raiz de uma sala; senão, fora do escritório.
+ */
+function placeOf(cwd: string): Place {
+  const project = (roomId: string, projectId?: string): Place => {
+    const room = store.rooms.get(roomId)!;
+    const p = projectId ? room.projects?.find((x) => x.id === projectId) : undefined;
+    const multi = (room.projects?.length ?? 0) > 1;
+    return {
+      key: p ? `p:${p.id}` : `r:${room.id}`,
+      label: p && multi ? `${room.name} · ${p.name}` : p ? room.name : `${room.name} (raiz)`,
+      roomId: room.id,
+      projectId: p?.id,
+      floorId: room.floorId,
+    };
+  };
+  if (cwd) {
+    const agent = [...store.agents.values()].find((a) => a.cwd === cwd && a.kind !== 'shell');
+    const room = agent && store.rooms.get(agent.roomId);
+    if (agent && room) return project(room.id, projectOf(room, agent.projectId).id);
+    // Worktree de um agente que já saiu: ~/.ai-office/worktrees/<pasta do projeto>/<agente> (também o
+    // de outro escritório nesta máquina, como o de testes em ~/.ai-office-teste).
+    const rel = path.relative(path.join(DATA_DIR, 'worktrees'), cwd);
+    const wt = !rel.startsWith('..') && !path.isAbsolute(rel) ? rel.split(path.sep)[0] : /[\\/]\.ai-office[^\\/]*[\\/]worktrees[\\/]([^\\/]+)/.exec(cwd)?.[1];
+    // Worktree que ainda existe: o .git dele aponta o repositório de verdade (mais certo que o nome da pasta).
+    const repo = worktreeRepo(cwd);
+    let best: { place: Place; len: number } | undefined;
+    for (const r of store.rooms.values()) {
+      for (const p of r.projects ?? []) {
+        if (repo && path.resolve(p.path) === repo) return project(r.id, p.id);
+      }
+    }
+    for (const r of store.rooms.values()) {
+      for (const p of r.projects ?? []) {
+        if (!repo && wt && path.basename(p.path) === wt) return project(r.id, p.id);
+        if (insideRoot(p.path, cwd) && (!best || p.path.length > best.len)) best = { place: project(r.id, p.id), len: p.path.length };
+      }
+      if (insideRoot(r.path, cwd) && (!best || r.path.length > best.len)) best = { place: project(r.id), len: r.path.length };
+    }
+    if (best) return best.place;
+  }
+  const home = os.homedir();
+  return { key: `fora:${cwd}`, label: cwd ? cwd.replace(home, '~') : '(pasta desconhecida)' };
+}
+
+/** Repositório principal de um worktree do git (o .git dele é um arquivo "gitdir: <repo>/.git/worktrees/<nome>"). */
+function worktreeRepo(cwd: string): string | undefined {
+  let d = cwd;
+  for (let i = 0; i < 6; i++) {
+    const git = path.join(d, '.git');
+    // Repositório comum (.git é uma pasta): não é worktree.
+    if (fs.existsSync(git) && fs.statSync(git).isDirectory()) return undefined;
+    try {
+      const m = /^gitdir:\s*(.+?)[\\/]\.git[\\/]worktrees[\\/]/m.exec(fs.readFileSync(git, 'utf8'));
+      if (m) return path.resolve(m[1]);
+      return undefined;
+    } catch {}
+    const up = path.dirname(d);
+    if (up === d) return undefined;
+    d = up;
+  }
+  return undefined;
 }
 
 /** Pasta de um projeto, procurando em todas as salas. */
