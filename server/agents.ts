@@ -6,6 +6,7 @@ import pty, { type IPty } from '@lydell/node-pty';
 import type { Agent, Floor, Room } from '../shared/types.ts';
 import { findTranscript } from './discover.ts';
 import { addWorktree } from './git.ts';
+import { modelLaunch, modelsLabel } from '../shared/models.ts';
 import { claudeWiring } from './memory.ts';
 import { nowText, projectOf, roomContext } from './projects.ts';
 import { DATA_DIR, HOST, PORT, claudeBin, defaultShell, isWindows, ptyCommand } from './platform.ts';
@@ -280,12 +281,18 @@ function spawn(agent: Agent, resume: boolean) {
     return;
   }
   let args: string[] = [];
+  let modelEnv: Record<string, string> = {};
   const room = store.rooms.get(agent.roomId)!;
   if (!isShell) {
     const floor = store.floors.get(room.floorId ?? '');
     const files = floorSessionFiles(floor);
     const project = projectOf(room, agent.projectId);
-    args = claudeArgs(agent.sessionId, resume, files.settings, agentPromptFile(agent, room, floor), project.path === room.path ? [] : [room.path]);
+    // Os modelos do projeto valem por execução: quem abre ou retoma pega a escolha atual.
+    const models = modelLaunch(project.models);
+    modelEnv = models.env;
+    args = [...claudeArgs(agent.sessionId, resume, files.settings, agentPromptFile(agent, room, floor), project.path === room.path ? [] : [room.path]), ...models.args];
+    const label = modelsLabel(project.models);
+    if (agent.models !== label) store.patchAgent(agent.id, { models: label });
   }
   const cmd = ptyCommand(bin, args);
   const cwd = fs.existsSync(agent.cwd) ? agent.cwd : projectOf(room, agent.projectId).path;
@@ -300,6 +307,7 @@ function spawn(agent: Agent, resume: boolean) {
     env: {
       ...cleanEnv(),
       ...officeEnv,
+      ...modelEnv,
       COLORTERM: 'truecolor',
     } as Record<string, string>,
     useConpty: isWindows ? true : undefined,

@@ -511,3 +511,49 @@ describe('quem está fazendo o quê', () => {
     expect([logic.ago(now - 10_000, now), logic.ago(now - 3 * 60_000, now), logic.ago(now - 2 * 3600_000, now), logic.ago(undefined, now)]).toEqual(['agora', 'há 3 min', 'há 2 h', '']);
   });
 });
+
+describe('modelos do projeto', () => {
+  it('avisa quem está aberto com outros modelos; quem está fora já pega a escolha nova', () => {
+    const room = { id: 'r1', name: 'S', path: '/s', createdAt: 1, projects: [{ id: 'p', name: 'p', path: '/s', summary: '', models: { mode: 'unico' as const, model: 'sonnet' } }] } as Room;
+    const ag = (id: string, patch: Partial<Agent>) => ({ id, roomId: 'r1', name: id, cwd: '/', sessionId: '', status: 'idle', activity: '', subagents: 0, createdAt: 1, projectId: 'p', ...patch }) as Agent;
+    const stale = logic.staleModelAgents(room, room.projects![0], [
+      ag('velho', { models: 'opus' }),
+      ag('novo', { models: 'sonnet' }),
+      ag('fora', { models: 'opus', status: 'exited' }),
+      ag('antigo', {}),
+      ag('term', { kind: 'shell' }),
+    ]);
+    expect(stale.map((a) => a.id)).toEqual(['velho', 'antigo']);
+  });
+});
+
+describe('consumo', () => {
+  const row = (key: string, total: number, roomId?: string) => ({ place: { key, label: key, roomId }, tokens: { input: 0, output: total, cacheWrite: 0, cacheRead: 0 }, cost: total / 100, bySource: {} });
+
+  it('período: hoje desde a meia-noite; 7 dias contando hoje, com os dias vazios no gráfico', () => {
+    const now = new Date(2026, 10, 9, 15, 30).getTime();
+    expect(logic.periodRange('hoje', now).from).toBe(new Date(2026, 10, 9).getTime());
+    expect(logic.periodRange('7d', now).from).toBe(new Date(2026, 10, 3).getTime());
+    expect(logic.periodDays('7d', now)).toEqual(['2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08', '2026-11-09']);
+  });
+
+  it('topo do eixo redondo e cor fixa por fonte (da quinta em diante, cinza)', () => {
+    expect([0, 3, 12, 260, 999_000].map(logic.niceMax)).toEqual([0, 5, 20, 500, 1_000_000]);
+    const fontes = ['claude', 'codex', 'gemini', 'grok', 'outra'];
+    expect(fontes.map((f) => logic.sourceColor(fontes, f))).toEqual([...logic.SOURCE_COLORS, '#737aa2']);
+  });
+
+  it('as salas sempre aparecem; das pastas de fora, só as maiores, e o resto vira uma linha', () => {
+    const rows = [row('fora1', 900), row('sala', 10, 'r1'), row('fora2', 500), row('fora3', 300), row('fora4', 100)];
+    const top = logic.topPlaces(rows, 3);
+    expect(top.map((r) => r.place.key)).toEqual(['fora1', 'fora2', 'sala', 'outras']);
+    expect(top[3]).toMatchObject({ place: { label: 'Outras 2 pastas fora do escritório' }, tokens: { output: 400 }, cost: 4 });
+  });
+
+  it('consumo do projeto na janela aberta', () => {
+    const summary = { window: { start: 0, end: 99, total: 400, places: [{ ...row('p', 100, 'r1'), place: { key: 'p', label: 'p', roomId: 'r1', projectId: 'p1' } }], previous: 0 } } as any;
+    expect(logic.projectWindowUsage(summary, 'p1')).toEqual({ tokens: 100, share: 0.25, end: 99 });
+    expect(logic.projectWindowUsage(summary, 'outro')).toEqual({ tokens: 0, share: 0, end: 99 });
+    expect(logic.projectWindowUsage({} as any, 'p1')).toBeUndefined();
+  });
+});

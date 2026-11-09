@@ -18,7 +18,7 @@ import { which } from '../server/platform.ts';
 import { store } from '../server/store.ts';
 import { toScreen } from '../web/iso.ts';
 import { VIEW, cellRect, deskSpot } from '../web/office.ts';
-import { BASE, PORT, api, makeRepo, tempDir, waitFor } from './helpers.ts';
+import { BASE, PORT, api, makeRepo, tempDir, transcriptLine, waitFor } from './helpers.ts';
 
 function findChrome(): string | undefined {
   if (process.env.CHROME_PATH) return process.env.CHROME_PATH;
@@ -936,6 +936,65 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     expect(store.rooms.get(room.id)!.name).toBe('SAFF Faturamento');
     await page.waitForFunction(() => document.querySelector('.room-title')?.textContent === 'SAFF Faturamento');
     await page.reload();
+  });
+
+  it('modelos: o painel da direita troca os modelos do projeto e avisa quem precisa retomar', async () => {
+    const room = [...store.rooms.values()].find((r) => r.name === 'SAFF Faturamento')!;
+    const saulo = byName('Saulo')!;
+    const head = `#directory .dir-room-head[data-room="${room.id}"]`;
+    await page.click(head);
+    await page.click(`#tabs .tab[data-id="${saulo.id}"]`);
+    await page.waitForSelector('#models-panel:not([hidden])');
+    expect(await page.$eval('#models-project', (e) => e.textContent)).toBe('· ms-sales');
+    expect(await page.$eval('#models-form input[value=padrao]', (e) => (e as HTMLInputElement).checked)).toBe(true);
+    await page.click('#models-form input[value=duplo]');
+    await page.type('#models-form input[name=reasoning]', 'claude-opus-5-5');
+    await page.type('#models-form input[name=execution]', 'sonnet');
+    await page.click('#models-form button[type=submit]');
+    await waitFor(() => store.rooms.get(room.id)!.projects![1].models?.mode === 'duplo', 3000, 'modelos salvos');
+    expect(store.rooms.get(room.id)!.projects![1].models).toEqual({ mode: 'duplo', reasoning: 'claude-opus-5-5', execution: 'sonnet' });
+    // O Saulo abriu no padrão da conta: a troca vale quando ele retomar.
+    await page.waitForFunction(() => document.querySelector('#models-stale:not([hidden])')?.textContent?.includes('Saulo'));
+    // Nome que não é de modelo: o servidor recusa e a mensagem aparece.
+    await page.click('#models-form input[value=unico]');
+    await page.type('#models-form input[name=model]', 'opus; ls');
+    await page.click('#models-form button[type=submit]');
+    await page.waitForFunction(() => document.querySelector('#models-msg')?.textContent?.includes('Modelo inválido'));
+  });
+
+  it('consumo: o 📊 abre o painel com a sala, o gráfico e os preços, e a lateral mostra a janela do plano', async () => {
+    const room = [...store.rooms.values()].find((r) => r.name === 'SAFF Faturamento')!;
+    const sales = room.projects![1];
+    const now = Date.now();
+    const dir = path.join(process.env.AI_OFFICE_CLAUDE_DIR!, 'projects', `-e2e-uso-${now}`);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, 'u.jsonl'), `${transcriptLine({ id: `e2e-${now}`, ts: new Date(now - 60_000).toISOString(), cwd: sales.path, output: 4321, read: 100_000 })}\n`);
+    await page.click('#btn-usage');
+    await page.waitForSelector('#usage-view:not([hidden])');
+    await page.waitForFunction(() => [...document.querySelectorAll('#usage-places tr')].some((r) => r.textContent?.includes('SAFF Faturamento · ms-sales')));
+    expect(await page.$$('#usage-chart path.bar')).not.toHaveLength(0);
+    expect(await page.$eval('#usage-legend', (e) => e.textContent)).toContain('claude');
+    expect(await page.$('#usage-models tr[data-model="claude-opus-5-5"] input[name=input]')).not.toBeNull();
+    // regressão: trocar de período antes da resposta anterior chegar não deixa o período antigo na tela.
+    await page.click('#usage-periods button[data-period="hoje"]');
+    await page.click('#usage-periods button[data-period="30d"]');
+    await page.waitForFunction(() => document.querySelectorAll('#usage-chart text.axis').length > 3 && !document.querySelector('#usage-status')?.textContent);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(await page.$$eval('#usage-chart .hit', (els) => els.length)).toBeGreaterThanOrEqual(29);
+    // Clicar na linha leva para a sala; Esc fecharia o painel.
+    await page.$$eval('#usage-places tr[data-room]', (rows) => (rows.find((r) => r.textContent?.includes('ms-sales')) as HTMLElement).click());
+    await page.waitForSelector('#usage-view[hidden]');
+    await page.waitForFunction(() => document.querySelector('.room-title')?.textContent === 'SAFF Faturamento');
+    await page.click('#btn-usage');
+    await page.waitForSelector('#usage-view:not([hidden])');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#usage-view[hidden]');
+    // A linha da lateral vem da janela do plano (lida a cada minuto: recarrega para não esperar).
+    await page.reload();
+    await page.waitForSelector(`#directory .dir-room-head[data-room="${room.id}"]`);
+    await page.click(`#directory .dir-room-head[data-room="${room.id}"]`);
+    await page.click('.room-projects .chip:nth-child(2)');
+    await page.waitForFunction(() => document.querySelector('#room-usage:not([hidden])')?.textContent?.includes('em ms-sales'));
   });
 
   it('a página não tem erros de JavaScript', async () => {

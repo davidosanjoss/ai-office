@@ -15,6 +15,7 @@
       <button id="btn-add-room" class="btn">+ Sala</button>
       <button id="btn-inbox" class="inbox" hidden></button>
       <div id="counters" class="counters"></div>
+      <button id="btn-usage" class="btn ghost" title="Consumo de tokens por sala e projeto">📊 Consumo</button>
       <button id="btn-memory" class="memory off" title="Memória dos agentes (ai-memory)">Memória</button>
       <div class="spacer"></div>
       <label class="toggle" title="Quando um agente termina ou pede aprovação, abre o terminal dele assim que você parar de digitar">
@@ -32,6 +33,58 @@
     </aside>
 
     <div id="main-col">
+    <section id="usage-view" hidden>
+      <header class="usage-head">
+        <h2>📊 Consumo</h2>
+        <div id="usage-periods" class="segmented">
+          <button data-period="hoje">Hoje</button>
+          <button data-period="7d">7 dias</button>
+          <button data-period="30d">30 dias</button>
+        </div>
+        <span id="usage-status" class="muted"></span>
+        <button id="usage-close" class="icon" title="Fechar (Esc)">×</button>
+      </header>
+      <div class="usage-body">
+        <div id="usage-tiles" class="tiles"></div>
+        <section class="card">
+          <h3>Tokens por dia</h3>
+          <div id="usage-legend" class="legend"></div>
+          <div id="usage-chart"></div>
+          <div id="usage-tip" hidden></div>
+        </section>
+        <div class="usage-cols">
+          <section class="card">
+            <h3>Por sala e projeto</h3>
+            <table id="usage-places" class="usage-table">
+              <thead><tr><th>Onde</th><th class="num" title="Entrada e cache gravado">Entrada</th><th class="num">Cache lido</th><th class="num">Saída</th><th class="num">Total</th><th class="num">API</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </section>
+          <section class="card">
+            <h3>Na janela atual do plano (5 h)</h3>
+            <table id="usage-window" class="usage-table">
+              <thead><tr><th>Onde</th><th class="num">Entrada</th><th class="num">Cache lido</th><th class="num">Saída</th><th class="num">Total</th><th class="num">API</th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </section>
+        </div>
+        <section class="card">
+          <h3>Modelos e preços <small class="muted">USD por milhão de tokens; o equivalente na API usa estes preços</small></h3>
+          <form id="usage-models">
+            <table class="usage-table">
+              <thead><tr><th>Modelo</th><th class="num">Tokens</th><th class="num">API</th><th>Entrada</th><th>Saída</th><th>Cache 5 min</th><th>Cache 1 h</th><th>Cache lido</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table>
+          </form>
+        </section>
+        <section class="card usage-help">
+          <h3>Outras fontes (GPT, Gemini…)</h3>
+          <p>O Claude Code entra sozinho. Para outras ferramentas, mande o consumo para <code>POST /api/uso</code> (só do próprio computador) ou ponha arquivos <code>.jsonl</code> em <code>~/.ai-office/uso/entrada</code>, um registro por linha:</p>
+          <pre>{"source":"gemini","id":"resp-123","ts":"2026-11-09T14:00:00Z","cwd":"/home/voce/ampm/saff/ms-sales","model":"gemini-3-pro","input":1200,"output":300,"cacheRead":0}</pre>
+          <p class="muted">A pasta (<code>cwd</code>) liga o consumo à sala e ao projeto. Depois, ponha o preço do modelo na tabela acima.</p>
+        </section>
+      </div>
+    </section>
     <section id="office">
       <nav id="elevator" aria-label="Andares"></nav>
       <!-- Atividade flutuando sobre o mapa, embaixo; dá para recolher. -->
@@ -158,6 +211,26 @@
 
       <aside id="sidebar">
         <div id="room-info"></div>
+        <section id="models-panel" class="panel" hidden>
+          <h3>Modelos <small id="models-project" class="muted"></small></h3>
+          <form id="models-form" autocomplete="off">
+            <div class="models-mode">
+              <label><input type="radio" name="mode" value="padrao" /> Padrão da conta</label>
+              <label><input type="radio" name="mode" value="unico" /> Um modelo</label>
+              <label><input type="radio" name="mode" value="duplo" /> Raciocínio + execução</label>
+            </div>
+            <label class="models-field" data-for="unico">Modelo <input name="model" list="model-suggestions" placeholder="opus" /></label>
+            <label class="models-field" data-for="duplo">Raciocínio <small class="muted">(modo de planejamento)</small> <input name="reasoning" list="model-suggestions" placeholder="opus" /></label>
+            <label class="models-field" data-for="duplo">Execução <input name="execution" list="model-suggestions" placeholder="sonnet" /></label>
+            <datalist id="model-suggestions"></datalist>
+            <div class="models-actions">
+              <button class="btn small" type="submit">Salvar</button>
+              <span id="models-msg" class="muted"></span>
+            </div>
+            <p id="models-stale" class="models-stale" hidden></p>
+          </form>
+        </section>
+        <p id="room-usage" class="room-usage" hidden></p>
         <section id="squad-board" class="panel grow" hidden>
           <h3>Quem está fazendo o quê</h3>
           <div id="squad-list"></div>

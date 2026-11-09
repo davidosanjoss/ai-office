@@ -84,6 +84,23 @@ No **Windows**, o escritório mostra se a memória está ligada e, em vez de ins
 
 Se você usar o comando `ai-memory` direto no terminal (`ai-memory status`, `ai-memory search`…), defina `AI_MEMORY_DATA_DIR` com a pasta dos dados: sem ela, o wrapper do Docker procura um volume que não é o nosso. Para religar hooks e MCP, use o **Instalar** do escritório (ou `npm run memoria:up`), que já passa isso.
 
+### Modelos por projeto
+
+No painel da direita, **Modelos** escolhe com que modelo os agentes de cada projeto trabalham:
+
+- **Padrão da conta**: o que o seu Claude Code já usa.
+- **Um modelo**: um alias (`opus`, `sonnet`, `haiku`, `fable`, `sonnet[1m]`) ou o nome completo (`claude-opus-5-5`).
+- **Raciocínio + execução**: um modelo para o modo de planejamento e outro para executar. Usa o `opusplan` do Claude Code, trocando com `ANTHROPIC_DEFAULT_OPUS_MODEL` e `ANTHROPIC_DEFAULT_SONNET_MODEL` o que cada alias quer dizer.
+
+A escolha vale para quem abre ou retoma a conversa; o painel avisa quem ainda está com os modelos antigos.
+
+### Consumo de tokens
+
+O **📊 Consumo** no topo mostra os tokens e o **equivalente na API** (pelos preços da tabela, que você edita) por sala e projeto, por dia, por modelo e na **janela atual do plano** (5 horas). A linha "Janela do plano" no painel da direita mostra quanto o projeto escolhido gastou nela. A janela é uma estimativa: o limite oficial não aparece nos transcripts.
+
+- O Claude Code entra sozinho: o escritório lê os transcripts de `~/.claude/projects` aos poucos (só o que foi acrescentado) e guarda um índice em `~/.ai-office/uso`.
+- Outras fontes (Codex, Gemini, um script seu) entram pela rota `POST /api/uso` ou por arquivos `.jsonl` em `~/.ai-office/uso/entrada`, no formato `UsageRecord` de `shared/usage.ts`. A pasta (`cwd`) liga o consumo à sala e ao projeto.
+
 ## Como funciona
 
 ```

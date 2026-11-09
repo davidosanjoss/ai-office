@@ -41,6 +41,20 @@ export interface Project {
   summary: string;
   /** Você editou a ficha: o rascunho automático não a substitui mais. */
   summaryEdited?: boolean;
+  /** Modelos dos agentes deste projeto (ausente = o padrão da sua conta no Claude Code). */
+  models?: ProjectModels;
+}
+
+/**
+ * Modelos de um projeto. 'unico': um modelo para tudo. 'duplo': um para o raciocínio (o modo de
+ * planejamento do Claude Code) e outro para a execução.
+ */
+export interface ProjectModels {
+  mode: 'unico' | 'duplo';
+  /** Modelo único (alias como "opus" ou o nome completo, como "claude-opus-5-5"). */
+  model?: string;
+  reasoning?: string;
+  execution?: string;
 }
 
 /**
@@ -71,6 +85,8 @@ export interface Agent {
   roomId: string;
   /** Projeto da sala em que o agente trabalha. Ausente nos registros antigos = o primeiro da sala. */
   projectId?: string;
+  /** Modelos com que a sessão abriu (modelsLabel): se o projeto mudou depois, vale ao retomar. */
+  models?: string;
   name: string;
   /** Pasta onde o agente roda: a do projeto ou a de um worktree. */
   cwd: string;
