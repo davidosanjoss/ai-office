@@ -26,6 +26,7 @@ import { handleHook } from './hooks.ts';
 import { IncidentError, addParticipants, closeIncident, incidentAt, leaveIncidents, openIncident, openWarShell, sendMessage, shareMessage } from './incidents.ts';
 import { MemoryError, memoryEvents, memoryStatus, openDataDir, startInstall, startUninstall } from './memory.ts';
 import { pickFolder } from './picker.ts';
+import { parseModels } from '../shared/models.ts';
 import { detectProjects, draftSummary, insideRoot, newProject, projectOf } from './projects.ts';
 import { WorktreeError, mergeWorktree, openPr, removeWorktree, worktreeStatus } from './worktree.ts';
 import { PORT } from './platform.ts';
@@ -212,13 +213,20 @@ export async function buildApp(opts: { port?: number } = {}) {
   });
 
   /** Edita a ficha de um projeto. `redraft` refaz o rascunho automático e volta a deixá-lo automático. */
-  app.patch<{ Params: { id: string; pid: string }; Body: { name?: string; summary?: string; redraft?: boolean } }>(
+  app.patch<{ Params: { id: string; pid: string }; Body: { name?: string; summary?: string; redraft?: boolean; models?: unknown } }>(
     '/api/rooms/:id/projects/:pid',
     async (req, reply) => {
       const room = store.rooms.get(req.params.id);
       const project = room?.projects?.find((p) => p.id === req.params.pid);
       if (!room || !project) return reply.code(404).send({ error: 'Projeto não encontrado' });
       const next = { ...project };
+      // Modelos: null ou vazio volta ao padrão da conta; nome estranho é recusado (vira argumento do claude).
+      if (req.body && 'models' in req.body) {
+        const models = parseModels(req.body.models);
+        if (models === null) return reply.code(400).send({ error: 'Modelo inválido: use um alias (ex.: opus) ou o nome completo (ex.: claude-opus-5-5)' });
+        if (models) next.models = models;
+        else delete next.models;
+      }
       if (typeof req.body?.name === 'string' && req.body.name.trim()) next.name = req.body.name.trim();
       if (req.body?.redraft) {
         next.summary = draftSummary(project.path);

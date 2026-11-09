@@ -511,3 +511,18 @@ describe('quem está fazendo o quê', () => {
     expect([logic.ago(now - 10_000, now), logic.ago(now - 3 * 60_000, now), logic.ago(now - 2 * 3600_000, now), logic.ago(undefined, now)]).toEqual(['agora', 'há 3 min', 'há 2 h', '']);
   });
 });
+
+describe('modelos do projeto', () => {
+  it('avisa quem está aberto com outros modelos; quem está fora já pega a escolha nova', () => {
+    const room = { id: 'r1', name: 'S', path: '/s', createdAt: 1, projects: [{ id: 'p', name: 'p', path: '/s', summary: '', models: { mode: 'unico' as const, model: 'sonnet' } }] } as Room;
+    const ag = (id: string, patch: Partial<Agent>) => ({ id, roomId: 'r1', name: id, cwd: '/', sessionId: '', status: 'idle', activity: '', subagents: 0, createdAt: 1, projectId: 'p', ...patch }) as Agent;
+    const stale = logic.staleModelAgents(room, room.projects![0], [
+      ag('velho', { models: 'opus' }),
+      ag('novo', { models: 'sonnet' }),
+      ag('fora', { models: 'opus', status: 'exited' }),
+      ag('antigo', {}),
+      ag('term', { kind: 'shell' }),
+    ]);
+    expect(stale.map((a) => a.id)).toEqual(['velho', 'antigo']);
+  });
+});

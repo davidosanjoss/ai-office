@@ -564,6 +564,35 @@ describe('sala com vários projetos', () => {
     expect(sem.projects!.map((p) => p.name)).toEqual(['ms-arquivos', 'ms-sales']);
   });
 
+  it('modelos por projeto: o agente abre com eles, e quem retoma pega a escolha nova', async () => {
+    const root = sistema();
+    const { data: room } = await api<Room>('POST', '/api/rooms', { path: root });
+    const sales = room.projects![1];
+    const ruim = await api('PATCH', `/api/rooms/${room.id}/projects/${sales.id}`, { models: { mode: 'unico', model: 'opus; rm -rf ~' } });
+    expect(ruim.status).toBe(400);
+    await api('PATCH', `/api/rooms/${room.id}/projects/${sales.id}`, { models: { mode: 'duplo', reasoning: 'claude-opus-5-5', execution: 'claude-haiku-5-5' } });
+    const a = await hire(room, { projectId: sales.id });
+    await waitOutput(a.id, 'modelo=opusplan opus=claude-opus-5-5 sonnet=claude-haiku-5-5');
+    await waitStatus(a.id, 'idle');
+    expect(store.agents.get(a.id)!.models).toBe('claude-opus-5-5 → claude-haiku-5-5');
+    // O outro projeto da sala continua no padrão da conta.
+    const b = await hire(room, { projectId: room.projects![0].id });
+    await waitStatus(b.id, 'idle');
+    expect(ws.out(b.id)).not.toContain('modelo=');
+
+    // Trocou para um modelo só: quem retoma já abre com ele.
+    const { data: depois } = await api<Room>('PATCH', `/api/rooms/${room.id}/projects/${sales.id}`, { models: { mode: 'unico', model: 'sonnet' } });
+    expect(depois.projects![1].models).toEqual({ mode: 'unico', model: 'sonnet' });
+    ws.type(a.id, '/exit\r');
+    await waitStatus(a.id, 'exited');
+    await api('POST', `/api/agents/${a.id}/resume`);
+    await waitOutput(a.id, 'modelo=sonnet opus=- sonnet=-');
+    await waitFor(() => store.agents.get(a.id)?.models === 'sonnet', 4000, 'modelos do agente');
+    // Voltar ao padrão da conta tira a escolha do projeto.
+    const { data: padrao } = await api<Room>('PATCH', `/api/rooms/${room.id}/projects/${sales.id}`, { models: null });
+    expect(padrao.projects![1].models).toBeUndefined();
+  });
+
   it('recusa projeto que não é da sala', async () => {
     const { data: room } = await api<Room>('POST', '/api/rooms', { path: sistema() });
     const { status } = await api('POST', '/api/agents', { roomId: room.id, projectId: 'outro' });

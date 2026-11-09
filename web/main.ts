@@ -1,6 +1,7 @@
-import type { ActivityEvent, Agent, ClientMsg, DiffScope, FileChange, FileDiff, Floor, GitInfo, Incident, MemoryStatus, OfficeState, Room, ServerMsg, WorktreeStatus } from '../shared/types.ts';
+import type { ActivityEvent, Agent, ClientMsg, Project, DiffScope, FileChange, FileDiff, Floor, GitInfo, Incident, MemoryStatus, OfficeState, Room, ServerMsg, WorktreeStatus } from '../shared/types.ts';
 import { type MentionSuggestion, type Participant, applyMention, mentionQuery, mentionSuggestions } from '../shared/incident.ts';
 import { windowsSteps } from '../shared/memory.ts';
+import { MODEL_SUGGESTIONS, modelsLabel } from '../shared/models.ts';
 import { FLOOR_COLORS, type Cell } from '../shared/building.ts';
 import { countChanges, parseDiff, renderDiff } from './diff.ts';
 import { Explorer, type ExplorerTarget } from './files.ts';
@@ -364,6 +365,7 @@ function renderAll(full = true) {
   renderDirectory();
   renderTabs();
   renderRoomInfo();
+  renderModelsPanel();
   renderSquadBoard();
   renderInbox();
   renderExited();
@@ -563,6 +565,81 @@ function renderRoomInfo() {
     office.reveal(moved.id);
   });
 }
+
+// ---------- modelos por projeto ----------
+
+/** Projeto que o painel de modelos mostra: o do agente selecionado ou o escolhido na sala. */
+function modelsTarget(): { room: Room; project: Project } | undefined {
+  if (selectedWar !== undefined) return undefined;
+  const room = state.rooms.find((r) => r.id === selectedRoom);
+  if (!room) return undefined;
+  const agent = state.agents.find((a) => a.id === selectedAgent && a.roomId === room.id && a.kind !== 'shell');
+  const project = (agent && logic.agentProject(room, agent)) ?? logic.roomProject(room, roomProjectSel.get(room.id));
+  return project && { room, project };
+}
+
+let modelsKey = '';
+$('#model-suggestions').replaceChildren(...MODEL_SUGGESTIONS.map((m) => new Option('', m)));
+
+function renderModelsPanel() {
+  const t = modelsTarget();
+  const panel = $('#models-panel');
+  panel.hidden = !t;
+  if (!t) return;
+  const { room, project } = t;
+  const form = $<HTMLFormElement>('#models-form');
+  // Só preenche o formulário quando muda o projeto ou o que está salvo: não apaga o que você está digitando.
+  const key = JSON.stringify([project.id, project.models]);
+  if (key !== modelsKey && !form.contains(document.activeElement)) {
+    modelsKey = key;
+    $('#models-project').textContent = (room.projects?.length ?? 0) > 1 ? `· ${project.name}` : '';
+    const m = project.models;
+    const mode = m?.mode ?? 'padrao';
+    form.querySelector<HTMLInputElement>(`input[name=mode][value=${mode}]`)!.checked = true;
+    form.querySelector<HTMLInputElement>('input[name=model]')!.value = m?.model ?? '';
+    form.querySelector<HTMLInputElement>('input[name=reasoning]')!.value = m?.reasoning ?? '';
+    form.querySelector<HTMLInputElement>('input[name=execution]')!.value = m?.execution ?? '';
+    $('#models-msg').textContent = '';
+    showModelFields();
+  }
+  const stale = logic.staleModelAgents(room, project, state.agents);
+  const note = $('#models-stale');
+  note.hidden = !stale.length;
+  note.textContent = stale.length
+    ? `${stale.map((a) => a.name).join(', ')} ${stale.length === 1 ? 'abriu' : 'abriram'} com outros modelos (${stale[0].models ?? 'padrão da conta'}): a troca vale quando retomarem.`
+    : '';
+}
+
+function showModelFields() {
+  const mode = $<HTMLFormElement>('#models-form').querySelector<HTMLInputElement>('input[name=mode]:checked')?.value ?? 'padrao';
+  for (const f of document.querySelectorAll<HTMLElement>('#models-form .models-field')) f.hidden = f.dataset.for !== mode;
+}
+$('#models-form').addEventListener('change', showModelFields);
+
+$('#models-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const t = modelsTarget();
+  if (!t) return;
+  const data = new FormData(e.target as HTMLFormElement);
+  const mode = String(data.get('mode') ?? 'padrao');
+  const models =
+    mode === 'unico'
+      ? { mode, model: data.get('model') }
+      : mode === 'duplo'
+        ? { mode, reasoning: data.get('reasoning'), execution: data.get('execution') }
+        : null;
+  const msg = $('#models-msg');
+  try {
+    const room = (await api('PATCH', `/api/rooms/${t.room.id}/projects/${t.project.id}`, { models })) as Room;
+    upsert(state.rooms, room);
+    modelsKey = '';
+    (document.activeElement as HTMLElement | null)?.blur();
+    renderModelsPanel();
+    msg.textContent = `Salvo: ${modelsLabel(logic.roomProject(room, t.project.id)?.models)}`;
+  } catch (err) {
+    msg.textContent = (err as Error).message;
+  }
+});
 
 // ---------- quem está fazendo o quê ----------
 

@@ -2,6 +2,7 @@
 
 import type { ActivityEvent, Agent, FileChange, Floor, Incident, IncidentMessage, MemoryStatus, Project, Room, WorktreeStatus } from '../shared/types.ts';
 import { canDeleteBranch } from '../shared/worktree.ts';
+import { modelsLabel } from '../shared/models.ts';
 
 /** Depois da última tecla, quanto esperar antes de trocar de terminal sozinho. */
 export const TYPING_GRACE_MS = 3500;
@@ -527,4 +528,17 @@ export function squadBoard(room: Room, agents: Agent[], activity: ActivityEvent[
   return projects
     .map((p) => ({ project: p, rows: sorted(people.filter((a) => (agentProject(room, a)?.id ?? '') === p.id)) }))
     .filter((g) => g.rows.length);
+}
+
+// ---------- modelos por projeto ----------
+
+/**
+ * Agentes do projeto abertos com outros modelos que os escolhidos agora: a troca vale quando
+ * eles retomam. Quem está fora do escritório já pega a escolha nova ao voltar.
+ */
+export function staleModelAgents(room: Room, project: Project, agents: Agent[]): Agent[] {
+  const want = modelsLabel(project.models);
+  return agents.filter(
+    (a) => a.roomId === room.id && a.kind !== 'shell' && a.status !== 'exited' && agentProject(room, a)?.id === project.id && (a.models ?? 'padrão da conta') !== want,
+  );
 }

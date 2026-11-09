@@ -938,6 +938,30 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.reload();
   });
 
+  it('modelos: o painel da direita troca os modelos do projeto e avisa quem precisa retomar', async () => {
+    const room = [...store.rooms.values()].find((r) => r.name === 'SAFF Faturamento')!;
+    const saulo = byName('Saulo')!;
+    const head = `#directory .dir-room-head[data-room="${room.id}"]`;
+    await page.click(head);
+    await page.click(`#tabs .tab[data-id="${saulo.id}"]`);
+    await page.waitForSelector('#models-panel:not([hidden])');
+    expect(await page.$eval('#models-project', (e) => e.textContent)).toBe('· ms-sales');
+    expect(await page.$eval('#models-form input[value=padrao]', (e) => (e as HTMLInputElement).checked)).toBe(true);
+    await page.click('#models-form input[value=duplo]');
+    await page.type('#models-form input[name=reasoning]', 'claude-opus-5-5');
+    await page.type('#models-form input[name=execution]', 'sonnet');
+    await page.click('#models-form button[type=submit]');
+    await waitFor(() => store.rooms.get(room.id)!.projects![1].models?.mode === 'duplo', 3000, 'modelos salvos');
+    expect(store.rooms.get(room.id)!.projects![1].models).toEqual({ mode: 'duplo', reasoning: 'claude-opus-5-5', execution: 'sonnet' });
+    // O Saulo abriu no padrão da conta: a troca vale quando ele retomar.
+    await page.waitForFunction(() => document.querySelector('#models-stale:not([hidden])')?.textContent?.includes('Saulo'));
+    // Nome que não é de modelo: o servidor recusa e a mensagem aparece.
+    await page.click('#models-form input[value=unico]');
+    await page.type('#models-form input[name=model]', 'opus; ls');
+    await page.click('#models-form button[type=submit]');
+    await page.waitForFunction(() => document.querySelector('#models-msg')?.textContent?.includes('Modelo inválido'));
+  });
+
   it('a página não tem erros de JavaScript', async () => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(String(e)));

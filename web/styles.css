@@ -1761,3 +1761,13 @@ body.dir-hidden #directory {
 .squad-task { color: var(--text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .squad-task:not(:empty)::before { content: '📝 '; }
 .squad-task:empty, .squad-doing:empty { display: none; }
+
+/* Modelos do projeto, no painel da direita. */
+#models-panel[hidden], #models-form [hidden] { display: none; }
+#models-form { display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+.models-mode { display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.models-mode label { display: flex; gap: 4px; align-items: center; cursor: pointer; }
+.models-field { display: flex; flex-direction: column; gap: 2px; }
+.models-field input { width: 100%; box-sizing: border-box; }
+.models-actions { display: flex; gap: 8px; align-items: center; }
+.models-stale { margin: 0; color: #e0af68; }
