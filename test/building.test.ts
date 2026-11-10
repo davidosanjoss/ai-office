@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { MAX_ROOM_W, MAX_WAR_ROOMS, autoPlace, canPlace, closeGap, fixedRooms, freeCells, isValidCell, isWarColumn, nextWarCell, occupiedCells, roomSpans, roomWidth } from '../shared/building.ts';
 import type { Agent, Room } from '../shared/types.ts';
-import { CELL_H, CELL_W, CORR, MAX_VISIBLE_AGENTS, ZOOMS, cellRect, fitCamera, layoutBuilding, stepZoom, visibleAgents } from '../web/office.ts';
+import { CELL_H, CELL_W, CORR, MAX_VISIBLE_AGENTS, ZOOMS, cellRect, fitCamera, layoutBuilding, pinchZoom, stepZoom, visibleAgents } from '../web/office.ts';
 
 const room = (id: string, pos?: { x: number; y: number }): Room => ({ id, name: id, path: `/${id}`, createdAt: 0, pos });
 const keys = (cells: { x: number; y: number }[]) => cells.map((c) => `${c.x},${c.y}`).sort();
@@ -218,6 +218,14 @@ describe('câmera', () => {
     expect(fitCamera(bounds, 1100, 500)).toEqual({ x: 500, y: 200, z: 1 });
     expect(fitCamera(bounds, 2200, 1000)).toEqual({ x: 500, y: 200, z: 2 });
     expect(fitCamera(bounds, 300, 300).z).toBe(ZOOMS[0]);
+  });
+
+  it('pinça: vai para o nível de zoom mais perto de onde os dedos levaram', () => {
+    expect(pinchZoom(1, 1.05)).toBe(1);
+    expect(pinchZoom(1, 1.6)).toBe(1.5);
+    expect(pinchZoom(2, 0.5)).toBe(1);
+    expect(pinchZoom(3, 10)).toBe(ZOOMS.at(-1));
+    expect(pinchZoom(1, 0.01)).toBe(ZOOMS[0]);
   });
 
   it('zoom anda pelos níveis e para nas pontas', () => {

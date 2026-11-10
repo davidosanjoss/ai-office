@@ -63,6 +63,12 @@ export class Terminals {
     });
   }
 
+  /** A escala da tela mudou (janela levada para o monitor 4K, por exemplo): letra nova em todos. */
+  setFontSize(size: number) {
+    for (const t of this.terms.values()) t.term.options.fontSize = size;
+    this.fitActive();
+  }
+
   hideAll() {
     for (const t of this.terms.values()) t.el.hidden = true;
     this.active = undefined;
@@ -74,7 +80,7 @@ export class Terminals {
     this.host.appendChild(el);
     const term = new Terminal({
       fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, Consolas, monospace',
-      fontSize: 13,
+      fontSize: uiFontSize(),
       lineHeight: 1.15,
       scrollback: 10_000,
       theme: THEME,
@@ -149,4 +155,13 @@ export class Terminals {
       this.io.resize(this.active, t.term.cols, t.term.rows);
     }
   }
+}
+
+/**
+ * Tamanho da letra dos terminais e do editor: 13 px vezes a escala da interface (--ui-zoom, que
+ * o styles.css aumenta em telas altas com pouca densidade, como um 4K a 100%).
+ */
+export function uiFontSize(): number {
+  const zoom = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-zoom')) || 1;
+  return Math.round(13 * zoom);
 }

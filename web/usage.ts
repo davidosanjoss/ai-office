@@ -163,9 +163,11 @@ export class UsagePanel {
         tipBox.hidden = false;
       });
       hit.addEventListener('pointermove', (e) => {
+        // O painel pode estar com zoom (telas 4K): a posição na tela volta para a escala dele.
         const box = $('#usage-chart').getBoundingClientRect();
-        tipBox.style.left = `${e.clientX - box.left + 12}px`;
-        tipBox.style.top = `${e.clientY - box.top + 12}px`;
+        const z = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--ui-zoom')) || 1;
+        tipBox.style.left = `${(e.clientX - box.left) / z + 12}px`;
+        tipBox.style.top = `${(e.clientY - box.top) / z + 12}px`;
       });
       hit.addEventListener('pointerleave', () => (tipBox.hidden = true));
     }

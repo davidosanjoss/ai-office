@@ -998,12 +998,6 @@ dialog menu {
   }
 }
 
-@media (max-width: 900px) {
-  #sidebar,
-  #btn-sidebar {
-    display: none;
-  }
-}
 
 /* ---------- layout: lista à esquerda, mapa e terminais à direita ---------- */
 
@@ -1220,14 +1214,6 @@ body.dir-hidden #directory {
   transform: rotate(-90deg);
 }
 
-@media (max-width: 1100px) {
-  #directory {
-    display: none;
-  }
-  .counter span {
-    display: none;
-  }
-}
 
 /* ---------- sala de guerra ---------- */
 
@@ -1816,3 +1802,125 @@ body.dir-hidden #directory {
 .room-usage { margin: 4px 12px; font-size: 12px; color: var(--muted); }
 .room-usage[hidden] { display: none; }
 .room-usage b { color: var(--text); }
+
+/* =====================================================================
+   Responsivo: celular, tablet, computador, ultrawide e 4K.
+   ===================================================================== */
+
+/* Escala da interface: telas altas com pouca densidade (um 4K a 100%, um ultrawide 5K) deixariam
+   tudo minúsculo. Aumenta só a "moldura" (barra de cima, listas, painéis e diálogos) com zoom; o
+   mapa e o terminal se ajustam sozinhos (o mapa ganha níveis de zoom, o terminal lê --ui-zoom). */
+:root { --ui-zoom: 1; }
+@media (min-height: 1500px) and (max-resolution: 1.4dppx) { :root { --ui-zoom: 1.25; } }
+@media (min-height: 1900px) and (max-resolution: 1.4dppx) { :root { --ui-zoom: 1.5; } }
+.topbar, #directory, #sidebar, .tabs-row, #term-keys, dialog, #elevator, #activity-float, .map-controls, .usage-head, #usage-view .usage-body, .placeholder, #exited, #diff-view {
+  zoom: var(--ui-zoom);
+}
+
+/* Ultrawide e telas grandes: as colunas laterais ganham um pouco de espaço. */
+@media (min-width: 2400px) {
+  #directory { width: 300px; }
+  #sidebar { width: 380px; }
+  .usage-body { max-width: 2400px; margin: 0 auto; width: 100%; }
+}
+
+/* Barra de cima: nunca transborda; o que não cabe rola de lado. */
+.topbar { overflow-x: auto; scrollbar-width: none; }
+.topbar::-webkit-scrollbar { display: none; }
+.topbar > * { flex-shrink: 0; }
+
+/* Gavetas (tablet e celular): fundo escuro que fecha ao tocar. */
+#drawer-backdrop { display: none; }
+
+/* ---------- tablet e menores: a lista de salas vira gaveta ---------- */
+@media (max-width: 1100px) {
+  .counter span { display: none; }
+  #directory {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    width: min(320px, 86vw);
+    transform: translateX(-102%);
+    transition: transform 0.18s ease-out;
+    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.45);
+  }
+  /* Na gaveta, "escondida" no computador não vale. */
+  body.dir-hidden #directory { display: flex; }
+  body.dir-open #directory { transform: none; }
+  body.dir-open #drawer-backdrop,
+  body.side-open #drawer-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+    background: rgba(10, 10, 20, 0.55);
+  }
+}
+
+/* ---------- telas estreitas: o painel da direita também vira gaveta ---------- */
+@media (max-width: 900px) {
+  #sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    right: 0;
+    z-index: 60;
+    width: min(360px, 90vw);
+    transform: translateX(102%);
+    transition: transform 0.18s ease-out;
+    box-shadow: -4px 0 18px rgba(0, 0, 0, 0.45);
+    overflow-y: auto;
+  }
+  body.side-hidden #sidebar { display: flex; }
+  body.side-open #sidebar { transform: none; }
+  #btn-sidebar { font-size: 18px; padding: 0 12px; }
+  .toggle .lbl { display: none; }
+  .counters { display: none; }
+  .usage-cols { grid-template-columns: 1fr; }
+  .usage-table { display: block; overflow-x: auto; white-space: nowrap; }
+}
+
+/* ---------- celular ---------- */
+@media (max-width: 640px) {
+  .topbar { gap: 4px; padding: 4px 6px; }
+  .topbar .btn { padding-left: 8px; padding-right: 8px; }
+  #btn-inbox { padding: 2px 6px; }
+  .topbar .lbl, #tab-actions .lbl { display: none; }
+  .brand { font-size: 13px; }
+  .counters { display: none; }
+  #btn-memory { font-size: 9px; padding: 3px 6px; max-width: 64px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #office { height: 34vh; }
+  .placeholder { padding: 0 16px; text-align: center; }
+  /* Elevador recolhido: só o andar atual; tocar nele abre os outros. */
+  #elevator { left: 6px; top: 6px; padding: 4px; }
+  #elevator:not(.open) .floor:not(.current) { display: none; }
+  #elevator .floor { min-width: 0; font-size: 10px; }
+  #elevator .floor.current::after { content: '▾'; margin-left: 4px; }
+  #elevator.open .floor.current::after { content: '▴'; }
+  #activity-float { left: 6px; right: 54px; width: auto; max-width: none; transform: none; }
+  #tab-actions { padding-left: 4px; }
+  #tab-actions .btn { padding: 4px 10px; font-size: 14px; }
+  .tab { padding: 5px 8px; }
+  dialog { padding: 14px 12px; width: calc(100vw - 16px); max-height: calc(100dvh - 24px); overflow-y: auto; }
+  .usage-head { flex-wrap: wrap; gap: 8px; padding: 8px 10px; }
+  .usage-body { padding: 10px; gap: 10px; }
+  .tile b { font-size: 22px; }
+  /* Explorador: árvore em cima, arquivo embaixo. */
+  .files-body { flex-direction: column; }
+  .files-side { width: auto !important; max-height: 34vh; border-right: 0; border-bottom: 1px solid var(--line); }
+}
+
+/* ---------- toque: alvos maiores ---------- */
+@media (pointer: coarse) {
+  #splitter { height: 14px; background: var(--bg-2); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); position: relative; touch-action: none; }
+  #splitter::after { content: ''; position: absolute; left: 50%; top: 5px; width: 40px; height: 3px; margin-left: -20px; border-radius: 2px; background: var(--muted); }
+  .tab .close { padding: 0 6px; }
+}
+
+/* Barra de teclas do terminal (só em telas de toque, com um terminal aberto). */
+#term-keys { display: flex; gap: 4px; padding: 4px 6px; background: var(--bg-2); border-bottom: 1px solid var(--line); overflow-x: auto; flex-shrink: 0; }
+#term-keys[hidden] { display: none; }
+#term-keys button { flex: 1 0 auto; min-width: 40px; padding: 7px 8px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: 13px 'JetBrains Mono', monospace; touch-action: manipulation; }
+#term-keys button:active { background: var(--accent); color: var(--bg); }
