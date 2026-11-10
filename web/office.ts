@@ -78,7 +78,8 @@ const WAR_RX = 84;
 const WAR_RY = 54;
 /** Animação de andar que existe (de cima) mais parecida com cada diagonal da tela. */
 const WALK_FALLBACK: Partial<Record<ScreenDir, string>> = { 'south-east': 'east', 'north-west': 'west', 'south-west': 'south', 'north-east': 'north' };
-export const ZOOMS = [0.5, 0.75, 1, 1.5, 2, 3];
+/** Níveis de zoom do mapa. Os maiores servem às telas grandes (4K) e à pinça no celular. */
+export const ZOOMS = [0.5, 0.75, 1, 1.5, 2, 3, 4];
 /** Como o mapa é desenhado: a câmera e os cliques ficam na tela, a planta continua 2D. */
 export const VIEW: Projection = 'iso';
 
@@ -224,6 +225,12 @@ export function stepZoom(z: number, dir: 1 | -1): number {
   return ZOOMS[Math.max(0, Math.min(ZOOMS.length - 1, cur + dir))];
 }
 
+/** Pinça: o nível de zoom mais perto de onde os dedos levaram (z inicial × quanto abriram). */
+export function pinchZoom(z0: number, ratio: number): number {
+  const want = z0 * ratio;
+  return ZOOMS.reduce((best, z) => (Math.abs(Math.log(z / want)) < Math.abs(Math.log(best / want)) ? z : best), ZOOMS[0]);
+}
+
 export interface OfficeCallbacks {
   onSelectAgent(id: string): void;
   onAddAgent(roomId: string): void;
@@ -277,6 +284,12 @@ export class Office {
     this.canvas.addEventListener('pointerdown', (e) => this.onDown(e));
     this.canvas.addEventListener('pointermove', (e) => this.onMove(e));
     this.canvas.addEventListener('pointerup', (e) => this.onUp(e));
+    // O sistema pode tomar o toque (rolagem, gesto): esquece os dedos e a pinça.
+    this.canvas.addEventListener('pointercancel', (e) => {
+      this.touches.delete(e.pointerId);
+      if (!this.touches.size) this.pinch = undefined;
+      this.drag = undefined;
+    });
     this.canvas.addEventListener('pointerleave', () => {
       if (!this.drag) this.hover = undefined;
     });
@@ -339,8 +352,12 @@ export class Office {
   }
 
   zoom(dir: 1 | -1, at?: { x: number; y: number }) {
+    this.zoomTo(stepZoom(this.camera.z, dir), at);
+  }
+
+  /** Muda o zoom mantendo parado o ponto da tela `at` (ou o centro). */
+  zoomTo(z: number, at?: { x: number; y: number }) {
     const c = this.camera;
-    const z = stepZoom(c.z, dir);
     if (z === c.z) return;
     this.userMoved = true;
     // Mantém parado o ponto do mundo que está sob o cursor (ou o centro da tela).
@@ -548,14 +565,39 @@ export class Office {
     return pick(this.hits, this.toWorld(e), VIEW);
   }
 
+  /** Dedos na tela (toque): com dois, arrastar vira pinça de zoom. */
+  private touches = new Map<number, { x: number; y: number }>();
+  private pinch?: { dist: number; z: number };
+
   private onDown(e: PointerEvent) {
     if (e.button !== 0) return;
+    if (e.pointerType === 'touch') {
+      this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.touches.size === 2) {
+        const [a, b] = [...this.touches.values()];
+        this.pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y) || 1, z: this.camera.z };
+        // A pinça não é clique nem arraste.
+        this.drag = undefined;
+        this.canvas.setPointerCapture(e.pointerId);
+        return;
+      }
+    }
     const c = this.camera;
     this.drag = { x: e.clientX, y: e.clientY, camX: c.x, camY: c.y, moved: false };
     this.canvas.setPointerCapture(e.pointerId);
   }
 
   private onMove(e: PointerEvent) {
+    if (this.touches.has(e.pointerId)) this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (this.pinch && this.touches.size >= 2) {
+      const [a, b] = [...this.touches.values()];
+      const z = pinchZoom(this.pinch.z, Math.hypot(a.x - b.x, a.y - b.y) / this.pinch.dist);
+      if (z !== this.camera.z) {
+        const r = this.canvas.getBoundingClientRect();
+        this.zoomTo(z, { x: (a.x + b.x) / 2 - r.left, y: (a.y + b.y) / 2 - r.top });
+      }
+      return;
+    }
     if (this.drag) {
       const dx = e.clientX - this.drag.x;
       const dy = e.clientY - this.drag.y;
@@ -573,6 +615,13 @@ export class Office {
   }
 
   private onUp(e: PointerEvent) {
+    this.touches.delete(e.pointerId);
+    if (this.pinch) {
+      // Só termina quando os dois dedos saem; o que sobrou na tela não vira clique.
+      if (!this.touches.size) this.pinch = undefined;
+      this.drag = undefined;
+      return;
+    }
     const drag = this.drag;
     this.drag = undefined;
     this.canvas.style.cursor = 'grab';

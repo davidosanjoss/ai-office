@@ -53,6 +53,12 @@ start msedge --app=http://localhost:7420
 
 Ou, no Chrome/Edge, menu ⋮ → *Transmitir, salvar e compartilhar* → *Instalar página como app*.
 
+### Celular, tablet e telas grandes
+
+- **Celular e tablet**: a lista de salas (☰) e o painel da direita (⇥) viram gavetas por cima da tela. No celular, a barra de cima e os botões das abas ficam só com ícones, e o elevador mostra só o andar atual (toque nele para ver os outros). Dois dedos no mapa dão zoom.
+- **Telas de toque**: com um terminal aberto, aparece uma barra com as teclas que o teclado da tela não tem (Esc, Tab, Shift+Tab, setas, Ctrl+C e Enter).
+- **4K e ultrawide**: em telas altas com pouca densidade (um 4K a 100%), a barra, os painéis, os diálogos e a letra dos terminais crescem sozinhos (1,25× a partir de ~1500 px de altura, 1,5× a partir de ~1900 px). Com a escala do sistema em 200%, nada muda: ela já faz isso.
+
 ### Atalhos
 
 | Atalho | Ação |

@@ -3,6 +3,7 @@
 // do terminal. Fica preso à pasta em que foi aberto: trocar de aba só o esconde, e o que você
 // editava continua lá quando volta; fechar a aba (×) o esvazia.
 
+import { uiFontSize } from './terminals.ts';
 import type * as Monaco from 'monaco-editor';
 import type { CommitDetail, CommitLog, CommitSummary, DirEntry, DirListing, FileChange, FileContent, GitInfo, GitRef, RefCompare } from '../shared/types.ts';
 import * as logic from './logic.ts';
@@ -265,7 +266,7 @@ export class Explorer {
         theme: 'escritorio',
         automaticLayout: true,
         fontFamily: "'JetBrains Mono', Consolas, monospace",
-        fontSize: 13,
+        fontSize: uiFontSize(),
         minimap: { enabled: false },
         scrollBeyondLastLine: false,
         tabSize: 2,
@@ -285,7 +286,7 @@ export class Explorer {
       readOnly: true,
       originalEditable: false,
       fontFamily: "'JetBrains Mono', Consolas, monospace",
-      fontSize: 13,
+      fontSize: uiFontSize(),
       minimap: { enabled: false },
       renderSideBySide: true,
       useInlineViewWhenSpaceIsLimited: true,
@@ -303,7 +304,7 @@ export class Explorer {
         originalEditable: false,
         renderMarginRevertIcon: true,
         fontFamily: "'JetBrains Mono', Consolas, monospace",
-        fontSize: 13,
+        fontSize: uiFontSize(),
         minimap: { enabled: false },
         renderSideBySide: true,
         useInlineViewWhenSpaceIsLimited: true,

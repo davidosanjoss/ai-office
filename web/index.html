@@ -11,21 +11,23 @@
   <body>
     <header class="topbar">
       <button id="btn-directory" class="icon menu" title="Mostrar ou esconder a lista de salas e agentes">☰</button>
-      <div class="brand">AI Office</div>
-      <button id="btn-add-room" class="btn">+ Sala</button>
+      <div class="brand">AI<span class="lbl"> Office</span></div>
+      <button id="btn-add-room" class="btn" title="Nova sala">+<span class="lbl"> Sala</span></button>
       <button id="btn-inbox" class="inbox" hidden></button>
       <div id="counters" class="counters"></div>
-      <button id="btn-usage" class="btn ghost" title="Consumo de tokens por sala e projeto">📊 Consumo</button>
+      <button id="btn-usage" class="btn ghost" title="Consumo de tokens por sala e projeto">📊<span class="lbl"> Consumo</span></button>
       <button id="btn-memory" class="memory off" title="Memória dos agentes (ai-memory)">Memória</button>
       <div class="spacer"></div>
       <label class="toggle" title="Quando um agente termina ou pede aprovação, abre o terminal dele assim que você parar de digitar">
-        <input type="checkbox" id="opt-autofocus" checked /> Abrir quem terminar
+        <input type="checkbox" id="opt-autofocus" checked /><span class="lbl"> Abrir quem terminar</span>
       </label>
       <button id="btn-notify" class="btn ghost" title="Avisar com notificação do sistema quando a aba estiver em segundo plano">🔔</button>
       <span id="conn" class="conn off" title="Conexão com o servidor"></span>
     </header>
 
     <div id="app">
+    <!-- Celular e tablet: a lista e o painel da direita viram gavetas; o fundo escuro fecha. -->
+    <div id="drawer-backdrop"></div>
     <!-- Lista do escritório: andares → salas → agentes, com busca. -->
     <aside id="directory">
       <input id="dir-search" type="search" placeholder="Buscar agente, sala ou andar" autocomplete="off" />
@@ -111,9 +113,9 @@
         <div class="tabs-row">
           <nav id="tabs"></nav>
           <div id="tab-actions" hidden>
-            <button id="act-hire" class="btn small">+ Agente</button>
-            <button id="act-shell" class="btn small">&gt;_ Terminal</button>
-            <button id="act-files" class="btn small ghost">📁 Arquivos</button>
+            <button id="act-hire" class="btn small">+<span class="lbl"> Agente</span></button>
+            <button id="act-shell" class="btn small">&gt;_<span class="lbl"> Terminal</span></button>
+            <button id="act-files" class="btn small ghost">📁<span class="lbl"> Arquivos</span></button>
           </div>
           <button id="btn-sidebar" class="icon" title="Esconder o painel da direita">⇥</button>
         </div>
@@ -204,6 +206,18 @@
           </header>
           <div id="diff-body"></div>
         </section>
+        <!-- Telas de toque: as teclas que o teclado do celular não tem (Esc, Tab, setas, Ctrl+C). -->
+        <div id="term-keys" hidden>
+          <button data-key="esc">Esc</button>
+          <button data-key="tab">Tab</button>
+          <button data-key="stab" title="Shift+Tab: troca o modo do Claude">⇧Tab</button>
+          <button data-key="up">↑</button>
+          <button data-key="down">↓</button>
+          <button data-key="left">←</button>
+          <button data-key="right">→</button>
+          <button data-key="ctrlc" title="Ctrl+C">^C</button>
+          <button data-key="enter">⏎</button>
+        </div>
         <div id="terminals">
           <div id="placeholder" class="placeholder">Clique num funcionário do escritório para abrir o terminal dele.</div>
         </div>

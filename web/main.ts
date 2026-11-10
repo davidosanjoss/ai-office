@@ -8,7 +8,7 @@ import { Explorer, type ExplorerTarget } from './files.ts';
 import * as logic from './logic.ts';
 import { Office, STATUS_COLOR, hash } from './office.ts';
 import { characterFor, type Manifest } from './sprites.ts';
-import { Terminals } from './terminals.ts';
+import { Terminals, uiFontSize } from './terminals.ts';
 import { UsagePanel } from './usage.ts';
 import { type UsageSummary, formatTokens } from '../shared/usage.ts';
 import './styles.css';
@@ -374,6 +374,7 @@ function renderAll(full = true) {
   renderSquadBoard();
   renderInbox();
   renderExited();
+  renderTermKeys();
   if (full) renderActivity();
 }
 
@@ -393,7 +394,7 @@ function renderTabActions() {
   const shell = $<HTMLButtonElement>('#act-shell');
   const files = $<HTMLButtonElement>('#act-files');
   $('#tab-actions').hidden = !room && !incident;
-  hire.textContent = war ? '+ Chamar' : '+ Agente';
+  hire.querySelector('.lbl')!.textContent = war ? ' Chamar' : ' Agente';
   hire.title = war ? 'Chamar mais gente para a sala de guerra' : 'Contratar agente';
   shell.title = war ? 'Novo terminal da sala de guerra (Alt+T)' : 'Novo terminal (Alt+T)';
   files.hidden = !room;
@@ -516,7 +517,7 @@ function renderInbox() {
   const q = attentionQueue();
   const btn = $('#btn-inbox');
   btn.hidden = q.length === 0;
-  btn.textContent = `🔔 ${q.length} ${q.length === 1 ? 'aguardando' : 'aguardando'}`;
+  btn.innerHTML = `🔔 ${q.length}<span class="lbl"> aguardando</span>`;
   document.title = q.length ? `(${q.length}) AI Office` : 'AI Office';
 }
 
@@ -1132,7 +1133,8 @@ dirSearch.addEventListener('input', () => renderDirectory());
 
 /** Lista do escritório: andares → salas → agentes. Clicar leva até o andar, a sala ou o agente. */
 function renderDirectory() {
-  if (document.body.classList.contains('dir-hidden')) return;
+  // Escondida no computador não redesenha; no celular e no tablet ela é uma gaveta, sempre pronta.
+  if (document.body.classList.contains('dir-hidden') && !compactDir.matches) return;
   const tree = logic.directoryTree(state.floors, state.rooms, state.agents, dirSearch.value);
   const attention = logic.attentionByFloor(state.agents, state.rooms);
   // Só redesenha quando algo visível muda (mesma razão do elevador: clique em botão trocado).
@@ -1218,6 +1220,8 @@ function recall(key: string) {
 }
 if (recall('directory') === 'hidden') document.body.classList.add('dir-hidden');
 $('#btn-directory').addEventListener('click', () => {
+  // Celular e tablet: a lista é uma gaveta por cima da tela (e não fica lembrada como escondida).
+  if (compactDir.matches) return setDrawer('dir', !document.body.classList.contains('dir-open'));
   const hidden = document.body.classList.toggle('dir-hidden');
   remember('directory', hidden ? 'hidden' : 'shown');
   directoryKey = '';
@@ -1232,6 +1236,7 @@ function setSidebarHidden(hidden: boolean) {
 }
 setSidebarHidden(recall('sidebar') === 'hidden');
 $('#btn-sidebar').addEventListener('click', () => {
+  if (compactSide.matches) return setDrawer('side', !document.body.classList.contains('side-open'));
   const hidden = !document.body.classList.contains('side-hidden');
   setSidebarHidden(hidden);
   remember('sidebar', hidden ? 'hidden' : 'shown');
@@ -1241,6 +1246,78 @@ $('#activity-toggle').addEventListener('click', () => {
   const collapsed = $('#activity-float').classList.toggle('collapsed');
   remember('activity', collapsed ? 'collapsed' : 'open');
 });
+
+// ---------- celular e tablet: gavetas, elevador e teclas do terminal ----------
+
+/** Até 1100 px a lista de salas é gaveta; até 900 px o painel da direita também. */
+const compactDir = matchMedia('(max-width: 1100px)');
+const compactSide = matchMedia('(max-width: 900px)');
+/** Toque (celular, tablet): mostra a barra de teclas que o teclado da tela não tem. */
+const coarse = matchMedia('(pointer: coarse)');
+/** Celular: elevador recolhido e botões só com ícone. */
+const phone = matchMedia('(max-width: 640px)');
+
+function setDrawer(which: 'dir' | 'side', open: boolean) {
+  document.body.classList.toggle(`${which}-open`, open);
+  // Uma gaveta por vez: a outra fecha.
+  if (open) document.body.classList.remove(which === 'dir' ? 'side-open' : 'dir-open');
+  if (open && which === 'dir') {
+    directoryKey = '';
+    renderDirectory();
+  }
+}
+function closeDrawers() {
+  document.body.classList.remove('dir-open', 'side-open');
+}
+$('#drawer-backdrop').addEventListener('click', closeDrawers);
+window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.body.matches('.dir-open, .side-open') && !document.querySelector('dialog[open]')) closeDrawers();
+});
+// Escolher alguém na lista (ou no quadro da sala) já fecha a gaveta: o terminal aparece.
+$('#dir-tree').addEventListener('click', (e) => {
+  if (compactDir.matches && (e.target as HTMLElement).closest('.dir-agent, .dir-room-head')) closeDrawers();
+});
+$('#squad-list').addEventListener('click', () => compactSide.matches && closeDrawers());
+// Voltou a ser uma tela larga: as gavetas somem e vale o painel de sempre.
+for (const q of [compactDir, compactSide]) {
+  q.addEventListener('change', () => {
+    closeDrawers();
+    directoryKey = '';
+    renderDirectory();
+  });
+}
+
+const TERM_KEYS: Record<string, string> = {
+  esc: '\x1b',
+  tab: '\t',
+  stab: '\x1b[Z',
+  up: '\x1b[A',
+  down: '\x1b[B',
+  left: '\x1b[D',
+  right: '\x1b[C',
+  ctrlc: '\x03',
+  enter: '\r',
+};
+$('#term-keys').addEventListener('pointerdown', (e) => {
+  const key = (e.target as HTMLElement).closest<HTMLElement>('button')?.dataset.key;
+  if (!key || !selectedAgent) return;
+  // Não tira o foco do terminal: o teclado da tela continua aberto.
+  e.preventDefault();
+  send({ t: 'in', id: selectedAgent, data: TERM_KEYS[key] });
+  lastKeyAt = Date.now();
+});
+// A escala da interface mudou (janela em outro monitor, ou redimensionada): letra nova nos terminais.
+let lastFont = uiFontSize();
+window.addEventListener('resize', () => {
+  const f = uiFontSize();
+  if (f === lastFont) return;
+  lastFont = f;
+  terminals.setFontSize(f);
+});
+
+function renderTermKeys() {
+  $('#term-keys').hidden = !(coarse.matches && selectedAgent && selectedWar === undefined && !explorer.isShown());
+}
 
 // ---------- elevador ----------
 
@@ -1276,7 +1353,12 @@ function renderElevator() {
         badge.title = `${n} ${n === 1 ? 'agente precisa' : 'agentes precisam'} de você`;
         btn.append(badge);
       }
-      btn.addEventListener('click', () => goToFloor(id));
+      btn.addEventListener('click', () => {
+        // Celular: o elevador fica recolhido no andar atual; tocar nele abre a lista de andares.
+        if (phone.matches && id === currentFloor) return void panel.classList.toggle('open');
+        panel.classList.remove('open');
+        goToFloor(id);
+      });
       return btn;
     }),
   );

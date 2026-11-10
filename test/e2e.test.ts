@@ -997,6 +997,61 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForFunction(() => document.querySelector('#room-usage:not([hidden])')?.textContent?.includes('em ms-sales'));
   });
 
+  it('celular: lista e painel em gavetas, elevador recolhido e teclas de toque no terminal', async () => {
+    const saulo = byName('Saulo')!;
+    await page.setViewport({ width: 390, height: 844, deviceScaleFactor: 2, isMobile: true, hasTouch: true });
+    await page.reload();
+    await page.waitForSelector('#office canvas');
+    const offscreen = (sel: string) => page.$eval(sel, (e) => { const r = e.getBoundingClientRect(); return r.right <= 0 || r.left >= innerWidth; });
+    // A barra de cima cabe: o 🔔 e a conexão continuam na tela.
+    expect(await page.$eval('#conn', (e) => e.getBoundingClientRect().right <= innerWidth)).toBe(true);
+    // Lista de salas: gaveta que o ☰ abre e o fundo escuro fecha.
+    expect(await offscreen('#directory')).toBe(true);
+    await page.tap('#btn-directory');
+    await page.waitForFunction(() => document.querySelector('#directory')!.getBoundingClientRect().left >= 0);
+    await page.touchscreen.tap(380, 600);
+    // Espera a gaveta terminar de sair (ela desliza) antes de tocar no que estava embaixo.
+    await page.waitForFunction(() => document.querySelector('#directory')!.getBoundingClientRect().right <= 0);
+    // Painel da direita: gaveta pelo ⇥.
+    expect(await offscreen('#sidebar')).toBe(true);
+    await page.tap('#btn-sidebar');
+    await page.waitForFunction(() => document.body.classList.contains('side-open'));
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => document.querySelector('#sidebar')!.getBoundingClientRect().left >= innerWidth);
+    // Elevador: só o andar atual; tocar nele mostra os outros.
+    expect(await page.$$eval('#elevator .floor', (els) => els.filter((e) => getComputedStyle(e).display !== 'none').length)).toBe(1);
+    await page.tap('#elevator .floor.current');
+    await page.waitForFunction(() => [...document.querySelectorAll('#elevator .floor')].filter((e) => getComputedStyle(e).display !== 'none').length > 1);
+    // Escolher um agente pela lista fecha a gaveta e mostra o terminal com as teclas de toque.
+    await page.tap('#btn-directory');
+    await page.waitForSelector(`#directory .dir-agent`);
+    await page.$$eval('#directory .dir-agent', (els, name) => (els.find((e) => e.textContent?.includes(name as string)) as HTMLElement).click(), saulo.name);
+    await page.waitForFunction(() => !document.body.classList.contains('dir-open'));
+    if (status(saulo.id) === 'exited') await api('POST', `/api/agents/${saulo.id}/resume`);
+    await waitFor(() => ['idle', 'done'].includes(status(saulo.id) ?? ''), 10_000, 'Saulo pronto');
+    await page.waitForSelector('#term-keys:not([hidden])');
+    // Digita o pedido sem Enter e manda o Enter pelo ⏎ da barra.
+    await page.focus('.term:not([hidden]) textarea');
+    await page.keyboard.type('prompt pelas teclas');
+    await page.tap('#term-keys [data-key="enter"]');
+    await waitFor(() => store.activity.some((e) => e.agentId === saulo.id && e.text.includes('pelas teclas')), 8000, 'pedido enviado pelo ⏎');
+    await page.setViewport({ width: 1400, height: 900 });
+    await page.reload();
+    await page.waitForSelector('#office canvas');
+  });
+
+  it('4K a 100%: a moldura e a letra do terminal crescem; a tela comum fica como está', async () => {
+    const zoom = () => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--ui-zoom').trim());
+    expect(await zoom()).toBe('1');
+    await page.setViewport({ width: 3840, height: 2160, deviceScaleFactor: 1 });
+    await page.waitForFunction(() => getComputedStyle(document.documentElement).getPropertyValue('--ui-zoom').trim() === '1.5');
+    expect(await page.$eval('.topbar', (e) => getComputedStyle(e).zoom)).toBe('1.5');
+    // A 200% (densidade alta) o sistema já aumenta tudo: sem zoom nosso.
+    await page.setViewport({ width: 1920, height: 1080, deviceScaleFactor: 2 });
+    expect(await zoom()).toBe('1');
+    await page.setViewport({ width: 1400, height: 900 });
+  });
+
   it('a página não tem erros de JavaScript', async () => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(String(e)));
