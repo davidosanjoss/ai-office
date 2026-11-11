@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Docker falso para os testes do ai-memory: guarda os containers num JSON e anota as chamadas.
-// FAKE_DOCKER_DOWN=1 imita o Docker instalado mas parado.
+// FAKE_DOCKER_DOWN=1 imita o Docker instalado mas parado; FAKE_DOCKER_SLOW_INSPECT=ms deixa a consulta da imagem lenta.
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -22,6 +22,10 @@ else if (cmd === 'pull') console.log(`Status: Downloaded newer image for ${rest[
 else if (cmd === 'container' && rest[0] === 'inspect') {
   const c = state.containers[rest.at(-1)];
   if (!c) fail(`Error: No such container: ${rest.at(-1)}`);
+  // FAKE_DOCKER_SLOW_INSPECT=ms: a consulta da imagem demora (como um Docker ocupado).
+  if (process.env.FAKE_DOCKER_SLOW_INSPECT && rest.some((a) => a.includes('.Config.Image'))) {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, Number(process.env.FAKE_DOCKER_SLOW_INSPECT));
+  }
   // --format '{{.Config.Image}}' ou '{{.State.Running}}'.
   console.log(rest.some((a) => a.includes('.Config.Image')) ? c.image : String(c.running));
 } else if (cmd === 'run' && rest.includes('--rm') && rest.at(-1) === 'init') {

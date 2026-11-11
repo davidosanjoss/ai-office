@@ -190,6 +190,21 @@ describe.skipIf(isWindows)('instalar e desinstalar', () => {
     expect(st.running).toBe(true);
   });
 
+  it('regressão: cada passo da instalação chega pelo WebSocket, mesmo com o estado demorando a montar', async () => {
+    publishWrapper();
+    // Montar o estado demora (consulta ao Docker lenta): antes, os passos rápidos se perdiam.
+    process.env.FAKE_DOCKER_SLOW_INSPECT = '300';
+    const before = ws.messages.length;
+    await api('POST', '/api/memory/install');
+    await waitJob().finally(() => delete process.env.FAKE_DOCKER_SLOW_INSPECT);
+    // Os avisos chegam depois do fim do job: espera o último.
+    await waitFor(() => ws.messages.slice(before).some((m) => m.t === 'memory' && (m as { memory: MemoryStatus }).memory.job?.done), 5000, 'o aviso final');
+    const steps = ws.messages.slice(before).filter((m) => m.t === 'memory').map((m) => (m as { memory: MemoryStatus }).memory.job?.step);
+    for (const s of [/Conferindo o Docker/, /Baixando a imagem/, /Preparando a pasta/, /Subindo o servidor/, /Ligando ao Claude Code/]) {
+      expect(steps.some((x) => s.test(x ?? '')), `${s} em ${JSON.stringify(steps)}`).toBe(true);
+    }
+  });
+
   it('servidor de outra versão: o indicador pede para atualizar, e o Instalar faz backup e troca o container', async () => {
     publishWrapper();
     await api('POST', '/api/memory/install');

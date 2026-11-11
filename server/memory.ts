@@ -107,7 +107,12 @@ function startJob(kind: MemoryJob['kind'], run: (step: (s: string) => void) => P
   if (isWindows) throw new MemoryError('No Windows, use o passo a passo do diálogo');
   const current: MemoryJob = { kind, step: 'Começando…', done: false, log: [] };
   job = current;
-  const publish = async () => memoryEvents.emit('status', await memoryStatus());
+  // O job vai como estava na hora do aviso: montar o resto do estado leva um tempo (consulta o
+  // Docker), e sem a cópia um passo rápido sumia, trocado pelo seguinte antes de o aviso sair.
+  const publish = async () => {
+    const job = { ...current, log: [...current.log] };
+    memoryEvents.emit('status', { ...(await memoryStatus()), job });
+  };
   const step = (s: string) => {
     current.step = s;
     void publish();
