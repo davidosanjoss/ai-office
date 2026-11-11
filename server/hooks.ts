@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { onSessionStart, onStop } from './incidents.ts';
 import { agentMovedOn } from './permissions.ts';
+import { onPostToolUse } from './live.ts';
 import { store } from './store.ts';
 
 interface HookBody {
@@ -45,6 +46,7 @@ export function handleHook({ event, agentId, payload }: HookBody) {
     }
 
     case 'PostToolUse':
+      onPostToolUse(agent, payload);
       // Se estava esperando permissão, a ferramenta rodou: voltou ao trabalho.
       if (agent.status === 'waiting') store.patchAgent(id, { status: 'working', attentionAt: undefined });
       break;

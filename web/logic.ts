@@ -3,6 +3,7 @@
 import type { ActivityEvent, Agent, FileChange, Floor, Incident, IncidentMessage, MemoryStatus, Project, Room, WorktreeStatus } from '../shared/types.ts';
 import { canDeleteBranch } from '../shared/worktree.ts';
 import type { PendingRequest, Question } from '../shared/permissions.ts';
+import { elapsed, shellStage } from '../shared/live.ts';
 import { modelsLabel } from '../shared/models.ts';
 import { PLAN_STALE_MS, type PlanUsage, type UsageRow, type UsageSummary, dayKey, totalTokens } from '../shared/usage.ts';
 
@@ -520,11 +521,12 @@ export function squadBoard(room: Room, agents: Agent[], activity: ActivityEvent[
   const people = agents.filter((a) => a.roomId === room.id && a.kind !== 'shell' && !a.forIncident);
   const row = (a: Agent): BoardRow => {
     const repeats = !a.activity || /^(Pronto para trabalhar|Fora do escritório|Saiu do escritório|Terminou!)$/.test(a.activity);
+    const shell = shellBubble(a, now);
     return {
       agent: a,
-      status: a.incidentId ? 'Na sala de guerra' : STATUS_TEXT[a.status],
+      status: a.incidentId ? 'Na sala de guerra' : shell && a.status !== 'waiting' ? 'Esperando o shell' : STATUS_TEXT[a.status],
       task: task.get(a.id) ?? '',
-      doing: repeats ? '' : a.activity,
+      doing: shell && a.status !== 'waiting' ? shell.long.replace(/^Esperando o shell: /, '⏳ ') : repeats ? '' : a.activity,
       since: ago(last.get(a.id) ?? a.createdAt, now),
     };
   };
@@ -667,4 +669,24 @@ export function questionAnswers(questions: Question[], chosen: Record<string, st
     if (value) out[q.question] = value;
   }
   return out;
+}
+
+// ---------- sala viva ----------
+
+/**
+ * Luz da sala: apagada quando ninguém da sala está ativo (todos fora do escritório ou sala vazia);
+ * de noite (19h às 6h) as acesas ficam com luz quente; de dia, normal.
+ */
+export function roomLight(agents: Agent[], hour: number): 'apagada' | 'noite' | 'dia' {
+  if (!agents.some((a) => a.status !== 'exited')) return 'apagada';
+  return hour >= 19 || hour < 6 ? 'noite' : 'dia';
+}
+
+/** Balão de quem terminou a vez mas deixou um comando rodando: a fase da espera e há quanto tempo. */
+export function shellBubble(a: Agent, now: number): { short: string; long: string } | undefined {
+  const s = a.shells?.at(-1);
+  if (!s || a.status === 'exited') return undefined;
+  const st = shellStage(now - s.since);
+  const more = (a.shells?.length ?? 0) > 1 ? ` (+${a.shells!.length - 1})` : '';
+  return { short: `${st.icon} ${elapsed(now - s.since)}`, long: `Esperando o shell: ${s.command}${more} · ${elapsed(now - s.since)} · ${st.label}` };
 }

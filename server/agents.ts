@@ -10,6 +10,7 @@ import { modelLaunch, modelsLabel } from '../shared/models.ts';
 import { claudeWiring } from './memory.ts';
 import { nowText, projectOf, roomContext } from './projects.ts';
 import { agentMovedOn } from './permissions.ts';
+import { forgetShells } from './live.ts';
 import { CLAUDE_DIR, DATA_DIR, HOST, PORT, claudeBin, defaultShell, isWindows, ptyCommand } from './platform.ts';
 import { store } from './store.ts';
 
@@ -335,6 +336,7 @@ function spawn(agent: Agent, resume: boolean) {
   proc.onExit(({ exitCode }) => {
     if (running.get(agent.id) === proc) running.delete(agent.id);
     agentMovedOn(agent.id);
+    forgetShells(agent.id);
     if (!store.agents.has(agent.id)) return;
     // Como num emulador de terminal: `exit` fecha a aba.
     if (isShell) {

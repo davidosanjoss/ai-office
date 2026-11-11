@@ -11,6 +11,9 @@
 //   ask             pede permissão (Notification permission_prompt)
 //   pedir           pede permissão pelo hook PermissionRequest (Bash npm test) e mostra a decisão
 //   perguntar       faz uma pergunta (AskUserQuestion) pelo mesmo hook e mostra a resposta
+//   fundo <id>      deixa um comando em segundo plano (backgroundTaskId) e termina a vez
+//   fundo-fim <id> <código>  grava no transcript o fim desse comando (<task-notification>)
+//   gh pr | gh ci-falhou | gh ci-ok  o Bash rodou um comando do GitHub (PR aberto, CI vermelho, CI verde)
 //   /exit           encerra com código 0
 
 import { spawnSync } from 'node:child_process';
@@ -131,6 +134,35 @@ function run(cmd) {
   }
   if (cmd === 'ask') {
     hook('Notification', { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' });
+    return;
+  }
+  if (cmd.startsWith('fundo ')) {
+    // Comando em segundo plano: o Bash devolve o backgroundTaskId e a vez termina.
+    const id = cmd.slice(6).trim();
+    writeTranscript('user', 'roda em segundo plano');
+    hook('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'npm test', description: 'Roda os testes', run_in_background: true }, tool_response: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: id } });
+    hook('Stop', { transcript_path: transcriptPath() });
+    out(`fundo=${id}\r\n`);
+    return;
+  }
+  if (cmd.startsWith('fundo-fim ')) {
+    // O fim do comando, como o real grava no transcript (<task-notification> na fila).
+    const [id, code] = cmd.slice(10).trim().split(/\s+/);
+    const content = `<task-notification>\n<task-id>${id}</task-id>\n<status>${code === '0' ? 'completed' : 'failed'}</status>\n<summary>Background command "Roda os testes" ${code === '0' ? 'completed' : 'failed'} (exit code ${code})</summary>\n</task-notification>`;
+    fs.appendFileSync(transcriptPath(), JSON.stringify({ type: 'queue-operation', operation: 'enqueue', sessionId, content }) + '\n');
+    out(`fim=${id}\r\n`);
+    return;
+  }
+  if (cmd.startsWith('gh ')) {
+    // Eventos do GitHub: o comando e a saída que o Bash devolveria.
+    const ev = cmd.slice(3).trim();
+    const calls = {
+      pr: ['gh pr create --fill', 'https://github.com/org/app/pull/12\n'],
+      'ci-falhou': ['gh run watch 99 --exit-status', "X CI (99) completed with 'failure'\n"],
+      'ci-ok': ['gh run watch 99 --exit-status', "✓ CI (99) completed with 'success'\n"],
+    }[ev];
+    hook('PostToolUse', { tool_name: 'Bash', tool_input: { command: calls[0] }, tool_response: { stdout: calls[1], stderr: '', interrupted: false } });
+    out(`gh=${ev}\r\n`);
     return;
   }
   if (cmd === 'pedir' || cmd === 'perguntar') {

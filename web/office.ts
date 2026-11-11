@@ -10,6 +10,7 @@ import { type Cell, type FixedRoom, type FloorKind, type Span, fixedRooms, freeC
 import type { Agent, AgentStatus, Incident, Room } from '../shared/types.ts';
 import { type Area, type Projection, type ScreenDir, depth, floorMatrix, pick, planBox, projectRect, screenDir, toScreen as project } from './iso.ts';
 import { type Anim, RECEPCIONISTA, Sprites, characterFor } from './sprites.ts';
+import * as logic from './logic.ts';
 import {
   type Geometry,
   type Point,
@@ -1307,6 +1308,21 @@ export class Office {
   private drawRoom(pr: PlacedRoom) {
     const { rect: r, room } = pr;
     this.woodFloor(r);
+    // Luz da sala: apagada quando ninguém está ativo; de noite, as acesas ficam quentes.
+    const light = logic.roomLight(pr.agents, new Date().getHours());
+    const effect = room.effect && room.effect.until > Date.now() ? room.effect : undefined;
+    this.flat(() => {
+      const p = this.pctx;
+      if (light === 'apagada') p.fillStyle = 'rgba(8, 10, 24, 0.5)';
+      else if (light === 'noite') p.fillStyle = 'rgba(255, 210, 140, 0.10)';
+      else p.fillStyle = 'transparent';
+      p.fillRect(r.x, r.y, r.w, r.h);
+      // CI vermelho: o chão avermelha, pulsando.
+      if (effect?.kind === 'alarme') {
+        p.fillStyle = `rgba(247, 118, 142, ${this.frame % 12 < 6 ? 0.22 : 0.12})`;
+        p.fillRect(r.x, r.y, r.w, r.h);
+      }
+    });
     // As salas de um andar têm a parede na cor dele, cada uma num tom um pouco diferente.
     const wallColor = shade(this.floor.color, 0.42 + ((hash(room.id) % 5) - 2) * 0.03);
     this.drawShell(r, wallColor);
@@ -1486,6 +1502,8 @@ export class Office {
         this.label(`+${pr.overflow}`, o.x, o.y, Math.max(9, Math.round(8 * z)), '#1a1b26', '#e0af68');
       }
 
+      this.drawRoomEffect(pr);
+
       pr.agents.forEach((a, i) => {
         const o = slotOrigin(r, i);
         const { seat, desk } = deskSpot(r, i);
@@ -1511,8 +1529,16 @@ export class Office {
         const hovered = this.hover?.kind === 'agent' && this.hover.id === a.id;
         const icon = { waiting: '!', done: '✓', working: '…', starting: '…' }[a.status as string];
         const head = this.toScreen(seat.x, seat.y, 62);
-        if (hovered) this.bubble(head.x, head.y, a.activity, STATUS_COLOR[a.status], true);
-        else if (icon) this.bubble(head.x, head.y, icon, STATUS_COLOR[a.status], false);
+        const shell = logic.shellBubble(a, Date.now());
+        const fx = a.effect && a.effect.until > Date.now() ? a.effect : undefined;
+        if (hovered) this.bubble(head.x, head.y, shell?.long ?? a.activity, STATUS_COLOR[a.status], true);
+        else if (fx) {
+          this.bubble(head.x, head.y, fx.kind === 'ok' ? '🎉' : '🌧️', fx.kind === 'ok' ? '#9ece6a' : '#7aa2f7', false);
+          if (fx.kind === 'ok') this.confetti(head.x - 30, head.y - 50, 60, 40, a.id);
+        } else if (shell && a.status !== 'waiting') {
+          // Esperando o shell: ampulheta virando e a fase da espera (pipoca, braços cruzados, teia, cochilo).
+          this.bubble(head.x, head.y, `${this.frame % 16 < 8 ? '⏳' : '⌛'} ${shell.short}`, '#e0af68', true);
+        } else if (icon) this.bubble(head.x, head.y, icon, STATUS_COLOR[a.status], false);
       });
     }
 
@@ -1607,6 +1633,62 @@ export class Office {
     }
     c.fillStyle = color;
     c.fillText(text, x, y + 1);
+  }
+
+  /** Festa (confete e faixa dourada) ou alarme (faixa vermelha e sirenes nos cantos) na sala. */
+  private drawRoomEffect(pr: PlacedRoom) {
+    const e = pr.room.effect;
+    if (!e || e.until <= Date.now()) return;
+    const r = pr.rect;
+    const z = this.camera.z;
+    const top = this.toScreen(r.x + r.w / 2, r.y, WALL_UP + 70);
+    const size = Math.max(10, Math.round(10 * z));
+    if (e.kind === 'festa') {
+      const a = this.toScreen(r.x, r.y);
+      const b = this.toScreen(r.x + r.w, r.y + r.h);
+      const box = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y) - 60 * z, w: Math.abs(b.x - a.x), h: Math.abs(b.y - a.y) + 60 * z };
+      this.confetti(box.x, box.y, box.w, box.h, pr.room.id);
+      this.label(`🎉 ${e.text}`, top.x, top.y, size, '#1a1b26', '#e0af68');
+    } else {
+      this.label(`🚨 ${e.text}`, top.x, top.y, size, '#ffffff', '#c0392b');
+      // Sirenes nos quatro cantos, girando (piscam alternadas).
+      const corners = [
+        [r.x + 12, r.y + 12],
+        [r.x + r.w - 12, r.y + 12],
+        [r.x + 12, r.y + r.h - 12],
+        [r.x + r.w - 12, r.y + r.h - 12],
+      ];
+      const c = this.ctx;
+      corners.forEach(([x, y], i) => {
+        const s = this.toScreen(x, y, 30);
+        const on = (this.frame + i * 3) % 12 < 6;
+        c.fillStyle = on ? 'rgba(255, 80, 80, 0.95)' : 'rgba(120, 20, 20, 0.9)';
+        c.beginPath();
+        c.arc(s.x, s.y, Math.max(3, 4 * z), 0, Math.PI * 2);
+        c.fill();
+        if (on) {
+          c.fillStyle = 'rgba(255, 80, 80, 0.25)';
+          c.beginPath();
+          c.arc(s.x, s.y, Math.max(8, 12 * z), 0, Math.PI * 2);
+          c.fill();
+        }
+      });
+    }
+  }
+
+  /** Confete caindo dentro de uma caixa da tela (sempre o mesmo desenho para a mesma semente). */
+  private confetti(x: number, y: number, w: number, h: number, seed: string) {
+    const c = this.ctx;
+    const colors = ['#f7768e', '#e0af68', '#9ece6a', '#7dcfff', '#bb9af7', '#ff9e64'];
+    const base = hash(seed);
+    for (let i = 0; i < 28; i++) {
+      const k = base + i * 7919;
+      const px = x + (k % 997) / 997 * w;
+      const fall = ((this.frame * (2 + (k % 3)) + (k % 113)) % 100) / 100;
+      const py = y + fall * h;
+      c.fillStyle = colors[k % colors.length];
+      c.fillRect(Math.round(px + Math.sin((this.frame + i) / 3) * 3), Math.round(py), 3, (this.frame + i) % 4 < 2 ? 4 : 2);
+    }
   }
 
   private bubble(cx: number, bottom: number, text: string, color: string, wide: boolean) {

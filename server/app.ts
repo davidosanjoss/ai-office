@@ -31,6 +31,8 @@ import { parseModels } from '../shared/models.ts';
 import { type Place, type Price, summarize } from '../shared/usage.ts';
 import { customPrices, prices, receiveRecords, setPrice, usageRecords } from './usage.ts';
 import { planUsage, recordPlan } from './plan.ts';
+import { startShellWatch } from './live.ts';
+import { PARTY_MS } from '../shared/live.ts';
 import { answerRequest, dropRequest, openRequest, pendingRequests, requestEvents, setViewers, waitAnswer } from './permissions.ts';
 import type { RequestAnswer } from '../shared/permissions.ts';
 import { detectProjects, draftSummary, insideRoot, newProject, projectOf } from './projects.ts';
@@ -48,6 +50,7 @@ export async function buildApp(opts: { port?: number } = {}) {
   const port = opts.port ?? PORT;
   const app = Fastify({ logger: false });
 
+  startShellWatch();
   // Instalação nova: o prédio já começa com um andar, para a primeira sala ter onde ficar.
   if (!store.floors.size) store.putFloor({ ...DEFAULT_FLOOR, createdAt: Date.now() });
 
@@ -511,6 +514,10 @@ export async function buildApp(opts: { port?: number } = {}) {
     worktreeRoute(async (agent, room, req) => {
       const pr = await openPr(agent, room, String(req.body?.title ?? ''), String(req.body?.body ?? ''));
       store.patchAgent(agent.id, { worktreePr: pr.url });
+      // O PR aberto pelo escritório também é festa na sala.
+      const sala = store.rooms.get(agent.roomId);
+      const n = /\/pull\/(\d+)/.exec(pr.url)?.[1];
+      if (sala) store.putRoom({ ...sala, effect: { kind: 'festa', text: n ? `PR #${n} aberto!` : 'PR aberto!', until: Date.now() + PARTY_MS } });
       return pr;
     }),
   );

@@ -77,7 +77,8 @@ export class Store extends EventEmitter {
         const room = this.rooms.get(a.roomId);
         // Agentes de antes dos projetos trabalham no primeiro projeto da sala.
         const projectId = a.projectId ?? (a.kind !== 'shell' ? room?.projects?.[0]?.id : undefined);
-        this.agents.set(a.id, { ...a, ...(projectId ? { projectId } : {}), status: 'exited', activity: 'Fora do escritório', subagents: 0 });
+        // Os comandos em segundo plano morreram com o processo; os efeitos de antes já passaram.
+        this.agents.set(a.id, { ...a, ...(projectId ? { projectId } : {}), status: 'exited', activity: 'Fora do escritório', subagents: 0, shells: [], effect: undefined });
       }
     } catch (err) {
       console.error('[store] state.json inválido, ignorando:', err);

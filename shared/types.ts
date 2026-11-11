@@ -76,6 +76,8 @@ export interface Room {
   floorId?: string;
   /** Vaga na planta do andar (shared/building.ts). Salas antigas ganham uma ao carregar. */
   pos?: { x: number; y: number };
+  /** Festa ou alarme na sala (eventos do GitHub), até `until`. */
+  effect?: import('./live.ts').RoomEffect;
 }
 
 export interface Agent {
@@ -87,6 +89,10 @@ export interface Agent {
   projectId?: string;
   /** Modelos com que a sessão abriu (modelsLabel): se o projeto mudou depois, vale ao retomar. */
   models?: string;
+  /** Comandos que o agente deixou rodando em segundo plano ("esperando o shell"). */
+  shells?: import('./live.ts').BgShell[];
+  /** O comando que ele esperava acabou: comemoração ou nuvem de chuva, até `until`. */
+  effect?: import('./live.ts').AgentEffect;
   name: string;
   /** Pasta onde o agente roda: a do projeto ou a de um worktree. */
   cwd: string;

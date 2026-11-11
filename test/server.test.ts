@@ -711,6 +711,28 @@ describe('sala com vários projetos', () => {
     }
   });
 
+  it('sala viva: comando em segundo plano até acabar, e PR, CI vermelho e CI verde na sala', async () => {
+    const room = await newRoom('viva');
+    const a = await hire(room);
+    await waitStatus(a.id, 'idle');
+    ws.type(a.id, 'fundo bg1\r');
+    await waitFor(() => store.agents.get(a.id)?.shells?.some((s) => s.id === 'bg1'), 4000, 'o comando em segundo plano');
+    expect(store.agents.get(a.id)!.shells![0].command).toBe('Roda os testes');
+    ws.type(a.id, 'fundo-fim bg1 1\r');
+    await waitFor(() => store.agents.get(a.id)?.effect?.kind === 'falhou', 6000, 'o fim do comando');
+    expect(store.agents.get(a.id)!.shells).toEqual([]);
+    expect(store.agents.get(a.id)!.effect!.text).toBe('Roda os testes: falhou (código 1)');
+
+    ws.type(a.id, 'gh pr\r');
+    await waitFor(() => store.rooms.get(room.id)?.effect?.text === 'PR #12 aberto!', 4000, 'a festa do PR');
+    expect(store.rooms.get(room.id)!.effect!.kind).toBe('festa');
+    ws.type(a.id, 'gh ci-falhou\r');
+    await waitFor(() => store.rooms.get(room.id)?.effect?.kind === 'alarme', 4000, 'o alarme do CI');
+    ws.type(a.id, 'gh ci-ok\r');
+    await waitFor(() => store.rooms.get(room.id)?.effect?.text === 'CI verde!', 4000, 'o CI verde');
+    expect(store.rooms.get(room.id)!.effect!.kind).toBe('festa');
+  });
+
   it('recusa projeto que não é da sala', async () => {
     const { data: room } = await api<Room>('POST', '/api/rooms', { path: sistema() });
     const { status } = await api('POST', '/api/agents', { roomId: room.id, projectId: 'outro' });
