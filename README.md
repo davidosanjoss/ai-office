@@ -148,6 +148,18 @@ navegador (escritório + xterm.js)  ⇄  WebSocket  ⇄  servidor Node (Fastify 
 | `AI_OFFICE_PORT` | `7420` | Porta do servidor |
 | `AI_OFFICE_DATA` | `~/.ai-office` | Onde guardar estado e worktrees |
 
+## Versões e releases
+
+Cada mudança que entra na `main`, com o CI verde, vira uma **tag e uma release** no GitHub (`vX.Y.Z`), com as notas montadas a partir dos PRs. Os PRs agrupados por tipo: o workflow **Rótulos** marca cada PR pelo prefixo da branch. O salto da versão vem dos PRs que entraram:
+
+| PR | Versão |
+|---|---|
+| rótulo `versão-maior` | `X+1.0.0` |
+| branch `feat/` | `X.Y+1.0` |
+| `fix/`, `arte/`, `docs/`, `teste/`, `infra/` | `X.Y.Z+1` |
+
+A versão vem da tag do git, não do `package.json` (a `main` só aceita mudanças por PR). A barra de cima do escritório mostra a versão em uso e leva às notas dela; `v0.15.0+3` quer dizer 3 commits depois da release, e um `*` no fim, mudanças não commitadas na pasta.
+
 ## Desenvolvimento
 
 Quer ajudar? Veja o [CONTRIBUTING.md](CONTRIBUTING.md): issues, branches, testes e Pull Requests.

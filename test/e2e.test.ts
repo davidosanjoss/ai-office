@@ -114,6 +114,16 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     throw new Error(`não consegui levar o ponto (${wx}, ${wy}) para o meio do mapa`);
   }
 
+  /**
+   * Clica no elemento que existe agora. A lista do escritório e as abas são redesenhadas quando um
+   * agente muda: pegar o elemento e só depois clicar podia cair num nó que já saiu da página
+   * ("Node is detached"), principalmente no Windows, que é mais lento.
+   */
+  async function clickNow(selector: string) {
+    await page.waitForSelector(selector);
+    await waitFor(() => page.$eval(selector, (el) => ((el as HTMLElement).click(), true)).catch(() => false), 5000, `clicar em ${selector}`);
+  }
+
   /** O git fica só no explorador: abre o 📁 Arquivos (se ainda não está aberto) no modo Git. */
   async function openGit() {
     if (await page.$('#files-view[hidden]')) {
@@ -707,7 +717,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
       // Pela lista da esquerda: arrastar o mapa até a sala era lento no CI do Windows (estourava o tempo).
       const head = `#directory .dir-room-head[data-room="${room.id}"]`;
       await page.waitForSelector(head);
-      await page.click(head);
+      await clickNow(head);
       await page.waitForFunction((n) => document.querySelector('.room-title')?.textContent === n, {}, room.name);
     });
 
@@ -868,7 +878,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     const { data: room } = await api('POST', '/api/rooms', { path: root, name: 'SAFF' });
     const head = `#directory .dir-room-head[data-room="${room.id}"]`;
     await page.waitForSelector(head);
-    await page.click(head);
+    await clickNow(head);
     await page.waitForFunction(() => document.querySelector('.room-title')?.textContent === 'SAFF');
     // Os projetos aparecem como opções; o escolhido é o que o git mostra.
     const chips = await page.$$eval('.room-projects .chip', (els) => els.map((e) => e.textContent));
@@ -942,8 +952,8 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     const room = [...store.rooms.values()].find((r) => r.name === 'SAFF Faturamento')!;
     const saulo = byName('Saulo')!;
     const head = `#directory .dir-room-head[data-room="${room.id}"]`;
-    await page.click(head);
-    await page.click(`#tabs .tab[data-id="${saulo.id}"]`);
+    await clickNow(head);
+    await clickNow(`#tabs .tab[data-id="${saulo.id}"]`);
     await page.waitForSelector('#models-panel:not([hidden])');
     expect(await page.$eval('#models-project', (e) => e.textContent)).toBe('· ms-sales');
     expect(await page.$eval('#models-form input[value=padrao]', (e) => (e as HTMLInputElement).checked)).toBe(true);
@@ -992,7 +1002,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     // A linha da lateral vem da janela do plano (lida a cada minuto: recarrega para não esperar).
     await page.reload();
     await page.waitForSelector(`#directory .dir-room-head[data-room="${room.id}"]`);
-    await page.click(`#directory .dir-room-head[data-room="${room.id}"]`);
+    await clickNow(`#directory .dir-room-head[data-room="${room.id}"]`);
     await page.click('.room-projects .chip:nth-child(2)');
     await page.waitForFunction(() => document.querySelector('#room-usage:not([hidden])')?.textContent?.includes('em ms-sales'));
   });
@@ -1055,8 +1065,8 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
   it('pedido do agente: o cartão aparece em cima do terminal, e Permitir responde o Claude', async () => {
     const ana = byName('Ana')!;
     const room = store.rooms.get(ana.roomId)!;
-    await page.click(`#directory .dir-room-head[data-room="${room.id}"]`).catch(() => undefined);
-    await page.click(`#tabs .tab[data-id="${ana.id}"]`);
+    await clickNow(`#directory .dir-room-head[data-room="${room.id}"]`).catch(() => undefined);
+    await clickNow(`#tabs .tab[data-id="${ana.id}"]`);
     if (status(ana.id) === 'exited') await api('POST', `/api/agents/${ana.id}/resume`);
     await waitFor(() => ['idle', 'done'].includes(status(ana.id) ?? ''), 10_000, 'Ana pronta');
     await typeInTerminal('pedir');
@@ -1069,7 +1079,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
 
   it('📊: as abas Meu dia e Relatório, e os detalhes do agente na lateral', async () => {
     const ana = byName('Ana')!;
-    await page.click(`#tabs .tab[data-id="${ana.id}"]`);
+    await clickNow(`#tabs .tab[data-id="${ana.id}"]`);
     await page.waitForSelector('#agent-details:not([hidden]) h3');
     expect(await page.$eval('#agent-details h3', (e) => e.textContent)).toContain('Ana');
     await page.waitForFunction(() => document.querySelector('#agent-details')?.textContent?.includes('Sessão'));

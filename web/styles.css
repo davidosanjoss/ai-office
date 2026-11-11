@@ -1970,3 +1970,9 @@ body.dir-hidden #directory {
 #agent-details ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 2px; }
 #agent-details li.completed { color: var(--muted); text-decoration: line-through; }
 #agent-details li.in_progress { color: var(--working); }
+
+/* Versão em uso, ao lado do nome. */
+.version { font-size: 11px; color: var(--muted); text-decoration: none; margin-left: -4px; }
+.version:hover { color: var(--accent); }
+.version[hidden] { display: none; }
+@media (max-width: 640px) { .version { display: none; } }

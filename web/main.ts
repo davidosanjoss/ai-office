@@ -2294,5 +2294,18 @@ $('#splitter').addEventListener('pointerdown', (e) => {
   window.addEventListener('pointerup', up, { once: true });
 });
 
+// Versão em uso, ao lado do nome: leva às notas da release no GitHub.
+api('GET', '/api/versao')
+  .then((v) => {
+    const { version, commit, branch } = v as { version: string; commit?: string; branch?: string };
+    const el = $<HTMLAnchorElement>('#version');
+    el.textContent = version;
+    el.title = [commit && `commit ${commit}`, branch && `branch ${branch}`, version.includes('+') && 'com commits depois da release', version.endsWith('*') && 'com mudanças não commitadas'].filter(Boolean).join(' · ');
+    const tag = /^v\d+\.\d+(\.\d+)?/.exec(version)?.[0];
+    if (tag) el.href = `https://github.com/davidosanjoss/ai-office/releases/tag/${tag}`;
+    el.hidden = false;
+  })
+  .catch(() => undefined);
+
 document.fonts?.ready.then(() => renderAll());
 connect();
