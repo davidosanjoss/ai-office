@@ -92,6 +92,10 @@ No **Windows**, o escritório mostra se a memória está ligada e, em vez de ins
 
 Se você usar o comando `ai-memory` direto no terminal (`ai-memory status`, `ai-memory search`…), defina `AI_MEMORY_DATA_DIR` com a pasta dos dados: sem ela, o wrapper do Docker procura um volume que não é o nosso. Para religar hooks e MCP, use o **Instalar** do escritório (ou `npm run memoria:up`), que já passa isso.
 
+### Responder pedidos pelo escritório
+
+Quando um agente pede permissão ("posso rodar `npm test`?") ou faz uma pergunta, aparece um cartão em cima do terminal dele, no computador ou no celular: **Permitir**, **Permitir e não perguntar de novo** (com a regra que o Claude Code sugeriu), **Negar…** (com um motivo, que vai para o agente, e a opção de interrompê-lo) ou **Responder no terminal**. Nas perguntas, você escolhe as opções ou escreve outra resposta. O terminal continua perguntando ao mesmo tempo, e vale o que for respondido primeiro. Funciona por um hook `PermissionRequest` só nas sessões do escritório; sem nenhuma página do escritório aberta, ou sem resposta em 5 minutos, o pedido fica só no terminal.
+
 ### Modelos por projeto
 
 No painel da direita, **Modelos** escolhe com que modelo os agentes de cada projeto trabalham:

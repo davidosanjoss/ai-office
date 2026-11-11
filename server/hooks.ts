@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { onSessionStart, onStop } from './incidents.ts';
+import { agentMovedOn } from './permissions.ts';
 import { store } from './store.ts';
 
 interface HookBody {
@@ -13,6 +14,9 @@ export function handleHook({ event, agentId, payload }: HookBody) {
   const agent = agentId ? store.agents.get(agentId) : findBySession(payload.session_id);
   if (!agent) return;
   const id = agent.id;
+  // O agente seguiu adiante (a ferramenta rodou, chegou outro pedido, terminou): o que estava
+  // esperando resposta no escritório foi respondido no terminal.
+  if (['PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionEnd'].includes(event)) agentMovedOn(id);
 
   switch (event) {
     case 'SessionStart':

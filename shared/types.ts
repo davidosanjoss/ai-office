@@ -341,7 +341,8 @@ export type ServerMsg =
   | { t: 'memory'; memory: MemoryStatus }
   | { t: 'activity'; event: ActivityEvent }
   | { t: 'out'; id: string; data: string }
-  | { t: 'replay'; id: string; data: string };
+  | { t: 'replay'; id: string; data: string }
+  | { t: 'requests'; requests: import('./permissions.ts').PendingRequest[] };
 
 // Mensagens WebSocket navegador → servidor
 export type ClientMsg =

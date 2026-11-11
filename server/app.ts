@@ -31,6 +31,8 @@ import { parseModels } from '../shared/models.ts';
 import { type Place, type Price, summarize } from '../shared/usage.ts';
 import { customPrices, prices, receiveRecords, setPrice, usageRecords } from './usage.ts';
 import { planUsage, recordPlan } from './plan.ts';
+import { answerRequest, dropRequest, openRequest, pendingRequests, requestEvents, setViewers, waitAnswer } from './permissions.ts';
+import type { RequestAnswer } from '../shared/permissions.ts';
 import { detectProjects, draftSummary, insideRoot, newProject, projectOf } from './projects.ts';
 import { WorktreeError, mergeWorktree, openPr, removeWorktree, worktreeStatus } from './worktree.ts';
 import { DATA_DIR, PORT } from './platform.ts';
@@ -62,13 +64,18 @@ export async function buildApp(opts: { port?: number } = {}) {
 
   await app.register(fastifyWebsocket);
 
+  let viewers = 0;
   app.get('/ws', { websocket: true }, (socket) => {
     const send = (msg: ServerMsg) => socket.readyState === socket.OPEN && socket.send(JSON.stringify(msg));
     const onMsg = (msg: ServerMsg) => send(msg);
     const onMemory = (memory: MemoryStatus) => send({ t: 'memory', memory });
+    const onRequests = (requests: ReturnType<typeof pendingRequests>) => send({ t: 'requests', requests });
     store.on('msg', onMsg);
     memoryEvents.on('status', onMemory);
+    requestEvents.on('change', onRequests);
+    setViewers(++viewers);
     send({ t: 'state', state: store.snapshot() });
+    send({ t: 'requests', requests: pendingRequests() });
 
     socket.on('message', (raw) => {
       let msg: ClientMsg;
@@ -97,11 +104,42 @@ export async function buildApp(opts: { port?: number } = {}) {
     socket.on('close', () => {
       store.off('msg', onMsg);
       memoryEvents.off('status', onMemory);
+      requestEvents.off('change', onRequests);
+      setViewers(--viewers);
     });
   });
 
   app.post<{ Body: { event: string; agentId?: string; payload: Record<string, unknown> } }>('/api/hook', async (req) => {
     if (req.body && typeof req.body === 'object') handleHook(req.body);
+    return { ok: true };
+  });
+
+  // ---------- pedidos (permissões e perguntas) respondidos pelo escritório ----------
+
+  /** O hook PermissionRequest registra o pedido. Sem id na resposta, ele segue pelo terminal. */
+  app.post<{ Body: { agentId?: string; payload?: Record<string, unknown> } }>('/api/pedidos', async (req) => {
+    const r = openRequest(req.body?.agentId, req.body?.payload ?? {});
+    return r ? { id: r.id } : {};
+  });
+  /** Espera longa do hook: a saída para o Claude Code, ou que o pedido sumiu, ou nada ainda. */
+  app.get<{ Params: { id: string }; Querystring: { ms?: string } }>('/api/pedidos/:id/espera', async (req) => {
+    const ms = Math.max(0, Math.min(25_000, Number(req.query.ms) || 25_000));
+    const r = await waitAnswer(req.params.id, ms);
+    return r === 'gone' ? { gone: true } : r === 'wait' ? {} : { output: r };
+  });
+  app.delete<{ Params: { id: string } }>('/api/pedidos/:id', async (req) => {
+    dropRequest(req.params.id);
+    return { ok: true };
+  });
+  /** Sua resposta, pelo cartão do escritório. */
+  app.post<{ Params: { id: string }; Body: RequestAnswer }>('/api/pedidos/:id/resposta', async (req, reply) => {
+    const b = req.body as RequestAnswer | undefined;
+    if (!b || (b.behavior !== 'allow' && b.behavior !== 'deny')) return reply.code(400).send({ error: 'Resposta inválida' });
+    const answer: RequestAnswer =
+      b.behavior === 'allow'
+        ? { behavior: 'allow', always: !!b.always, answers: cleanAnswers((b as { answers?: unknown }).answers) }
+        : { behavior: 'deny', message: typeof b.message === 'string' ? b.message.slice(0, 2000) : undefined, interrupt: !!b.interrupt };
+    if (!answerRequest(req.params.id, answer)) return reply.code(410).send({ error: 'Esse pedido já foi respondido (no terminal ou em outra janela)' });
     return { ok: true };
   });
 
@@ -599,6 +637,14 @@ function worktreeRepo(cwd: string): string | undefined {
     d = up;
   }
   return undefined;
+}
+
+/** Respostas das perguntas: texto da pergunta → opção (ou texto livre), só strings curtas. */
+function cleanAnswers(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === 'string' && k.length < 2000) out[k] = v.slice(0, 4000);
+  return out;
 }
 
 /** Pasta de um projeto, procurando em todas as salas. */

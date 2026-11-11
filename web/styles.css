@@ -1930,3 +1930,18 @@ body.dir-hidden #directory {
 .tile .meter i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
 .tile.high .meter i { background: var(--waiting); }
 .tile.high b { color: var(--waiting); }
+
+/* Pedido do agente (permissão ou pergunta), acima do terminal. */
+#request-card { margin: 6px 8px; padding: 10px 12px; border: 1px solid var(--waiting); border-left-width: 4px; border-radius: 6px; background: var(--panel); display: flex; flex-direction: column; gap: 8px; max-height: 50vh; overflow-y: auto; flex-shrink: 0; }
+#request-card[hidden] { display: none; }
+#request-card header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+#request-card header small { flex-basis: 100%; }
+.req-hand { animation: pulse 1.4s ease-in-out infinite; }
+.req-cmd { margin: 0; padding: 6px 8px; background: var(--bg-2); border-radius: 4px; white-space: pre-wrap; word-break: break-all; font: 12px 'JetBrains Mono', monospace; color: var(--text); }
+.req-actions, .req-deny { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.req-deny[hidden] { display: none; }
+.req-reason, .req-other { flex: 1; min-width: 180px; background: var(--bg-2); color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
+.req-q { border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; margin: 0; }
+.req-opt { display: flex; gap: 6px; align-items: flex-start; cursor: pointer; }
+.req-opt small { display: block; color: var(--muted); }
+.btn.danger { background: var(--danger); color: var(--bg); }

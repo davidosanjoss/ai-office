@@ -11,6 +11,7 @@ import type { UsageSummary } from '../shared/usage.ts';
 import { killAll } from '../server/agents.ts';
 import { buildApp } from '../server/app.ts';
 import { store } from '../server/store.ts';
+import { setViewers } from '../server/permissions.ts';
 import { BASE, PORT, WsClient, api, makeRepo, tempDir, transcriptLine, waitFor } from './helpers.ts';
 
 let app: FastifyInstance;
@@ -664,6 +665,49 @@ describe('sala com vários projetos', () => {
     } finally {
       delete process.env.FAKE_RATE_LIMITS;
       fs.rmSync(settings, { force: true });
+    }
+  });
+
+  it('pedidos pelo escritório: permitir sem perguntar de novo, negar com motivo, responder pergunta e devolver ao terminal', async () => {
+    const room = await newRoom('pedidos');
+    const a = await hire(room);
+    await waitStatus(a.id, 'idle');
+    // A lista de pedidos chega pelo WebSocket (a última mensagem 'requests' é a atual).
+    const pending = () => ws.messages.filter((m) => m.t === 'requests').at(-1) as { requests: { id: string; agentId: string; kind: string }[] } | undefined;
+    const next = (kind: string) => waitFor(() => pending()?.requests.find((r) => r.agentId === a.id && r.kind === kind), 5000, `pedido ${kind}`);
+
+    ws.type(a.id, 'pedir\r');
+    let req = await next('permission');
+    await waitStatus(a.id, 'waiting');
+    await api('POST', `/api/pedidos/${req.id}/resposta`, { behavior: 'allow', always: true });
+    await waitOutput(a.id, 'decisao={"behavior":"allow","updatedPermissions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"npm test"}]');
+    // Responder de novo o mesmo pedido: já foi.
+    expect((await api('POST', `/api/pedidos/${req.id}/resposta`, { behavior: 'allow' })).status).toBe(410);
+
+    ws.type(a.id, 'pedir\r');
+    req = await next('permission');
+    await api('POST', `/api/pedidos/${req.id}/resposta`, { behavior: 'deny', message: 'use o pnpm', interrupt: true });
+    await waitOutput(a.id, 'decisao={"behavior":"deny","message":"use o pnpm","interrupt":true}');
+
+    ws.type(a.id, 'perguntar\r');
+    req = await next('question');
+    await api('POST', `/api/pedidos/${req.id}/resposta`, { behavior: 'allow', answers: { 'Qual banco?': 'SQLite' } });
+    await waitOutput(a.id, '"answers":{"Qual banco?":"SQLite"}');
+
+    // "Responder no terminal": o pedido sai do escritório e o hook devolve a vez ao terminal.
+    ws.type(a.id, 'pedir\r');
+    req = await next('permission');
+    await api('DELETE', `/api/pedidos/${req.id}`);
+    await waitOutput(a.id, 'decisao=terminal');
+
+    // Sem nenhuma página do escritório aberta, o hook nem espera: segue pelo terminal na hora.
+    setViewers(0);
+    try {
+      const antes = ws.out(a.id).split('decisao=terminal').length;
+      ws.type(a.id, 'pedir\r');
+      await waitFor(() => ws.out(a.id).split('decisao=terminal').length > antes, 4000, 'o pedido ir direto para o terminal');
+    } finally {
+      setViewers(1);
     }
   });
 

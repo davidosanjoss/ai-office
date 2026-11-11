@@ -2,6 +2,7 @@
 
 import type { ActivityEvent, Agent, FileChange, Floor, Incident, IncidentMessage, MemoryStatus, Project, Room, WorktreeStatus } from '../shared/types.ts';
 import { canDeleteBranch } from '../shared/worktree.ts';
+import type { PendingRequest, Question } from '../shared/permissions.ts';
 import { modelsLabel } from '../shared/models.ts';
 import { PLAN_STALE_MS, type PlanUsage, type UsageRow, type UsageSummary, dayKey, totalTokens } from '../shared/usage.ts';
 
@@ -644,4 +645,26 @@ export function planView(plan: PlanUsage | undefined, now: number): { fiveHour?:
   };
   const view = (w: PlanUsage['fiveHour']) => w && { pct: Math.round(w.usedPct), resets: when(w.resetsAt), high: w.usedPct >= 80 };
   return { fiveHour: view(plan.fiveHour), sevenDay: view(plan.sevenDay), stale: now - plan.updatedAt > PLAN_STALE_MS };
+}
+
+// ---------- pedidos respondidos pelo escritório ----------
+
+/** O pedido mais antigo do agente (é o que o terminal está mostrando). */
+export function requestFor(agentId: string | undefined, requests: PendingRequest[]): PendingRequest | undefined {
+  return agentId ? requests.filter((r) => r.agentId === agentId).sort((a, b) => a.createdAt - b.createdAt)[0] : undefined;
+}
+
+/**
+ * Respostas das perguntas no formato do Claude Code: texto da pergunta → opção escolhida (várias
+ * juntas por vírgula), ou o que você escreveu em "Outra". Pergunta sem resposta não entra.
+ */
+export function questionAnswers(questions: Question[], chosen: Record<string, string[]>, other: Record<string, string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const q of questions) {
+    const free = other[q.question]?.trim();
+    const picks = (chosen[q.question] ?? []).filter(Boolean);
+    const value = free ? (q.multiSelect && picks.length ? [...picks, free].join(', ') : free) : picks.join(', ');
+    if (value) out[q.question] = value;
+  }
+  return out;
 }

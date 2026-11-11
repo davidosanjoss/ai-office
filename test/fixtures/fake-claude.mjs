@@ -9,6 +9,8 @@
 //   prompt <texto>  simula um pedido: UserPromptSubmit, PreToolUse(Read), PostToolUse, Stop e a statusline
 //   [Sala de guerra] ...  idem: o escritório digita isso, e o Claude real trata como um pedido
 //   ask             pede permissão (Notification permission_prompt)
+//   pedir           pede permissão pelo hook PermissionRequest (Bash npm test) e mostra a decisão
+//   perguntar       faz uma pergunta (AskUserQuestion) pelo mesmo hook e mostra a resposta
 //   /exit           encerra com código 0
 
 import { spawnSync } from 'node:child_process';
@@ -129,6 +131,30 @@ function run(cmd) {
   }
   if (cmd === 'ask') {
     hook('Notification', { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' });
+    return;
+  }
+  if (cmd === 'pedir' || cmd === 'perguntar') {
+    // Como o real ao precisar de permissão: roda os hooks PermissionRequest e espera a decisão
+    // deles; sem decisão, o pedido fica no terminal ("decisao=terminal").
+    const payload =
+      cmd === 'pedir'
+        ? {
+            tool_name: 'Bash',
+            tool_input: { command: 'npm test', description: 'Roda os testes' },
+            permission_suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test' }], behavior: 'allow', destination: 'localSettings' }],
+          }
+        : {
+            tool_name: 'AskUserQuestion',
+            tool_input: { questions: [{ question: 'Qual banco?', header: 'Banco', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multiSelect: false }] },
+          };
+    let decided = '';
+    for (const group of settings.hooks?.PermissionRequest ?? []) {
+      for (const h of group.hooks) {
+        const r = spawnSync(h.command, { shell: true, input: JSON.stringify({ session_id: sessionId, cwd: process.cwd(), hook_event_name: 'PermissionRequest', ...payload }), encoding: 'utf8' });
+        if (r.stdout?.trim()) decided = r.stdout.trim();
+      }
+    }
+    out(`decisao=${decided ? JSON.stringify(JSON.parse(decided).hookSpecificOutput.decision) : 'terminal'}\r\n`);
     return;
   }
   if (cmd.startsWith('prompt ') || cmd.startsWith('[Sala de guerra]')) {

@@ -9,10 +9,12 @@ import { addWorktree } from './git.ts';
 import { modelLaunch, modelsLabel } from '../shared/models.ts';
 import { claudeWiring } from './memory.ts';
 import { nowText, projectOf, roomContext } from './projects.ts';
+import { agentMovedOn } from './permissions.ts';
 import { CLAUDE_DIR, DATA_DIR, HOST, PORT, claudeBin, defaultShell, isWindows, ptyCommand } from './platform.ts';
 import { store } from './store.ts';
 
 const HOOK_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'office-hook.mjs');
+const PERMISSION_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'office-permission.mjs');
 const STATUSLINE_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'office-statusline.mjs');
 export const SETTINGS_FILE = path.join(DATA_DIR, 'claude-hooks.json');
 const SCROLLBACK_LIMIT = 400_000;
@@ -49,6 +51,8 @@ function hookSettings() {
   // A statusline é por onde o Claude Code entrega o uso oficial do plano (rate_limits). A sua, se
   // houver, continua aparecendo: o script a roda com o mesmo JSON (AI_OFFICE_STATUSLINE).
   const statusLine = { type: 'command', command: `"${process.execPath}" "${STATUSLINE_SCRIPT}"` };
+  // Pedidos de permissão e perguntas também aparecem no escritório (o hook espera a sua resposta lá).
+  hooks.PermissionRequest = [{ matcher: '', hooks: [{ type: 'command', command: `"${process.execPath}" "${PERMISSION_SCRIPT}"`, timeout: 600 }] }];
   return { hooks, statusLine };
 }
 fs.writeFileSync(SETTINGS_FILE, JSON.stringify(hookSettings(), null, 2));
@@ -330,6 +334,7 @@ function spawn(agent: Agent, resume: boolean) {
 
   proc.onExit(({ exitCode }) => {
     if (running.get(agent.id) === proc) running.delete(agent.id);
+    agentMovedOn(agent.id);
     if (!store.agents.has(agent.id)) return;
     // Como num emulador de terminal: `exit` fecha a aba.
     if (isShell) {
