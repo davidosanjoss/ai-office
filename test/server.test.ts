@@ -1108,3 +1108,89 @@ describe('sala de guerra', () => {
     expect((await api('POST', `/api/incidents/${incident.id}/messages`, { text: 'oi' })).status).toBe(400);
   });
 });
+
+describe('contexto grande', () => {
+  it('passou do limite com o cache quente: o Stop pede para gravar, uma vez por travessia; cache frio não pede', async () => {
+    const room = await newRoom('contexto');
+    const a = await hire(room);
+    await waitStatus(a.id, 'idle');
+    const { savedFile } = await import('../server/context.ts');
+
+    ws.type(a.id, 'contexto 600000 0\r');
+    await waitOutput(a.id, `stop=block arquivo=${savedFile(a.id)}`);
+    // A vez seguinte (a da gravação) termina normalmente: o Stop dela vem com stop_hook_active.
+    await waitOutput(a.id, 'stop2=ok');
+    expect(agentState(a.id)?.contextSaved).toBe(true);
+
+    // Já gravou nesta travessia: o próximo Stop deixa parar.
+    ws.clear(a.id);
+    ws.type(a.id, 'contexto 650000 0\r');
+    await waitOutput(a.id, 'stop=ok');
+
+    // Voltou abaixo do limite (um /compact) e passou de novo: pede de novo.
+    ws.type(a.id, 'contexto 1000 0\r');
+    await waitFor(() => agentState(a.id)?.contextSaved === false, 5000, 'a marca voltar a zero');
+    ws.clear(a.id);
+    ws.type(a.id, 'contexto 600000 0\r');
+    await waitOutput(a.id, 'stop=block');
+
+    // Cache frio: gravar agora já pagaria a releitura inteira. Deixa parar.
+    store.patchAgent(a.id, { contextSaved: false });
+    ws.clear(a.id);
+    ws.type(a.id, 'contexto 600000 120\r');
+    await waitOutput(a.id, 'stop=ok');
+  });
+
+  it('na volta com o cache frio: custo das duas opções e sessão nova com o resumo e o transcript antigo', async () => {
+    const room = await newRoom('contexto-volta', true);
+    const a = await hire(room);
+    await waitStatus(a.id, 'idle');
+    const { savedFile, dossierFile } = await import('../server/context.ts');
+    const { findTranscript } = await import('../server/discover.ts');
+
+    ws.type(a.id, 'contexto 841000 120\r');
+    await waitOutput(a.id, 'stop=ok');
+    const info = (await api(`GET`, `/api/agents/${a.id}/contexto`)).data;
+    expect(info).toMatchObject({ policy: 'avisar', choice: 'perguntar', tokens: 841000 });
+    // Opus 5.5: regravar 841 mil tokens no cache de 1 h (US$ 8/M) ≈ US$ 6,73.
+    expect(info.costs.retomar).toBeCloseTo(6.728, 2);
+    expect(info.costs.nova).toBeLessThan(0.5);
+
+    fs.mkdirSync(path.dirname(savedFile(a.id)), { recursive: true });
+    fs.writeFileSync(savedFile(a.id), 'Decidimos usar SQLite. Falta a migração.');
+    const old = agentState(a.id)!.sessionId;
+    const oldTranscript = findTranscript(old)!;
+    ws.clear(a.id);
+    expect((await api('POST', `/api/agents/${a.id}/sessao-nova`)).status).toBe(200);
+    await waitOutput(a.id, `contexto-inicial=# Continuação: resumo do escritório para ${a.name} | transcript=${oldTranscript}`, 10_000);
+    expect(agentState(a.id)!.sessionId).not.toBe(old);
+    expect(agentState(a.id)!.pastSessions).toContain(old);
+    // A sessão nova começa contando o que sabe: o escritório digita a primeira mensagem.
+    await waitOutput(a.id, 'Resuma em poucas linhas', 10_000);
+    const dossier = fs.readFileSync(dossierFile(a.id), 'utf8');
+    expect(dossier).toContain('Decidimos usar SQLite. Falta a migração.');
+    expect(dossier).toContain('Branch: main');
+  });
+
+  it('andar no automático: Retomar um agente que saiu já volta em sessão nova; desligado retoma como sempre', async () => {
+    const floor = (await api<Floor>('POST', '/api/floors', { name: 'Contexto', defaults: { context: 'automatico' } })).data;
+    expect(floor.defaults?.context).toBe('automatico');
+    const room = (await api<Room>('POST', '/api/rooms', { path: tempDir('auto'), floorId: floor.id, pos: { x: -1, y: 1 } })).data;
+    const a = await hire(room);
+    await waitStatus(a.id, 'idle');
+    ws.type(a.id, 'contexto 700000 90\r');
+    await waitOutput(a.id, 'stop=ok');
+    ws.type(a.id, '/exit\r');
+    await waitStatus(a.id, 'exited');
+    ws.clear(a.id);
+    await api('POST', `/api/agents/${a.id}/resume`, {});
+    await waitOutput(a.id, 'contexto-inicial=# Continuação', 10_000);
+    expect(ws.out(a.id)).toContain('mode=new');
+
+    // Desligado: o padrão volta a ser o do Claude Code (e "avisar" não precisa ser guardado).
+    const off = (await api<Floor>('PATCH', `/api/floors/${floor.id}`, { defaults: { context: 'desligado' } })).data;
+    expect(off.defaults?.context).toBe('desligado');
+    expect((await api<Floor>('PATCH', `/api/floors/${floor.id}`, { defaults: { context: 'avisar' } })).data.defaults).toBeUndefined();
+    expect((await api<Floor>('PATCH', `/api/floors/${floor.id}`, { defaults: { context: 'qualquer' } })).data.defaults).toBeUndefined();
+  });
+});

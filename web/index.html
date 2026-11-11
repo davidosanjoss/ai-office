@@ -136,6 +136,7 @@
         <div id="exited" class="exited" hidden>
           <span id="exited-text"></span>
           <button id="btn-resume" class="btn small">Retomar conversa</button>
+          <button id="btn-resume-alt" class="btn small ghost" hidden></button>
         </div>
         <!-- Explorador (aba 📁 da sala): arquivos com editor e histórico do git; ocupa o lugar do terminal. -->
         <section id="files-view" hidden>
@@ -369,6 +370,14 @@
             <span>Co-autoria do Claude nos commits e PRs<br /><small>Desligue para os commits saírem só no seu nome.</small></span>
           </label>
           <label>Instruções <textarea name="instructions" rows="3" maxlength="4000" placeholder="Ex.: Mensagens de commit resumidas, numa linha só"></textarea></label>
+          <label>Conversa grande com o cache expirado
+            <select name="context">
+              <option value="avisar">Avisar e sugerir uma sessão nova com resumo</option>
+              <option value="automatico">Voltar já numa sessão nova com resumo</option>
+              <option value="desligado">Desligado: retomar como o Claude Code</option>
+            </select>
+          </label>
+          <small class="muted">Passou de 500 mil tokens: o agente grava o que importa enquanto o cache vale, e na volta (cache de 1 h expirado) começa uma sessão nova com o resumo, em vez de reler tudo.</small>
           <small class="muted">Valem para quem for contratado ou voltar ao trabalho depois de salvar. Quem já está trabalhando continua como estava.</small>
         </fieldset>
         <p class="error" hidden></p>

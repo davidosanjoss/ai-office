@@ -121,7 +121,7 @@ async function join(incidentId: string, roomIds: string[], agentIds: string[]) {
     store.patchAgent(agentId, { incidentId });
     store.log(agentId, `${agent.name} foi para a sala de guerra`, 'system');
     // Quem estava fora do escritório volta, já com o convite na fila.
-    if (agent.status === 'exited') resumeAgent(agentId);
+    if (agent.status === 'exited') void resumeAgent(agentId);
     joined.push(agentId);
   }
   const incident = mustGet(incidentId);

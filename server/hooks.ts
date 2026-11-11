@@ -3,6 +3,9 @@ import { onSessionStart, onStop } from './incidents.ts';
 import { agentMovedOn } from './permissions.ts';
 import { onPostToolUse } from './live.ts';
 import { store } from './store.ts';
+import { sessionStartOutput, stopDecision } from './context.ts';
+import { writeInput } from './agents.ts';
+import { FRESH_PROMPT } from '../shared/context.ts';
 
 interface HookBody {
   event: string;
@@ -10,20 +13,30 @@ interface HookBody {
   payload: Record<string, any>;
 }
 
-/** Transforma um evento de hook do Claude Code em estado do personagem. */
-export function handleHook({ event, agentId, payload }: HookBody) {
+/**
+ * Transforma um evento de hook do Claude Code em estado do personagem. Devolve a saída do hook,
+ * quando o escritório decide algo (Stop: gravar a memória; SessionStart: o dossiê da sessão nova).
+ */
+export function handleHook({ event, agentId, payload }: HookBody): object | undefined {
   const agent = agentId ? store.agents.get(agentId) : findBySession(payload.session_id);
-  if (!agent) return;
+  if (!agent) return undefined;
   const id = agent.id;
   // O agente seguiu adiante (a ferramenta rodou, chegou outro pedido, terminou): o que estava
   // esperando resposta no escritório foi respondido no terminal.
   if (['PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionEnd'].includes(event)) agentMovedOn(id);
 
   switch (event) {
-    case 'SessionStart':
+    case 'SessionStart': {
       store.patchAgent(id, { status: 'idle', activity: 'Pronto para trabalhar' });
       onSessionStart(id);
-      break;
+      const output = sessionStartOutput(id, payload.session_id);
+      // Sessão nova com resumo: o escritório digita a primeira mensagem, e ela começa contando o que sabe.
+      if (output) setTimeout(() => {
+        writeInput(id, FRESH_PROMPT);
+        setTimeout(() => writeInput(id, '\r'), 200);
+      }, FRESH_PROMPT_DELAY_MS);
+      return output;
+    }
 
     case 'UserPromptSubmit': {
       const prompt = String(payload.prompt ?? '').trim();
@@ -65,18 +78,26 @@ export function handleHook({ event, agentId, payload }: HookBody) {
       break;
     }
 
-    case 'Stop':
+    case 'Stop': {
+      // Contexto grande com o cache quente: antes de parar, o agente grava o que importa.
+      const output = stopDecision(agent, payload);
+      if (output) return output;
       store.patchAgent(id, { status: 'done', activity: 'Terminou!', subagents: 0, attentionAt: Date.now() });
       store.log(id, 'Terminou o pedido', 'done');
       // Na sala de guerra, a resposta vai para o chat e a próxima mensagem da fila é digitada.
       onStop(id, payload);
       break;
+    }
 
     case 'SubagentStop':
       store.patchAgent(id, { subagents: Math.max(0, agent.subagents - 1), helpers: (agent.helpers ?? []).slice(1) });
       break;
   }
+  return undefined;
 }
+
+/** Espera o terminal da sessão nova ficar pronto antes de digitar a primeira mensagem. */
+const FRESH_PROMPT_DELAY_MS = 1500;
 
 type Todo = NonNullable<import('../shared/types.ts').Agent['todos']>[number];
 const TODO_STATUS = new Set(['pending', 'in_progress', 'completed']);

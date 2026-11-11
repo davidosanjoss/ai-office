@@ -5,7 +5,8 @@ import { canDeleteBranch } from '../shared/worktree.ts';
 import type { PendingRequest, Question } from '../shared/permissions.ts';
 import { elapsed, shellStage } from '../shared/live.ts';
 import { modelsLabel } from '../shared/models.ts';
-import { PLAN_STALE_MS, type PlanUsage, type UsageRow, type UsageSummary, dayKey, totalTokens } from '../shared/usage.ts';
+import { PLAN_STALE_MS, type PlanUsage, type UsageRow, type UsageSummary, dayKey, formatTokens, formatUsd, totalTokens } from '../shared/usage.ts';
+import type { ContextPolicy, ReturnChoice } from '../shared/context.ts';
 
 /** Depois da última tecla, quanto esperar antes de trocar de terminal sozinho. */
 export const TYPING_GRACE_MS = 3500;
@@ -74,6 +75,54 @@ export function exitedMessage(a: Agent): string {
 
 export function resumeLabel(a: Agent): string {
   return a.kind === 'shell' ? 'Reabrir terminal' : 'Retomar conversa';
+}
+
+// ---------- contexto grande (shared/context.ts) ----------
+
+/** O que o servidor responde em /api/agents/:id/contexto. */
+export interface ContextInfo {
+  policy: ContextPolicy;
+  choice: ReturnChoice;
+  tokens?: number;
+  lastAt?: number;
+  costs?: { retomar: number; nova: number };
+}
+
+/** Uma ação do aviso: o rótulo do botão e o que ele faz. */
+export interface ContextAction {
+  label: string;
+  action: 'nova' | 'retomar' | 'dispensar';
+}
+
+/** Há quanto tempo, em palavras curtas: "40 min", "3 h", "2 dias". */
+export function agoText(ms: number): string {
+  const min = Math.max(1, Math.round(ms / 60_000));
+  if (min < 60) return `${min} min`;
+  const h = Math.round(min / 60);
+  if (h < 48) return `${h} h`;
+  return `${Math.round(h / 24)} dias`;
+}
+
+/**
+ * Aviso de contexto grande com o cache frio, na volta de um agente: o texto e os botões, o
+ * principal primeiro (a sessão nova com resumo). Parado mas aberto, o aviso aparece só se você
+ * não dispensou para esta mesma última resposta. undefined = nada a avisar.
+ */
+export function contextNotice(a: Agent, info: ContextInfo | undefined, now: number, dismissedAt?: number): { text: string; actions: ContextAction[] } | undefined {
+  if (a.kind === 'shell' || !info || info.choice === 'retomar' || !info.tokens || !info.lastAt) return undefined;
+  const exited = a.status === 'exited';
+  if (!exited && (!['idle', 'done'].includes(a.status) || dismissedAt === info.lastAt)) return undefined;
+  const size = `A conversa tem ${formatTokens(info.tokens)} tokens e o cache expirou há ${agoText(now - info.lastAt)}`;
+  const costs = info.costs ? `: continuar nela relê tudo (~${formatUsd(info.costs.retomar)} na próxima mensagem); a sessão nova começa com ~${formatUsd(info.costs.nova)}` : '';
+  const how = ' A sessão nova recebe o resumo do escritório e o caminho do transcript antigo.';
+  const text = `${exited ? `${exitedMessage(a)} ` : ''}${size}${costs}.${how}`;
+  return {
+    text,
+    actions: [
+      { label: 'Sessão nova com resumo', action: 'nova' },
+      exited ? { label: 'Retomar inteira', action: 'retomar' } : { label: 'Continuar nesta', action: 'dispensar' },
+    ],
+  };
 }
 
 // ---------- andares ----------

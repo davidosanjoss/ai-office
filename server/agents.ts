@@ -13,6 +13,7 @@ import { agentMovedOn } from './permissions.ts';
 import { forgetShells } from './live.ts';
 import { CLAUDE_DIR, DATA_DIR, HOST, PORT, claudeBin, defaultShell, isWindows, ptyCommand } from './platform.ts';
 import { store } from './store.ts';
+import { CONTEXT_DIR, buildDossier, contextInfo, setPendingDossier } from './context.ts';
 
 const HOOK_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'office-hook.mjs');
 const PERMISSION_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'office-permission.mjs');
@@ -47,7 +48,9 @@ function hookSettings() {
   const command = `"${process.execPath}" "${HOOK_SCRIPT}"`;
   const hooks: Record<string, unknown> = {};
   for (const event of HOOK_EVENTS) {
-    hooks[event] = [{ matcher: '', hooks: [{ type: 'command', command: `${command} ${event}`, timeout: 5 }] }];
+    // Stop e SessionStart esperam a decisão do escritório (política de contexto grande).
+    const timeout = event === 'Stop' || event === 'SessionStart' ? 10 : 5;
+    hooks[event] = [{ matcher: '', hooks: [{ type: 'command', command: `${command} ${event}`, timeout }] }];
   }
   // A statusline é por onde o Claude Code entrega o uso oficial do plano (rate_limits). A sua, se
   // houver, continua aparecendo: o script a roda com o mesmo JSON (AI_OFFICE_STATUSLINE).
@@ -228,11 +231,14 @@ export async function createAgent(
 
 /**
  * Retoma um agente cujo processo terminou, continuando a mesma conversa.
- * Se a conversa nunca chegou a ser salva, começa uma nova com o mesmo ID.
+ * Se a conversa nunca chegou a ser salva, começa uma nova com o mesmo ID. Com `mode` ausente,
+ * vale a política de contexto grande do andar: no automático, conversa grande com o cache frio
+ * volta em sessão nova com resumo.
  */
-export function resumeAgent(id: string) {
+export async function resumeAgent(id: string, mode?: 'retomar' | 'nova') {
   const agent = store.agents.get(id);
   if (!agent || running.has(id)) return;
+  if (agent.kind !== 'shell' && (mode ?? (contextInfo(agent).choice === 'nova' ? 'nova' : 'retomar')) === 'nova') return freshAgent(id);
   appendScrollback(id, '\r\n\x1b[2m──── reaberto ────\x1b[0m\r\n');
   if (agent.kind === 'shell') {
     store.patchAgent(id, { status: 'idle', exitCode: undefined });
@@ -252,6 +258,35 @@ export function resumeAgent(id: string) {
     resume ? `${agent.name} voltou para a mesa` : `${agent.name} voltou, mas a conversa anterior não tinha sido salva: começando uma nova`,
     'system',
   );
+}
+
+/**
+ * Sessão nova com resumo: em vez de reler uma conversa grande com o cache expirado, o agente
+ * começa outra sessão, que recebe no SessionStart o dossiê montado pelo escritório (últimos
+ * pedidos, tarefas, última resposta, git, o que ele gravou) e o caminho do transcript antigo.
+ * Se o processo ainda está aberto, ele é encerrado antes.
+ */
+export async function freshAgent(id: string) {
+  const agent = store.agents.get(id);
+  if (!agent || agent.kind === 'shell') return;
+  if (running.has(id)) await stopAgent(id);
+  const current = store.agents.get(id);
+  if (!current || running.has(id)) return;
+  const text = await buildDossier(current);
+  const sessionId = randomUUID();
+  appendScrollback(id, '\r\n\x1b[2m──── sessão nova com resumo ────\x1b[0m\r\n');
+  store.patchAgent(id, {
+    sessionId,
+    pastSessions: [...(current.pastSessions ?? []), current.sessionId].slice(-20),
+    contextSaved: false,
+    status: 'starting',
+    activity: 'Começando uma sessão nova com o resumo…',
+    subagents: 0,
+    exitCode: undefined,
+  });
+  setPendingDossier(id, sessionId, text);
+  spawn(store.agents.get(id)!, false);
+  store.log(id, `${current.name} voltou numa sessão nova, com o resumo da conversa anterior`, 'system');
 }
 
 /**
@@ -299,7 +334,10 @@ function spawn(agent: Agent, resume: boolean) {
     // Os modelos do projeto valem por execução: quem abre ou retoma pega a escolha atual.
     const models = modelLaunch(project.models);
     modelEnv = models.env;
-    args = [...claudeArgs(agent.sessionId, resume, files.settings, agentPromptFile(agent, room, floor), project.path === room.path ? [] : [room.path]), ...models.args];
+    // A pasta do contexto: onde o agente grava o que importa quando a conversa fica grande.
+    fs.mkdirSync(CONTEXT_DIR, { recursive: true });
+    const dirs = [...(project.path === room.path ? [] : [room.path]), CONTEXT_DIR];
+    args = [...claudeArgs(agent.sessionId, resume, files.settings, agentPromptFile(agent, room, floor), dirs), ...models.args];
     const label = modelsLabel(project.models);
     if (agent.models !== label) store.patchAgent(agent.id, { models: label });
   }

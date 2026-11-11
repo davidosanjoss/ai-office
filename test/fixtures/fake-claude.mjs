@@ -14,7 +14,10 @@
 //   fundo <id>      deixa um comando em segundo plano (backgroundTaskId) e termina a vez
 //   fundo-fim <id> <código>  grava no transcript o fim desse comando (<task-notification>)
 //   gh pr | gh ci-falhou | gh ci-ok  o Bash rodou um comando do GitHub (PR aberto, CI vermelho, CI verde)
+//   contexto <tokens> [min]  uma resposta com esse contexto no `usage`, feita há [min] minutos,
+//                   e o Stop: mostra se o escritório bloqueou (stop=block) ou deixou parar (stop=ok)
 //   /exit           encerra com código 0
+// O SessionStart mostra o additionalContext que o escritório devolveu (contexto-inicial=...).
 
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -59,15 +62,24 @@ if (resumeId && !transcriptExists()) {
 
 const settings = settingsFile ? JSON.parse(fs.readFileSync(settingsFile, 'utf8')) : { hooks: {} };
 
+/** Roda os hooks do evento, como o real, e devolve a saída JSON do último que respondeu algo. */
 function hook(event, payload = {}) {
+  let output;
   for (const group of settings.hooks?.[event] ?? []) {
     for (const h of group.hooks) {
-      spawnSync(h.command, {
+      const r = spawnSync(h.command, {
         shell: true,
+        encoding: 'utf8',
         input: JSON.stringify({ session_id: sessionId, cwd: process.cwd(), hook_event_name: event, ...payload }),
       });
+      if (r.stdout?.trim()) {
+        try {
+          output = JSON.parse(r.stdout);
+        } catch {}
+      }
     }
   }
+  return output;
 }
 
 /**
@@ -133,7 +145,9 @@ process.stdin.on('data', (raw) => {
   }
 });
 
-hook('SessionStart', { source: resumeId ? 'resume' : 'startup' });
+const started = hook('SessionStart', { source: resumeId ? 'resume' : 'startup' });
+const initial = started?.hookSpecificOutput?.additionalContext;
+if (initial) out(`contexto-inicial=${initial.split('\n')[0]} | transcript=${/em (\S+\.jsonl)/.exec(initial)?.[1] ?? '-'}\r\n`);
 out('> ');
 
 function run(cmd) {
@@ -144,6 +158,22 @@ function run(cmd) {
   }
   if (cmd === 'ask') {
     hook('Notification', { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' });
+    return;
+  }
+  if (cmd.startsWith('contexto ')) {
+    // Uma resposta com o contexto informado no usage, como o real grava, e o fim da vez.
+    const [tokens, min = '0'] = cmd.slice(9).trim().split(/\s+/);
+    writeTranscript('user', 'continua');
+    const ts = new Date(Date.now() - Number(min) * 60_000).toISOString();
+    const usage = { input_tokens: 10, cache_creation_input_tokens: 1000, cache_read_input_tokens: Number(tokens) - 1010, output_tokens: 0, cache_creation: { ephemeral_5m_input_tokens: 0, ephemeral_1h_input_tokens: 1000 } };
+    fs.appendFileSync(transcriptPath(), JSON.stringify({ type: 'assistant', sessionId, cwd: process.cwd(), timestamp: ts, message: { id: `msg_${Date.now()}`, role: 'assistant', model: 'claude-opus-5-5', usage, content: [{ type: 'text', text: 'resposta grande' }] } }) + '\n');
+    const stop = hook('Stop', { transcript_path: transcriptPath(), stop_hook_active: false });
+    if (stop?.decision === 'block') {
+      out(`stop=block arquivo=${/no arquivo (\S+\.md)/.exec(stop.reason)?.[1] ?? '-'}\r\n`);
+      // Como o real: o motivo vira a próxima vez do agente, e o Stop dela vem com stop_hook_active.
+      const again = hook('Stop', { transcript_path: transcriptPath(), stop_hook_active: true });
+      out(`stop2=${again?.decision ?? 'ok'}\r\n`);
+    } else out('stop=ok\r\n');
     return;
   }
   if (cmd.startsWith('fundo ')) {
