@@ -28,8 +28,15 @@ import { IncidentError, addParticipants, closeIncident, incidentAt, leaveInciden
 import { MemoryError, memoryEvents, memoryStatus, openDataDir, startInstall, startUninstall } from './memory.ts';
 import { pickFolder } from './picker.ts';
 import { parseModels } from '../shared/models.ts';
-import { type Place, type Price, summarize } from '../shared/usage.ts';
+import { type Place, type Price, type UsageRecord, costOf, dayKey, priceFor, summarize, tokensOf } from '../shared/usage.ts';
 import { customPrices, prices, receiveRecords, setPrice, usageRecords } from './usage.ts';
+import { planUsage, recordPlan } from './plan.ts';
+import { startShellWatch } from './live.ts';
+import { cachedSummaries, dayReport, startDayTracking, summarizeWithClaude } from './day.ts';
+import { projectDigest } from '../shared/day.ts';
+import { PARTY_MS } from '../shared/live.ts';
+import { answerRequest, dropRequest, openRequest, pendingRequests, requestEvents, setViewers, waitAnswer } from './permissions.ts';
+import type { RequestAnswer } from '../shared/permissions.ts';
 import { detectProjects, draftSummary, insideRoot, newProject, projectOf } from './projects.ts';
 import { WorktreeError, mergeWorktree, openPr, removeWorktree, worktreeStatus } from './worktree.ts';
 import { DATA_DIR, PORT } from './platform.ts';
@@ -45,6 +52,8 @@ export async function buildApp(opts: { port?: number } = {}) {
   const port = opts.port ?? PORT;
   const app = Fastify({ logger: false });
 
+  startShellWatch();
+  startDayTracking();
   // Instalação nova: o prédio já começa com um andar, para a primeira sala ter onde ficar.
   if (!store.floors.size) store.putFloor({ ...DEFAULT_FLOOR, createdAt: Date.now() });
 
@@ -61,13 +70,18 @@ export async function buildApp(opts: { port?: number } = {}) {
 
   await app.register(fastifyWebsocket);
 
+  let viewers = 0;
   app.get('/ws', { websocket: true }, (socket) => {
     const send = (msg: ServerMsg) => socket.readyState === socket.OPEN && socket.send(JSON.stringify(msg));
     const onMsg = (msg: ServerMsg) => send(msg);
     const onMemory = (memory: MemoryStatus) => send({ t: 'memory', memory });
+    const onRequests = (requests: ReturnType<typeof pendingRequests>) => send({ t: 'requests', requests });
     store.on('msg', onMsg);
     memoryEvents.on('status', onMemory);
+    requestEvents.on('change', onRequests);
+    setViewers(++viewers);
     send({ t: 'state', state: store.snapshot() });
+    send({ t: 'requests', requests: pendingRequests() });
 
     socket.on('message', (raw) => {
       let msg: ClientMsg;
@@ -96,6 +110,8 @@ export async function buildApp(opts: { port?: number } = {}) {
     socket.on('close', () => {
       store.off('msg', onMsg);
       memoryEvents.off('status', onMemory);
+      requestEvents.off('change', onRequests);
+      setViewers(--viewers);
     });
   });
 
@@ -103,6 +119,38 @@ export async function buildApp(opts: { port?: number } = {}) {
     if (req.body && typeof req.body === 'object') handleHook(req.body);
     return { ok: true };
   });
+
+  // ---------- pedidos (permissões e perguntas) respondidos pelo escritório ----------
+
+  /** O hook PermissionRequest registra o pedido. Sem id na resposta, ele segue pelo terminal. */
+  app.post<{ Body: { agentId?: string; payload?: Record<string, unknown> } }>('/api/pedidos', async (req) => {
+    const r = openRequest(req.body?.agentId, req.body?.payload ?? {});
+    return r ? { id: r.id } : {};
+  });
+  /** Espera longa do hook: a saída para o Claude Code, ou que o pedido sumiu, ou nada ainda. */
+  app.get<{ Params: { id: string }; Querystring: { ms?: string } }>('/api/pedidos/:id/espera', async (req) => {
+    const ms = Math.max(0, Math.min(25_000, Number(req.query.ms) || 25_000));
+    const r = await waitAnswer(req.params.id, ms);
+    return r === 'gone' ? { gone: true } : r === 'wait' ? {} : { output: r };
+  });
+  app.delete<{ Params: { id: string } }>('/api/pedidos/:id', async (req) => {
+    dropRequest(req.params.id);
+    return { ok: true };
+  });
+  /** Sua resposta, pelo cartão do escritório. */
+  app.post<{ Params: { id: string }; Body: RequestAnswer }>('/api/pedidos/:id/resposta', async (req, reply) => {
+    const b = req.body as RequestAnswer | undefined;
+    if (!b || (b.behavior !== 'allow' && b.behavior !== 'deny')) return reply.code(400).send({ error: 'Resposta inválida' });
+    const answer: RequestAnswer =
+      b.behavior === 'allow'
+        ? { behavior: 'allow', always: !!b.always, answers: cleanAnswers((b as { answers?: unknown }).answers) }
+        : { behavior: 'deny', message: typeof b.message === 'string' ? b.message.slice(0, 2000) : undefined, interrupt: !!b.interrupt };
+    if (!answerRequest(req.params.id, answer)) return reply.code(410).send({ error: 'Esse pedido já foi respondido (no terminal ou em outra janela)' });
+    return { ok: true };
+  });
+
+  // Uso oficial do plano, que a statusline das sessões do escritório manda (rate_limits).
+  app.post<{ Body: { rate_limits?: unknown } }>('/api/plano', async (req) => ({ ok: !!recordPlan(req.body?.rate_limits) }));
 
   app.get('/api/projects', async () => discoverProjects());
 
@@ -394,7 +442,7 @@ export async function buildApp(opts: { port?: number } = {}) {
     const from = Number(req.query.from) || now - 7 * 24 * 3600 * 1000;
     const to = Number(req.query.to) || now + 1;
     // ler=1 (o painel aberto agora): lê o que há de novo mesmo que a última leitura seja recente.
-    return summarize(await usageRecords(req.query.ler === '1'), { from, to, now, locate: placeOf, prices: prices() });
+    return summarize(await usageRecords(req.query.ler === '1'), { from, to, now, locate: placeOf, prices: prices(), plan: planUsage() });
   });
 
   /** Outras fontes (Codex, Gemini, um script seu): um registro ou uma lista no formato UsageRecord. */
@@ -403,6 +451,51 @@ export async function buildApp(opts: { port?: number } = {}) {
     if (!result.accepted) return reply.code(400).send({ error: 'Nenhum registro válido: veja o formato em shared/usage.ts (UsageRecord)', ...result });
     await usageRecords(true);
     return result;
+  });
+
+  // ---------- meu dia e relatório ----------
+
+  const validDate = (d: unknown) => (typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d) ? d : dayKey(Date.now()));
+  app.get<{ Querystring: { data?: string } }>('/api/dia', async (req) => {
+    const date = validDate(req.query.data);
+    const report = await dayReport(date, await usageRecords(), placeOf, prices());
+    return { ...report, summaries: cachedSummaries(date) };
+  });
+  /** Resumo em texto de um projeto no dia, pelo Claude (usa o seu plano: só quando você pede). */
+  app.post<{ Body: { data?: string; key?: string } }>('/api/dia/resumo', async (req, reply) => {
+    const date = validDate(req.body?.data);
+    const report = await dayReport(date, await usageRecords(), placeOf, prices());
+    const p = report.projects.find((x) => x.place.key === req.body?.key);
+    if (!p) return reply.code(404).send({ error: 'Projeto sem nada nesse dia' });
+    if (!p.prompts.length && !p.commits.length && !p.events.length) return reply.code(400).send({ error: 'Não há pedidos nem commits para resumir' });
+    try {
+      return { text: await summarizeWithClaude(date, p.place.key, projectDigest(p)) };
+    } catch (err) {
+      return reply.code(502).send({ error: (err as Error).message });
+    }
+  });
+
+  /** Detalhes de um agente: tokens e custo da sessão dele, modelo, branch e linhas alteradas. */
+  app.get<{ Params: { id: string } }>('/api/agents/:id/detalhes', async (req, reply) => {
+    const agent = store.agents.get(req.params.id);
+    if (!agent) return reply.code(404).send({ error: 'Agente não encontrado' });
+    const mine = (await usageRecords()).filter((r) => r.session === agent.sessionId);
+    const table = prices();
+    let cost = 0;
+    const tokens = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
+    for (const r of mine) {
+      const t = tokensOf(r);
+      tokens.input += t.input;
+      tokens.output += t.output;
+      tokens.cacheWrite += t.cacheWrite;
+      tokens.cacheRead += t.cacheRead;
+      const p = priceFor(r.model, table);
+      if (p) cost += costOf(r, p);
+    }
+    const last = mine.reduce<UsageRecord | undefined>((a, r) => (!a || r.ts > a.ts ? r : a), undefined);
+    const git = agent.kind === 'shell' ? undefined : await gitInfo(agent.cwd).catch(() => undefined);
+    const lines = (git?.files ?? []).reduce((s, f) => ({ add: s.add + (f.additions ?? 0), del: s.del + (f.deletions ?? 0) }), { add: 0, del: 0 });
+    return { tokens, cost, model: last?.model, replies: mine.length, branch: git?.branch, files: git?.files?.length ?? 0, linesAdded: lines.add, linesRemoved: lines.del };
   });
 
   app.get('/api/uso/precos', async () => {
@@ -469,6 +562,10 @@ export async function buildApp(opts: { port?: number } = {}) {
     worktreeRoute(async (agent, room, req) => {
       const pr = await openPr(agent, room, String(req.body?.title ?? ''), String(req.body?.body ?? ''));
       store.patchAgent(agent.id, { worktreePr: pr.url });
+      // O PR aberto pelo escritório também é festa na sala.
+      const sala = store.rooms.get(agent.roomId);
+      const n = /\/pull\/(\d+)/.exec(pr.url)?.[1];
+      if (sala) store.putRoom({ ...sala, effect: { kind: 'festa', text: n ? `PR #${n} aberto!` : 'PR aberto!', until: Date.now() + PARTY_MS } });
       return pr;
     }),
   );
@@ -595,6 +692,14 @@ function worktreeRepo(cwd: string): string | undefined {
     d = up;
   }
   return undefined;
+}
+
+/** Respostas das perguntas: texto da pergunta → opção (ou texto livre), só strings curtas. */
+function cleanAnswers(raw: unknown): Record<string, string> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) if (typeof v === 'string' && k.length < 2000) out[k] = v.slice(0, 4000);
+  return out;
 }
 
 /** Pasta de um projeto, procurando em todas as salas. */

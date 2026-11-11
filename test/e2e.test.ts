@@ -1052,6 +1052,38 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.setViewport({ width: 1400, height: 900 });
   });
 
+  it('pedido do agente: o cartão aparece em cima do terminal, e Permitir responde o Claude', async () => {
+    const ana = byName('Ana')!;
+    const room = store.rooms.get(ana.roomId)!;
+    await page.click(`#directory .dir-room-head[data-room="${room.id}"]`).catch(() => undefined);
+    await page.click(`#tabs .tab[data-id="${ana.id}"]`);
+    if (status(ana.id) === 'exited') await api('POST', `/api/agents/${ana.id}/resume`);
+    await waitFor(() => ['idle', 'done'].includes(status(ana.id) ?? ''), 10_000, 'Ana pronta');
+    await typeInTerminal('pedir');
+    await page.waitForSelector('#request-card:not([hidden]) [data-act="always"]');
+    expect(await page.$eval('#request-card .req-cmd', (e) => e.textContent)).toBe('Bash: npm test');
+    await page.click('#request-card [data-act="allow"]');
+    await waitScreen('decisao={"behavior":"allow"}');
+    await page.waitForSelector('#request-card[hidden]');
+  });
+
+  it('📊: as abas Meu dia e Relatório, e os detalhes do agente na lateral', async () => {
+    const ana = byName('Ana')!;
+    await page.click(`#tabs .tab[data-id="${ana.id}"]`);
+    await page.waitForSelector('#agent-details:not([hidden]) h3');
+    expect(await page.$eval('#agent-details h3', (e) => e.textContent)).toContain('Ana');
+    await page.waitForFunction(() => document.querySelector('#agent-details')?.textContent?.includes('Sessão'));
+    await page.click('#btn-usage');
+    await page.click('#usage-tabs button[data-tab="dia"]');
+    await page.waitForSelector('#usage-dia:not([hidden]) .hours');
+    expect(await page.$eval('#day-date', (e) => (e as HTMLInputElement).hidden)).toBe(false);
+    await page.click('#usage-tabs button[data-tab="relatorio"]');
+    await page.waitForFunction(() => document.querySelector('#usage-relatorio .card.report'));
+    await page.click('#usage-tabs button[data-tab="consumo"]');
+    await page.keyboard.press('Escape');
+    await page.waitForSelector('#usage-view[hidden]');
+  });
+
   it('a página não tem erros de JavaScript', async () => {
     const errors: string[] = [];
     page.on('pageerror', (e) => errors.push(String(e)));

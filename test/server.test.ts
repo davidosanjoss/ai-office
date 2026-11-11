@@ -11,6 +11,7 @@ import type { UsageSummary } from '../shared/usage.ts';
 import { killAll } from '../server/agents.ts';
 import { buildApp } from '../server/app.ts';
 import { store } from '../server/store.ts';
+import { setViewers } from '../server/permissions.ts';
 import { BASE, PORT, WsClient, api, makeRepo, tempDir, transcriptLine, waitFor } from './helpers.ts';
 
 let app: FastifyInstance;
@@ -638,6 +639,120 @@ describe('sala com vários projetos', () => {
     const { data: precos } = await api<{ custom: string[]; seen: string[] }>('GET', '/api/uso/precos');
     expect(precos.custom).toContain('gemini-3-pro');
     expect(precos.seen).toContain('claude-opus-5-5');
+  });
+
+  it('uso oficial do plano: a statusline da sessão entrega os rate_limits, e a sua statusline continua aparecendo', async () => {
+    const resets = Math.floor(Date.now() / 1000) + 3600;
+    process.env.FAKE_RATE_LIMITS = JSON.stringify({ five_hour: { used_percentage: 37.2, resets_at: resets }, seven_day: { used_percentage: 12, resets_at: resets + 86400 } });
+    // Uma statusline sua: ela é que aparece na sessão, com o mesmo JSON.
+    const settings = path.join(process.env.AI_OFFICE_CLAUDE_DIR!, 'settings.json');
+    fs.writeFileSync(settings, JSON.stringify({ statusLine: { type: 'command', command: 'echo minha-statusline' } }));
+    try {
+      const room = await newRoom('plano');
+      const a = await hire(room);
+      await waitStatus(a.id, 'idle');
+      ws.type(a.id, 'prompt oi\r');
+      await waitOutput(a.id, 'statusline=minha-statusline');
+      const plan = await waitFor(async () => (await api<UsageSummary>('GET', '/api/uso')).data.plan, 5000, 'o plano chegar');
+      expect(plan.fiveHour).toEqual({ usedPct: 37.2, resetsAt: resets * 1000 });
+      expect(plan.sevenDay?.usedPct).toBe(12);
+      // Sem statusline sua, a linha mostra o plano.
+      fs.writeFileSync(settings, '{}');
+      const b = await hire(room);
+      await waitStatus(b.id, 'idle');
+      ws.type(b.id, 'prompt oi\r');
+      await waitOutput(b.id, 'statusline=plano: 5h 37% · semana 12%');
+    } finally {
+      delete process.env.FAKE_RATE_LIMITS;
+      fs.rmSync(settings, { force: true });
+    }
+  });
+
+  it('pedidos pelo escritório: permitir sem perguntar de novo, negar com motivo, responder pergunta e devolver ao terminal', async () => {
+    const room = await newRoom('pedidos');
+    const a = await hire(room);
+    await waitStatus(a.id, 'idle');
+    // A lista de pedidos chega pelo WebSocket (a última mensagem 'requests' é a atual).
+    const pending = () => ws.messages.filter((m) => m.t === 'requests').at(-1) as { requests: { id: string; agentId: string; kind: string }[] } | undefined;
+    const next = (kind: string) => waitFor(() => pending()?.requests.find((r) => r.agentId === a.id && r.kind === kind), 5000, `pedido ${kind}`);
+
+    ws.type(a.id, 'pedir\r');
+    let req = await next('permission');
+    await waitStatus(a.id, 'waiting');
+    await api('POST', `/api/pedidos/${req.id}/resposta`, { behavior: 'allow', always: true });
+    await waitOutput(a.id, 'decisao={"behavior":"allow","updatedPermissions":[{"type":"addRules","rules":[{"toolName":"Bash","ruleContent":"npm test"}]');
+    // Responder de novo o mesmo pedido: já foi.
+    expect((await api('POST', `/api/pedidos/${req.id}/resposta`, { behavior: 'allow' })).status).toBe(410);
+
+    ws.type(a.id, 'pedir\r');
+    req = await next('permission');
+    await api('POST', `/api/pedidos/${req.id}/resposta`, { behavior: 'deny', message: 'use o pnpm', interrupt: true });
+    await waitOutput(a.id, 'decisao={"behavior":"deny","message":"use o pnpm","interrupt":true}');
+
+    ws.type(a.id, 'perguntar\r');
+    req = await next('question');
+    await api('POST', `/api/pedidos/${req.id}/resposta`, { behavior: 'allow', answers: { 'Qual banco?': 'SQLite' } });
+    await waitOutput(a.id, '"answers":{"Qual banco?":"SQLite"}');
+
+    // "Responder no terminal": o pedido sai do escritório e o hook devolve a vez ao terminal.
+    ws.type(a.id, 'pedir\r');
+    req = await next('permission');
+    await api('DELETE', `/api/pedidos/${req.id}`);
+    await waitOutput(a.id, 'decisao=terminal');
+
+    // Sem nenhuma página do escritório aberta, o hook nem espera: segue pelo terminal na hora.
+    setViewers(0);
+    try {
+      const antes = ws.out(a.id).split('decisao=terminal').length;
+      ws.type(a.id, 'pedir\r');
+      await waitFor(() => ws.out(a.id).split('decisao=terminal').length > antes, 4000, 'o pedido ir direto para o terminal');
+    } finally {
+      setViewers(1);
+    }
+  });
+
+  it('sala viva: comando em segundo plano até acabar, e PR, CI vermelho e CI verde na sala', async () => {
+    const room = await newRoom('viva');
+    const a = await hire(room);
+    await waitStatus(a.id, 'idle');
+    ws.type(a.id, 'fundo bg1\r');
+    await waitFor(() => store.agents.get(a.id)?.shells?.some((s) => s.id === 'bg1'), 4000, 'o comando em segundo plano');
+    expect(store.agents.get(a.id)!.shells![0].command).toBe('Roda os testes');
+    ws.type(a.id, 'fundo-fim bg1 1\r');
+    await waitFor(() => store.agents.get(a.id)?.effect?.kind === 'falhou', 6000, 'o fim do comando');
+    expect(store.agents.get(a.id)!.shells).toEqual([]);
+    expect(store.agents.get(a.id)!.effect!.text).toBe('Roda os testes: falhou (código 1)');
+
+    ws.type(a.id, 'gh pr\r');
+    await waitFor(() => store.rooms.get(room.id)?.effect?.text === 'PR #12 aberto!', 4000, 'a festa do PR');
+    expect(store.rooms.get(room.id)!.effect!.kind).toBe('festa');
+    ws.type(a.id, 'gh ci-falhou\r');
+    await waitFor(() => store.rooms.get(room.id)?.effect?.kind === 'alarme', 4000, 'o alarme do CI');
+    ws.type(a.id, 'gh ci-ok\r');
+    await waitFor(() => store.rooms.get(room.id)?.effect?.text === 'CI verde!', 4000, 'o CI verde');
+    expect(store.rooms.get(room.id)!.effect!.kind).toBe('festa');
+  });
+
+  it('meu dia, relatório com resumo do Claude e detalhes do agente', async () => {
+    const room = await newRoom('meudia', true);
+    const a = await hire(room);
+    await waitStatus(a.id, 'idle');
+    ws.type(a.id, 'prompt fazer o relatório\r');
+    await waitStatus(a.id, 'done');
+    // O Claude falso trabalha num instante (menos de 1 s não conta); o "terminou, sem você ver" vai contando.
+    await new Promise((r) => setTimeout(r, 1200));
+    const { data: dia } = await api<{ projects: { place: { key: string; roomId?: string }; doneMs: number; prompts: { text: string }[]; commits: unknown[] }[] }>('GET', '/api/dia');
+    const p = dia.projects.find((x) => x.place.roomId === room.id)!;
+    expect(p.prompts.map((x) => x.text)).toContain('fazer o relatório');
+    expect(p.doneMs).toBeGreaterThan(1000);
+    const { data: resumo } = await api<{ text: string }>('POST', '/api/dia/resumo', { key: p.place.key });
+    expect(resumo.text).toMatch(/^RESUMO de .* \(modelo haiku\): \d+ itens\.$/);
+    // Fica guardado: o painel mostra sem pedir de novo.
+    const { data: denovo } = await api<{ summaries: Record<string, string> }>('GET', '/api/dia');
+    expect(denovo.summaries[p.place.key]).toBe(resumo.text);
+
+    const { data: det } = await api<{ branch: string; files: number; replies: number }>('GET', `/api/agents/${a.id}/detalhes`);
+    expect(det).toMatchObject({ branch: 'main', replies: 0 });
   });
 
   it('recusa projeto que não é da sala', async () => {

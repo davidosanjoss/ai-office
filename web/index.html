@@ -37,7 +37,13 @@
     <div id="main-col">
     <section id="usage-view" hidden>
       <header class="usage-head">
-        <h2>📊 Consumo</h2>
+        <h2>📊</h2>
+        <div id="usage-tabs" class="segmented" role="tablist">
+          <button data-tab="consumo" class="active">Consumo</button>
+          <button data-tab="dia">Meu dia</button>
+          <button data-tab="relatorio">Relatório</button>
+        </div>
+        <input type="date" id="day-date" hidden />
         <div id="usage-periods" class="segmented">
           <button data-period="hoje">Hoje</button>
           <button data-period="7d">7 dias</button>
@@ -46,7 +52,7 @@
         <span id="usage-status" class="muted"></span>
         <button id="usage-close" class="icon" title="Fechar (Esc)">×</button>
       </header>
-      <div class="usage-body">
+      <div class="usage-body" id="usage-consumo">
         <div id="usage-tiles" class="tiles"></div>
         <section class="card">
           <h3>Tokens por dia</h3>
@@ -86,6 +92,10 @@
           <p class="muted">A pasta (<code>cwd</code>) liga o consumo à sala e ao projeto. Depois, ponha o preço do modelo na tabela acima.</p>
         </section>
       </div>
+      <!-- Meu dia: tempo trabalhando e esperando você, por hora e por projeto. -->
+      <div class="usage-body" id="usage-dia" hidden></div>
+      <!-- Relatório do dia: o que foi feito em cada projeto. -->
+      <div class="usage-body" id="usage-relatorio" hidden></div>
     </section>
     <section id="office">
       <nav id="elevator" aria-label="Andares"></nav>
@@ -120,6 +130,8 @@
           <button id="btn-sidebar" class="icon" title="Esconder o painel da direita">⇥</button>
         </div>
         <!-- Faixa acima do terminal (e não por cima): a saída de quem encerrou continua legível. -->
+        <!-- Pedido do agente selecionado (permissão ou pergunta), respondido daqui; o terminal também pergunta. -->
+        <section id="request-card" hidden></section>
         <div id="exited" class="exited" hidden>
           <span id="exited-text"></span>
           <button id="btn-resume" class="btn small">Retomar conversa</button>
@@ -245,6 +257,7 @@
           </form>
         </section>
         <p id="room-usage" class="room-usage" hidden></p>
+        <section id="agent-details" class="panel" hidden></section>
         <section id="squad-board" class="panel grow" hidden>
           <h3>Quem está fazendo o quê</h3>
           <div id="squad-list"></div>

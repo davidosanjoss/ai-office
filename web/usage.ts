@@ -4,6 +4,7 @@
 
 import { type Price, type UsageRow, type UsageSummary, formatTokens, formatUsd, totalTokens } from '../shared/usage.ts';
 import * as logic from './logic.ts';
+import { DayPanel } from './day.ts';
 
 type Api = (method: string, url: string, body?: unknown) => Promise<unknown>;
 
@@ -17,6 +18,8 @@ export class UsagePanel {
   private prices?: { prices: Record<string, Price>; custom: string[]; seen: string[] };
   /** Número do último pedido: a resposta de um pedido mais antigo (outro período) é descartada. */
   private seq = 0;
+  private tab: 'consumo' | 'dia' | 'relatorio' = 'consumo';
+  private day: DayPanel;
 
   constructor(
     private api: Api,
@@ -38,6 +41,22 @@ export class UsagePanel {
       }
     });
     $('#usage-models').addEventListener('submit', (e) => void this.savePrice(e));
+    this.day = new DayPanel(api);
+    for (const b of document.querySelectorAll<HTMLButtonElement>('#usage-tabs button')) {
+      b.addEventListener('click', () => this.setTab(b.dataset.tab as UsagePanel['tab']));
+    }
+  }
+
+  /** Consumo, Meu dia ou Relatório: cada aba com o seu filtro (período ou dia). */
+  private setTab(tab: UsagePanel['tab']) {
+    this.tab = tab;
+    for (const b of document.querySelectorAll<HTMLButtonElement>('#usage-tabs button')) b.classList.toggle('active', b.dataset.tab === tab);
+    $('#usage-consumo').hidden = tab !== 'consumo';
+    $('#usage-dia').hidden = tab !== 'dia';
+    $('#usage-relatorio').hidden = tab !== 'relatorio';
+    $('#usage-periods').hidden = tab !== 'consumo';
+    $('#day-date').hidden = tab === 'consumo';
+    void (tab === 'consumo' ? this.refresh() : this.day.refresh());
   }
 
   isShown() {
@@ -47,7 +66,7 @@ export class UsagePanel {
   show() {
     $('#usage-view').hidden = false;
     $('#btn-usage').classList.add('active');
-    void this.refresh();
+    void (this.tab === 'consumo' ? this.refresh() : this.day.refresh());
   }
 
   hide() {
@@ -94,10 +113,26 @@ export class UsagePanel {
 
   private windowTile(s: UsageSummary): string {
     const w = s.window;
-    if (!w) return `<div class="tile"><span class="tile-label">Janela do plano (5 h)</span><b>—</b><small>Nenhuma aberta: a próxima mensagem abre uma nova.</small></div>`;
-    const vs = w.typical ? `${Math.round((w.total / w.typical) * 100)}% do que você costuma gastar numa janela` : 'ainda sem janelas anteriores para comparar';
-    return `<div class="tile"><span class="tile-label">Janela do plano (5 h) · ${time(w.start)}–${time(w.end)}</span><b>${formatTokens(w.total)}</b>
-      <small>${vs}. Estimativa: o limite oficial não aparece nos transcripts.</small></div>`;
+    const plan = logic.planView(s.plan, Date.now());
+    const meter = (pct: number) => `<span class="meter" role="img" aria-label="${pct}%"><i style="width:${Math.min(100, pct)}%"></i></span>`;
+    const stale = plan?.stale ? ' Números de mais de 30 min: podem ter mudado em sessões fora do escritório.' : '';
+    let out = '';
+    if (plan?.fiveHour) {
+      const p = plan.fiveHour;
+      out += `<div class="tile${p.high ? ' high' : ''}"><span class="tile-label">Plano · janela de 5 h</span><b>${p.high ? '⚠ ' : ''}${p.pct}%</b>${meter(p.pct)}
+        <small>Reinicia às ${p.resets}${w ? ` · ${formatTokens(w.total)} tokens nesta janela` : ''}. Número oficial do Claude Code.${stale}</small></div>`;
+    } else if (w) {
+      const vs = w.typical ? `${Math.round((w.total / w.typical) * 100)}% do que você costuma gastar numa janela` : 'ainda sem janelas anteriores para comparar';
+      out += `<div class="tile"><span class="tile-label">Janela do plano (5 h) · ${time(w.start)}–${time(w.end)}</span><b>${formatTokens(w.total)}</b>
+        <small>${vs}. Estimativa: o número oficial chega quando uma sessão do escritório responder (só nos planos Pro, Max e Ultra).</small></div>`;
+    } else {
+      out += `<div class="tile"><span class="tile-label">Janela do plano (5 h)</span><b>—</b><small>Nenhuma aberta: a próxima mensagem abre uma nova.</small></div>`;
+    }
+    if (plan?.sevenDay) {
+      const p = plan.sevenDay;
+      out += `<div class="tile${p.high ? ' high' : ''}"><span class="tile-label">Plano · semana</span><b>${p.high ? '⚠ ' : ''}${p.pct}%</b>${meter(p.pct)}<small>Reinicia ${p.resets}.${stale}</small></div>`;
+    }
+    return out;
   }
 
   private rows(rows: UsageRow[], total: number): string {

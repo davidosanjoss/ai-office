@@ -1,6 +1,7 @@
 import type { ActivityEvent, Agent, ClientMsg, Project, DiffScope, FileChange, FileDiff, Floor, GitInfo, Incident, MemoryStatus, OfficeState, Room, ServerMsg, WorktreeStatus } from '../shared/types.ts';
 import { type MentionSuggestion, type Participant, applyMention, mentionQuery, mentionSuggestions } from '../shared/incident.ts';
 import { windowsSteps } from '../shared/memory.ts';
+import { type PendingRequest, alwaysLabel, requestSummary } from '../shared/permissions.ts';
 import { MODEL_SUGGESTIONS, modelsLabel } from '../shared/models.ts';
 import { FLOOR_COLORS, type Cell } from '../shared/building.ts';
 import { countChanges, parseDiff, renderDiff } from './diff.ts';
@@ -10,12 +11,14 @@ import { Office, STATUS_COLOR, hash } from './office.ts';
 import { characterFor, type Manifest } from './sprites.ts';
 import { Terminals, uiFontSize } from './terminals.ts';
 import { UsagePanel } from './usage.ts';
-import { type UsageSummary, formatTokens } from '../shared/usage.ts';
+import { type UsageSummary, formatTokens, formatUsd } from '../shared/usage.ts';
 import './styles.css';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
 
 const state: OfficeState = { floors: [], rooms: [], agents: [], activity: [], incidents: [] };
+/** Pedidos (permissões e perguntas) esperando resposta no escritório. */
+let requests: PendingRequest[] = [];
 /** Andar na tela: o id de um Floor, ou logic.TERREO. */
 let currentFloor: string = (() => {
   try {
@@ -123,6 +126,10 @@ function handle(msg: ServerMsg) {
       break;
     case 'replay':
       terminals.replay(msg.id, msg.data);
+      break;
+    case 'requests':
+      requests = msg.requests;
+      renderRequestCard();
       break;
   }
 }
@@ -371,9 +378,11 @@ function renderAll(full = true) {
   renderRoomInfo();
   renderModelsPanel();
   renderRoomUsage();
+  renderAgentDetails();
   renderSquadBoard();
   renderInbox();
   renderExited();
+  renderRequestCard();
   renderTermKeys();
   if (full) renderActivity();
 }
@@ -572,6 +581,106 @@ function renderRoomInfo() {
   });
 }
 
+// ---------- pedidos respondidos pelo escritório ----------
+
+/** Pedido mostrado no cartão: redesenha só quando muda, para não apagar o que você está digitando. */
+let requestKey = '';
+
+function renderRequestCard() {
+  const card = $('#request-card');
+  const req = selectedWar === undefined ? logic.requestFor(selectedAgent, requests) : undefined;
+  card.hidden = !req;
+  if (!req) {
+    requestKey = '';
+    return;
+  }
+  if (req.id === requestKey) return;
+  requestKey = req.id;
+  const agent = state.agents.find((a) => a.id === req.agentId);
+  const esc = (t: string) => t.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const input = req.toolInput as Record<string, unknown>;
+  const detail =
+    req.kind === 'question'
+      ? (req.questions ?? [])
+          .map(
+            (q, qi) => `<fieldset class="req-q" data-q="${qi}">
+              <legend>${q.header ? `<b>${esc(q.header)}</b> · ` : ''}${esc(q.question)}</legend>
+              ${q.options
+                .map(
+                  (o) => `<label class="req-opt"><input type="${q.multiSelect ? 'checkbox' : 'radio'}" name="q${qi}" value="${esc(o.label)}" />
+                    <span>${esc(o.label)}${o.description ? `<small>${esc(o.description)}</small>` : ''}</span></label>`,
+                )
+                .join('')}
+              <input class="req-other" placeholder="Outra resposta (opcional)" />
+            </fieldset>`,
+          )
+          .join('')
+      : `<pre class="req-cmd">${esc(requestSummary(req))}</pre>${typeof input.description === 'string' ? `<p class="muted">${esc(input.description)}</p>` : ''}`;
+  const always = req.kind === 'permission' ? alwaysLabel(req) : undefined;
+  card.innerHTML = `
+    <header><span class="req-hand">✋</span> <b>${esc(agent?.name ?? 'Agente')}</b> ${req.kind === 'question' ? 'tem uma pergunta' : 'pede permissão'}
+      <small class="muted">também dá para responder no terminal; vale o que vier primeiro</small></header>
+    ${detail}
+    <div class="req-actions">
+      <button class="btn small" data-act="allow">${req.kind === 'question' ? 'Responder' : 'Permitir'}</button>
+      ${always ? `<button class="btn small ghost" data-act="always">${esc(always)}</button>` : ''}
+      <button class="btn small ghost" data-act="deny">Negar…</button>
+      <button class="btn small ghost" data-act="terminal" title="Tira o pedido do escritório; ele continua no terminal">Responder no terminal</button>
+    </div>
+    <div class="req-deny" hidden>
+      <input class="req-reason" placeholder="Por quê? (opcional: vai para o agente)" />
+      <label class="check"><input type="checkbox" class="req-interrupt" /> <span>Interromper o agente</span></label>
+      <button class="btn small danger" data-act="deny-send">Negar</button>
+    </div>
+    <p class="error" hidden></p>`;
+}
+
+$('#request-card').addEventListener('click', async (e) => {
+  const act = (e.target as HTMLElement).closest<HTMLElement>('[data-act]')?.dataset.act;
+  const req = requests.find((r) => r.id === requestKey);
+  if (!act || !req) return;
+  const card = $('#request-card');
+  const error = card.querySelector<HTMLElement>('.error')!;
+  if (act === 'deny') {
+    card.querySelector<HTMLElement>('.req-deny')!.hidden = false;
+    card.querySelector<HTMLInputElement>('.req-reason')!.focus();
+    return;
+  }
+  let body: unknown;
+  if (act === 'terminal') {
+    await api('DELETE', `/api/pedidos/${req.id}`).catch(() => undefined);
+    return;
+  }
+  if (act === 'deny-send') {
+    body = { behavior: 'deny', message: card.querySelector<HTMLInputElement>('.req-reason')!.value, interrupt: card.querySelector<HTMLInputElement>('.req-interrupt')!.checked };
+  } else if (req.kind === 'question') {
+    const chosen: Record<string, string[]> = {};
+    const other: Record<string, string> = {};
+    (req.questions ?? []).forEach((q, qi) => {
+      const box = card.querySelector<HTMLElement>(`.req-q[data-q="${qi}"]`)!;
+      chosen[q.question] = [...box.querySelectorAll<HTMLInputElement>('input[name^=q]:checked')].map((i) => i.value);
+      other[q.question] = box.querySelector<HTMLInputElement>('.req-other')!.value;
+    });
+    const answers = logic.questionAnswers(req.questions ?? [], chosen, other);
+    if (Object.keys(answers).length < (req.questions?.length ?? 0)) {
+      error.textContent = 'Responda todas as perguntas (ou use Negar / Responder no terminal).';
+      error.hidden = false;
+      return;
+    }
+    body = { behavior: 'allow', answers };
+  } else {
+    body = { behavior: 'allow', always: act === 'always' };
+  }
+  try {
+    await api('POST', `/api/pedidos/${req.id}/resposta`, body);
+    // Volta o foco para o terminal: o agente continua dali.
+    if (selectedAgent) terminals.show(selectedAgent);
+  } catch (err) {
+    error.textContent = (err as Error).message;
+    error.hidden = false;
+  }
+});
+
 // ---------- consumo ----------
 
 const usagePanel = new UsagePanel(api, (roomId) => {
@@ -604,7 +713,67 @@ function renderRoomUsage() {
   if (!u || !t) return;
   const until = new Date(u.end).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   const name = (t.room.projects?.length ?? 0) > 1 ? t.project.name : 'esta sala';
-  box.innerHTML = `Janela do plano (até ${until}): <b>${formatTokens(u.tokens)}</b> tokens em ${name} · ${Math.round(u.share * 100)}% da janela`;
+  // Com o número oficial: quanto do plano já foi, e a parte deste projeto na janela.
+  const plan = logic.planView(windowUsage?.plan, Date.now());
+  const official = plan?.fiveHour ? `Plano: <b>${plan.fiveHour.pct}%</b> da janela de 5 h${plan.sevenDay ? ` · ${plan.sevenDay.pct}% da semana` : ''}. ` : '';
+  box.innerHTML = `${official}Janela (até ${until}): <b>${formatTokens(u.tokens)}</b> tokens em ${name} · ${Math.round(u.share * 100)}% dela`;
+}
+
+// ---------- detalhes do agente ----------
+
+interface AgentDetails {
+  tokens: { input: number; output: number; cacheWrite: number; cacheRead: number };
+  cost: number;
+  model?: string;
+  replies: number;
+  branch?: string;
+  files: number;
+  linesAdded: number;
+  linesRemoved: number;
+}
+/** Detalhes que vêm do servidor (tokens, custo, git), por agente; lidos ao selecionar e a cada 30 s. */
+const details = new Map<string, { at: number; data: AgentDetails }>();
+let detailsLoading = '';
+
+async function loadDetails(id: string) {
+  if (detailsLoading === id) return;
+  detailsLoading = id;
+  try {
+    details.set(id, { at: Date.now(), data: (await api('GET', `/api/agents/${id}/detalhes`)) as AgentDetails });
+    renderAgentDetails();
+  } catch {
+  } finally {
+    detailsLoading = '';
+  }
+}
+setInterval(() => selectedAgent && !document.hidden && loadDetails(selectedAgent), 30_000);
+
+/** Estado, pedido, tarefas com progresso, ajudantes, modelo, branch, linhas e tokens do agente. */
+function renderAgentDetails() {
+  const box = $('#agent-details');
+  const a = selectedWar === undefined ? state.agents.find((x) => x.id === selectedAgent && x.kind !== 'shell') : undefined;
+  box.hidden = !a;
+  if (!a) return;
+  const d = details.get(a.id);
+  if (!d || Date.now() - d.at > 30_000) void loadDetails(a.id);
+  const esc = (t: string) => t.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const task = [...state.activity].reverse().find((e) => e.agentId === a.id && e.kind === 'prompt')?.text.replace(/^Pedido:\s*/, '');
+  const todos = a.todos ?? [];
+  const done = todos.filter((t) => t.status === 'completed').length;
+  const shell = logic.shellBubble(a, Date.now());
+  const row = (k: string, v: string) => `<div class="ad-row"><span>${k}</span><span>${v}</span></div>`;
+  const info = d?.data;
+  box.innerHTML = `
+    <h3>${esc(a.name)} <small class="muted">${esc(logic.STATUS_TEXT[a.status])}</small></h3>
+    ${task ? `<div>📝 ${esc(task)}</div>` : ''}
+    ${shell ? `<div>⏳ ${esc(shell.long.replace(/^Esperando o shell: /, ''))}</div>` : ''}
+    ${todos.length ? `<div class="ad-row"><span>Tarefas</span><span>${done}/${todos.length}</span></div><div class="ad-progress"><i style="width:${(done / todos.length) * 100}%"></i></div>
+      <ul>${todos.map((t) => `<li class="${t.status}">${esc(t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content)}</li>`).join('')}</ul>` : ''}
+    ${a.helpers?.length ? row('Ajudantes', esc(a.helpers.join(' · '))) : ''}
+    ${row('Modelo', esc(info?.model ?? a.models ?? 'padrão da conta'))}
+    ${info?.branch ? row('Branch', `${esc(info.branch)}${a.worktreeBranch ? ' (worktree)' : ''}`) : ''}
+    ${info ? row('Alterado agora', info.files ? `${info.files} arquivo(s), <span style="color:var(--done)">+${info.linesAdded}</span> <span style="color:var(--danger)">−${info.linesRemoved}</span>` : 'nada') : ''}
+    ${info ? row('Sessão', `${formatTokens(info.tokens.input + info.tokens.output + info.tokens.cacheWrite + info.tokens.cacheRead)} tokens · ${formatUsd(info.cost)} · ${info.replies} respostas`) : ''}`;
 }
 
 // ---------- modelos por projeto ----------

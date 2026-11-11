@@ -6,9 +6,14 @@
 // - `--resume` de uma sessão sem transcript sai com o mesmo erro do real.
 //
 // Comandos digitados no terminal:
-//   prompt <texto>  simula um pedido: UserPromptSubmit, PreToolUse(Read), PostToolUse, Stop
+//   prompt <texto>  simula um pedido: UserPromptSubmit, PreToolUse(Read), PostToolUse, Stop e a statusline
 //   [Sala de guerra] ...  idem: o escritório digita isso, e o Claude real trata como um pedido
 //   ask             pede permissão (Notification permission_prompt)
+//   pedir           pede permissão pelo hook PermissionRequest (Bash npm test) e mostra a decisão
+//   perguntar       faz uma pergunta (AskUserQuestion) pelo mesmo hook e mostra a resposta
+//   fundo <id>      deixa um comando em segundo plano (backgroundTaskId) e termina a vez
+//   fundo-fim <id> <código>  grava no transcript o fim desse comando (<task-notification>)
+//   gh pr | gh ci-falhou | gh ci-ok  o Bash rodou um comando do GitHub (PR aberto, CI vermelho, CI verde)
 //   /exit           encerra com código 0
 
 import { spawnSync } from 'node:child_process';
@@ -21,6 +26,16 @@ const opt = (name) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 
+// `claude -p` (o resumo do dia): lê o pedido da entrada e responde uma linha, como o modo sem tela.
+if (args.includes('-p')) {
+  let input = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => (input += c));
+  process.stdin.on('end', () => {
+    const projeto = /Projeto: (.*)/.exec(input)?.[1] ?? '?';
+    process.stdout.write(`RESUMO de ${projeto} (modelo ${opt('--model')}): ${(input.match(/^- /gm) ?? []).length} itens.\n`);
+  });
+} else {
 const resumeId = opt('--resume');
 const sessionId = resumeId ?? opt('--session-id');
 const settingsFile = opt('--settings');
@@ -55,6 +70,19 @@ function hook(event, payload = {}) {
   }
 }
 
+/**
+ * Como o real depois de uma resposta: roda a statusline do --settings com o JSON da sessão. Os
+ * rate_limits vêm de FAKE_RATE_LIMITS (JSON), como numa conta Pro; sem ela, não vêm (conta da API).
+ */
+function statusLine() {
+  const cmd = settings.statusLine?.type === 'command' ? settings.statusLine.command : undefined;
+  if (!cmd) return;
+  const data = { session_id: sessionId, cwd: process.cwd(), model: { display_name: 'Falso' } };
+  if (process.env.FAKE_RATE_LIMITS) data.rate_limits = JSON.parse(process.env.FAKE_RATE_LIMITS);
+  const r = spawnSync(cmd, { shell: true, input: JSON.stringify(data), encoding: 'utf8' });
+  if (r.stdout) out(`statusline=${r.stdout}\r\n`);
+}
+
 function transcriptPath() {
   return path.join(projects, process.cwd().replace(/[^a-zA-Z0-9]/g, '-'), `${sessionId}.jsonl`);
 }
@@ -62,7 +90,7 @@ function transcriptPath() {
 /** Uma linha do transcript no formato do real (JSONL com type e message.content). */
 function writeTranscript(type, content) {
   fs.mkdirSync(path.dirname(transcriptPath()), { recursive: true });
-  const line = JSON.stringify({ type, sessionId, cwd: process.cwd(), message: { role: type, content } });
+  const line = JSON.stringify({ type, sessionId, cwd: process.cwd(), timestamp: new Date().toISOString(), message: { role: type, content } });
   fs.appendFileSync(transcriptPath(), `${line}\n`);
 }
 
@@ -118,6 +146,59 @@ function run(cmd) {
     hook('Notification', { message: 'Claude needs your permission to use Bash', notification_type: 'permission_prompt' });
     return;
   }
+  if (cmd.startsWith('fundo ')) {
+    // Comando em segundo plano: o Bash devolve o backgroundTaskId e a vez termina.
+    const id = cmd.slice(6).trim();
+    writeTranscript('user', 'roda em segundo plano');
+    hook('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'npm test', description: 'Roda os testes', run_in_background: true }, tool_response: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: id } });
+    hook('Stop', { transcript_path: transcriptPath() });
+    out(`fundo=${id}\r\n`);
+    return;
+  }
+  if (cmd.startsWith('fundo-fim ')) {
+    // O fim do comando, como o real grava no transcript (<task-notification> na fila).
+    const [id, code] = cmd.slice(10).trim().split(/\s+/);
+    const content = `<task-notification>\n<task-id>${id}</task-id>\n<status>${code === '0' ? 'completed' : 'failed'}</status>\n<summary>Background command "Roda os testes" ${code === '0' ? 'completed' : 'failed'} (exit code ${code})</summary>\n</task-notification>`;
+    fs.appendFileSync(transcriptPath(), JSON.stringify({ type: 'queue-operation', operation: 'enqueue', sessionId, content }) + '\n');
+    out(`fim=${id}\r\n`);
+    return;
+  }
+  if (cmd.startsWith('gh ')) {
+    // Eventos do GitHub: o comando e a saída que o Bash devolveria.
+    const ev = cmd.slice(3).trim();
+    const calls = {
+      pr: ['gh pr create --fill', 'https://github.com/org/app/pull/12\n'],
+      'ci-falhou': ['gh run watch 99 --exit-status', "X CI (99) completed with 'failure'\n"],
+      'ci-ok': ['gh run watch 99 --exit-status', "✓ CI (99) completed with 'success'\n"],
+    }[ev];
+    hook('PostToolUse', { tool_name: 'Bash', tool_input: { command: calls[0] }, tool_response: { stdout: calls[1], stderr: '', interrupted: false } });
+    out(`gh=${ev}\r\n`);
+    return;
+  }
+  if (cmd === 'pedir' || cmd === 'perguntar') {
+    // Como o real ao precisar de permissão: roda os hooks PermissionRequest e espera a decisão
+    // deles; sem decisão, o pedido fica no terminal ("decisao=terminal").
+    const payload =
+      cmd === 'pedir'
+        ? {
+            tool_name: 'Bash',
+            tool_input: { command: 'npm test', description: 'Roda os testes' },
+            permission_suggestions: [{ type: 'addRules', rules: [{ toolName: 'Bash', ruleContent: 'npm test' }], behavior: 'allow', destination: 'localSettings' }],
+          }
+        : {
+            tool_name: 'AskUserQuestion',
+            tool_input: { questions: [{ question: 'Qual banco?', header: 'Banco', options: [{ label: 'Postgres' }, { label: 'SQLite' }], multiSelect: false }] },
+          };
+    let decided = '';
+    for (const group of settings.hooks?.PermissionRequest ?? []) {
+      for (const h of group.hooks) {
+        const r = spawnSync(h.command, { shell: true, input: JSON.stringify({ session_id: sessionId, cwd: process.cwd(), hook_event_name: 'PermissionRequest', ...payload }), encoding: 'utf8' });
+        if (r.stdout?.trim()) decided = r.stdout.trim();
+      }
+    }
+    out(`decisao=${decided ? JSON.stringify(JSON.parse(decided).hookSpecificOutput.decision) : 'terminal'}\r\n`);
+    return;
+  }
   if (cmd.startsWith('prompt ') || cmd.startsWith('[Sala de guerra]')) {
     const text = cmd.startsWith('prompt ') ? cmd.slice(7) : cmd;
     const reply = `feito: ${text}`;
@@ -130,9 +211,11 @@ function run(cmd) {
     hook('PostToolUse', { tool_name: 'Read' });
     writeTranscript('assistant', [{ type: 'text', text: reply }]);
     hook('Stop', { transcript_path: transcriptPath() });
+    statusLine();
     out(`${reply}\r\n`);
     out('\x1b[c');
     return;
   }
   if (cmd) out(`não entendi: ${cmd}\r\n`);
+}
 }
