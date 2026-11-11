@@ -82,6 +82,8 @@ Clique em **Memória** no topo. Em Linux e macOS, com o Docker instalado, o bot�
 3. sobe o servidor só para esta máquina (`127.0.0.1:49374`), religando sozinho com o computador;
 4. instala o comando `ai-memory` (conferido pelo checksum) e liga **hooks e MCP no Claude Code**.
 
+**Atualizar**: quando o escritório passa a fixar uma versão nova, o indicador mostra **Memória: atualizar**. O botão **Atualizar** para o servidor, guarda uma cópia da pasta dos dados ao lado dela (`ai-memory.antes-<versão>-<data>`; as migrações do banco só andam para frente, e voltar de versão precisa dessa cópia), sobe o container com a imagem nova e fixa a mesma versão no MCP (sem isso, o wrapper usaria a `latest`). O cliente dos hooks do ai-memory se atualiza sozinho e não é controlado pelo escritório.
+
 Os hooks valem para **todas** as sessões do Claude na máquina, não só as do escritório. **Desinstalar** tira hooks, MCP e o container e mantém os dados.
 
 Os dados ficam na pasta padrão do ai-memory, **fora deste repositório**: `~/.local/share/ai-memory` no Linux e `~/Library/Application Support/ai-memory` no macOS. O mesmo existe pelo terminal: `npm run memoria:up`, `npm run memoria:down` e `npm run memoria:status`.

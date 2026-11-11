@@ -1044,7 +1044,7 @@ function renderMemory() {
   web.innerHTML = `Para ver a memória no navegador: <a href="${esc(st.url)}/web" target="_blank" rel="noopener">${esc(st.url)}/web</a> (qualquer usuário; a senha é o conteúdo de <code>auth-tokens/default</code> na pasta dos dados).`;
   $<HTMLButtonElement>('#mem-install').hidden = !view.canInstall;
   $<HTMLButtonElement>('#mem-install').disabled = !st.docker;
-  $<HTMLButtonElement>('#mem-install').textContent = st.hooks || st.mcp ? 'Instalar de novo' : 'Instalar';
+  $<HTMLButtonElement>('#mem-install').textContent = st.outdated ? `Atualizar para ${st.version}` : st.hooks || st.mcp ? 'Instalar de novo' : 'Instalar';
   $<HTMLButtonElement>('#mem-uninstall').hidden = !view.canUninstall;
 }
 

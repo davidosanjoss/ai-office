@@ -2,11 +2,23 @@
 // servidor e pela interface.
 
 /** Versão fixa: o ai-memory muda rápido e as migrações do banco só andam para frente. Atualize de propósito. */
-export const MEMORY_VERSION = '3.2.8';
+export const MEMORY_VERSION = '3.4.5';
 export const MEMORY_IMAGE = `docker.io/akitaonrails/ai-memory:${MEMORY_VERSION}`;
 export const MEMORY_RELEASE = `https://github.com/akitaonrails/ai-memory/releases/download/v${MEMORY_VERSION}`;
 export const MEMORY_CONTAINER = 'ai-memory';
 export const MEMORY_PORT = 49374;
+
+/** Versão (a tag) de uma imagem do ai-memory: "docker.io/akitaonrails/ai-memory:3.2.8" → "3.2.8". */
+export function imageVersion(image: string | undefined): string | undefined {
+  const m = /(?:^|\/)akitaonrails\/ai-memory:([\w.-]+)$/.exec(image?.trim() ?? '');
+  return m?.[1];
+}
+
+/** O container roda a imagem fixada? (o Docker guarda o nome com ou sem o "docker.io/"). */
+export function sameImage(a: string | undefined, b: string): boolean {
+  const norm = (x: string) => x.trim().replace(/^docker\.io\//, '').replace(/^library\//, '');
+  return !!a && norm(a) === norm(b);
+}
 
 /**
  * Windows com Docker Desktop ("Scenario B" do docs/windows.md do ai-memory), na versão fixa.

@@ -8,10 +8,11 @@ import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { MEMORY_IMAGE, windowsSteps } from '../shared/memory.ts';
+import { MEMORY_IMAGE, MEMORY_VERSION, imageVersion, sameImage, windowsSteps } from '../shared/memory.ts';
+import { memoryView } from '../web/logic.ts';
 import type { MemoryStatus } from '../shared/types.ts';
 import { buildApp } from '../server/app.ts';
-import { defaultDataDir, resetMemoryJob } from '../server/memory.ts';
+import { backupDir, defaultDataDir, resetMemoryJob } from '../server/memory.ts';
 import { isWindows } from '../server/platform.ts';
 import { PORT, WsClient, api, waitFor } from './helpers.ts';
 
@@ -86,6 +87,28 @@ describe('pasta padrão do ai-memory', () => {
     expect(steps).toContain(MEMORY_IMAGE);
     expect(steps).not.toContain('latest');
     expect(steps).toContain('127.0.0.1:49374:49374');
+  });
+});
+
+describe('versão do servidor', () => {
+  it('lê a versão pela tag da imagem, com ou sem o "docker.io/"', () => {
+    expect(imageVersion('docker.io/akitaonrails/ai-memory:3.2.8')).toBe('3.2.8');
+    expect(imageVersion('akitaonrails/ai-memory:3.4.5')).toBe('3.4.5');
+    expect(imageVersion('outra/imagem:1.0')).toBeUndefined();
+    expect(sameImage('akitaonrails/ai-memory:3.4.5', 'docker.io/akitaonrails/ai-memory:3.4.5')).toBe(true);
+    expect(sameImage('akitaonrails/ai-memory:latest', 'docker.io/akitaonrails/ai-memory:3.4.5')).toBe(false);
+    expect(sameImage(undefined, MEMORY_IMAGE)).toBe(false);
+  });
+
+  it('backup ao lado da pasta dos dados, sem apagar um de antes', () => {
+    const dir = path.join(tmp, 'dados-backup');
+    fs.mkdirSync(dir, { recursive: true });
+    const when = new Date('2026-11-11T10:00:00Z');
+    const first = backupDir(dir, '3.2.8', when);
+    expect(first).toBe(`${dir}.antes-3.2.8-2026-11-11`);
+    fs.mkdirSync(first);
+    expect(backupDir(dir, '3.2.8', when)).toBe(`${first}-2`);
+    fs.rmSync(first, { recursive: true });
   });
 });
 
@@ -165,6 +188,55 @@ describe.skipIf(isWindows)('instalar e desinstalar', () => {
     expect(st.job?.error).toBeUndefined();
     expect(dockerCalls()).toContainEqual(['start', 'ai-memory']);
     expect(st.running).toBe(true);
+  });
+
+  it('servidor de outra versão: o indicador pede para atualizar, e o Instalar faz backup e troca o container', async () => {
+    publishWrapper();
+    await api('POST', '/api/memory/install');
+    await waitJob();
+    // Como se o container tivesse sido criado com a versão anterior.
+    const f = path.join(tmp, 'docker-state.json');
+    const st0 = dockerState();
+    st0.containers['ai-memory'].image = 'docker.io/akitaonrails/ai-memory:3.2.8';
+    fs.writeFileSync(f, JSON.stringify(st0));
+    fs.writeFileSync(path.join(data, 'db-falso.sqlite'), 'dados de antes');
+    const antes = await status();
+    expect(antes).toMatchObject({ serverVersion: '3.2.8', outdated: true });
+    const view = memoryView(antes);
+    expect(view).toMatchObject({ label: 'Memória: atualizar', tone: 'warn', canInstall: true });
+    expect(view.problems.join(' ')).toContain('3.2.8');
+
+    resetMemoryJob();
+    fs.rmSync(path.join(tmp, 'docker-calls.jsonl'));
+    await api('POST', '/api/memory/install');
+    const st = await waitJob();
+    expect(st.job?.error, JSON.stringify(st.job)).toBeUndefined();
+    const calls = dockerCalls();
+    // Para o servidor, guarda a cópia, tira o container velho e sobe um com a imagem fixada.
+    const iStop = calls.findIndex((c) => c[0] === 'stop');
+    const iRm = calls.findIndex((c) => c[0] === 'rm');
+    const iRun = calls.findIndex((c) => c[0] === 'run' && c.includes('-d'));
+    expect(iStop).toBeGreaterThanOrEqual(0);
+    expect(iStop).toBeLessThan(iRm);
+    expect(iRm).toBeLessThan(iRun);
+    expect(calls[iRun].at(-1)).toBe(MEMORY_IMAGE);
+    const backup = fs.readdirSync(path.dirname(data)).find((d) => d.startsWith(`${path.basename(data)}.antes-3.2.8-`));
+    expect(backup).toBeDefined();
+    expect(fs.readFileSync(path.join(path.dirname(data), backup!, 'db-falso.sqlite'), 'utf8')).toBe('dados de antes');
+    expect(st).toMatchObject({ serverVersion: MEMORY_VERSION, outdated: false });
+    expect(memoryView(st).label).toBe('Memória: ligada');
+    fs.rmSync(path.join(path.dirname(data), backup!), { recursive: true });
+  });
+
+  it('o MCP fica fixo na mesma versão do servidor (sem isso o wrapper usa a "latest")', async () => {
+    publishWrapper();
+    fs.writeFileSync(claudeJson, JSON.stringify({ outraCoisa: { manter: true }, mcpServers: { outro: { command: 'x' } } }));
+    await api('POST', '/api/memory/install');
+    await waitJob();
+    const cfg = JSON.parse(fs.readFileSync(claudeJson, 'utf8'));
+    expect(cfg.mcpServers['ai-memory'].env).toEqual({ AI_MEMORY_IMAGE: MEMORY_IMAGE, AI_MEMORY_DATA_DIR: data });
+    expect(cfg.mcpServers.outro).toEqual({ command: 'x' });
+    expect(cfg.outraCoisa).toEqual({ manter: true });
   });
 
   it('checksum errado: não grava o wrapper e não mexe no Claude', async () => {
