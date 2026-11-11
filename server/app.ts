@@ -16,6 +16,7 @@ import {
   removeAgent,
   resize,
   resumeAgent,
+  freshAgent,
   stopAgent,
   writeInput,
 } from './agents.ts';
@@ -24,6 +25,8 @@ import { FileError, MAX_FILE, listDir, makeDir, readFile, removePath, renamePath
 import { fileDiff, gitInfo } from './git.ts';
 import { commitDetail, commitLog, compareRefs, fileAt, fileAtHead, listRefs, treeAt } from './history.ts';
 import { handleHook } from './hooks.ts';
+import { contextInfo } from './context.ts';
+import { DEFAULT_CONTEXT_POLICY, validPolicy } from '../shared/context.ts';
 import { IncidentError, addParticipants, closeIncident, incidentAt, leaveIncidents, openIncident, openWarShell, sendMessage, shareMessage } from './incidents.ts';
 import { MemoryError, memoryEvents, memoryStatus, openDataDir, startInstall, startUninstall } from './memory.ts';
 import { pickFolder } from './picker.ts';
@@ -117,8 +120,8 @@ export async function buildApp(opts: { port?: number } = {}) {
   });
 
   app.post<{ Body: { event: string; agentId?: string; payload: Record<string, unknown> } }>('/api/hook', async (req) => {
-    if (req.body && typeof req.body === 'object') handleHook(req.body);
-    return { ok: true };
+    const output = req.body && typeof req.body === 'object' ? handleHook(req.body) : undefined;
+    return output ? { ok: true, output } : { ok: true };
   });
 
   // ---------- pedidos (permissões e perguntas) respondidos pelo escritório ----------
@@ -421,9 +424,26 @@ export async function buildApp(opts: { port?: number } = {}) {
 
   app.get<{ Params: { id: string } }>('/api/agents/:id/busy', async (req) => ({ busy: isBusy(req.params.id) }));
 
-  app.post<{ Params: { id: string } }>('/api/agents/:id/resume', async (req) => {
-    resumeAgent(req.params.id);
+  /** Volta de um agente. modo 'nova': sessão nova com resumo; 'retomar': a conversa inteira; ausente: a política do andar. */
+  app.post<{ Params: { id: string }; Body: { modo?: string } }>('/api/agents/:id/resume', async (req) => {
+    const modo = req.body?.modo === 'nova' || req.body?.modo === 'retomar' ? req.body.modo : undefined;
+    await resumeAgent(req.params.id, modo);
     return { ok: true };
+  });
+
+  /** Sessão nova com resumo para um agente ainda aberto (parado com a conversa grande e o cache frio). */
+  app.post<{ Params: { id: string } }>('/api/agents/:id/sessao-nova', async (req, reply) => {
+    const agent = store.agents.get(req.params.id);
+    if (!agent || agent.kind === 'shell') return reply.code(404).send({ error: 'Agente não encontrado' });
+    await freshAgent(agent.id);
+    return { ok: true };
+  });
+
+  /** Tamanho da conversa, se o cache vale e o custo de cada caminho na volta (política de contexto grande). */
+  app.get<{ Params: { id: string } }>('/api/agents/:id/contexto', async (req, reply) => {
+    const agent = store.agents.get(req.params.id);
+    if (!agent) return reply.code(404).send({ error: 'Agente não encontrado' });
+    return contextInfo(agent);
   });
 
   app.post<{ Params: { id: string } }>('/api/agents/:id/stop', async (req) => {
@@ -482,7 +502,8 @@ export async function buildApp(opts: { port?: number } = {}) {
   app.get<{ Params: { id: string } }>('/api/agents/:id/detalhes', async (req, reply) => {
     const agent = store.agents.get(req.params.id);
     if (!agent) return reply.code(404).send({ error: 'Agente não encontrado' });
-    const mine = (await usageRecords()).filter((r) => r.session === agent.sessionId);
+    const sessions = new Set([agent.sessionId, ...(agent.pastSessions ?? [])]);
+    const mine = (await usageRecords()).filter((r) => !!r.session && sessions.has(r.session));
     const table = prices();
     let cost = 0;
     const tokens = { input: 0, output: 0, cacheWrite: 0, cacheRead: 0 };
@@ -734,12 +755,13 @@ const MAX_FLOOR_INSTRUCTIONS = 4000;
  */
 function floorDefaults(d: unknown): FloorDefaults | undefined | null {
   if (!d || typeof d !== 'object') return undefined;
-  const { coAuthor, instructions } = d as Record<string, unknown>;
+  const { coAuthor, instructions, context } = d as Record<string, unknown>;
   const text = typeof instructions === 'string' ? instructions.trim() : '';
   if (text.length > MAX_FLOOR_INSTRUCTIONS) return null;
   const out: FloorDefaults = {};
   if (coAuthor === false) out.coAuthor = false;
   if (text) out.instructions = text;
+  if (validPolicy(context) && context !== DEFAULT_CONTEXT_POLICY) out.context = context;
   return Object.keys(out).length ? out : undefined;
 }
 

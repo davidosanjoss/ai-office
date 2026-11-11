@@ -94,6 +94,11 @@ export class WsClient {
     this.send({ t: 'in', id, data: text });
   }
 
+  /** Esquece a saída já recebida do terminal: o próximo waitOutput só vê o que vier depois. */
+  clear(id: string) {
+    this.output.set(id, '');
+  }
+
   out(id: string) {
     return this.output.get(id) ?? '';
   }

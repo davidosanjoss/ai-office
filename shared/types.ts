@@ -29,6 +29,8 @@ export interface FloorDefaults {
   coAuthor?: boolean;
   /** Texto acrescentado ao prompt de sistema de cada agente do andar. */
   instructions?: string;
+  /** Política de contexto grande (shared/context.ts); ausente = 'avisar'. */
+  context?: import('./context.ts').ContextPolicy;
 }
 
 /** Um projeto (repositório) dentro de uma sala. */
@@ -105,6 +107,10 @@ export interface Agent {
   /** PR aberto pelo escritório para a branch do worktree. */
   worktreePr?: string;
   sessionId: string;
+  /** Sessões anteriores deste agente (trocadas por uma sessão nova com resumo): o consumo delas continua dele. */
+  pastSessions?: string[];
+  /** Já pediu para gravar a memória nesta travessia do limite de contexto (shared/context.ts). */
+  contextSaved?: boolean;
   status: AgentStatus;
   activity: string;
   subagents: number;

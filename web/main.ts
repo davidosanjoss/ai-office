@@ -512,14 +512,40 @@ function renderTabs() {
   $('#placeholder').hidden = !!selectedAgent;
 }
 
+// Contexto grande com o cache frio: na volta do agente, a escolha entre sessão nova e a conversa inteira.
+let contextCache: { key: string; info?: logic.ContextInfo } | undefined;
+/** Avisos dispensados ("continuar nesta"): por agente, a hora da última resposta de quando dispensou. */
+const contextDismissed = new Map<string, number>();
+
 function renderExited() {
   const agent = state.agents.find((a) => a.id === selectedAgent);
   const box = $('#exited');
-  box.hidden = agent?.status !== 'exited';
-  if (agent?.status === 'exited') {
-    $('#btn-resume').textContent = logic.resumeLabel(agent);
-    $('#exited-text').textContent = logic.exitedMessage(agent);
+  const key = agent ? `${agent.id}|${agent.status}|${agent.sessionId}` : '';
+  if (agent && agent.kind !== 'shell' && contextCache?.key !== key) {
+    contextCache = { key };
+    api('GET', `/api/agents/${agent.id}/contexto`)
+      .then((info) => {
+        if (contextCache?.key !== key) return;
+        contextCache.info = info as logic.ContextInfo;
+        renderExited();
+      })
+      .catch(() => {});
   }
+  const info = contextCache?.key === key ? contextCache.info : undefined;
+  const notice = agent ? logic.contextNotice(agent, info, Date.now(), contextDismissed.get(agent.id)) : undefined;
+  box.hidden = agent?.status !== 'exited' && !notice;
+  if (!agent || box.hidden) return;
+  const [main, alt] = notice?.actions ?? [{ label: logic.resumeLabel(agent), action: 'politica' }];
+  const btn = $('#btn-resume');
+  btn.textContent = main.label;
+  btn.dataset.action = main.action;
+  const altBtn = $('#btn-resume-alt');
+  altBtn.hidden = !alt;
+  if (alt) {
+    altBtn.textContent = alt.label;
+    altBtn.dataset.action = alt.action;
+  }
+  $('#exited-text').textContent = notice?.text ?? logic.exitedMessage(agent);
 }
 
 function renderInbox() {
@@ -1558,6 +1584,7 @@ function openFloorDialog(floor?: Floor) {
   dlgFloor.querySelector<HTMLInputElement>('input[name=name]')!.value = floor?.name ?? '';
   dlgFloor.querySelector<HTMLInputElement>('input[name=coAuthor]')!.checked = floor?.defaults?.coAuthor !== false;
   dlgFloor.querySelector<HTMLTextAreaElement>('textarea[name=instructions]')!.value = floor?.defaults?.instructions ?? '';
+  dlgFloor.querySelector<HTMLSelectElement>('select[name=context]')!.value = floor?.defaults?.context ?? 'avisar';
   const colors = $('#floor-colors');
   const chosen = floor?.color ?? FLOOR_COLORS[state.floors.length % FLOOR_COLORS.length];
   colors.replaceChildren(
@@ -1575,7 +1602,7 @@ function openFloorDialog(floor?: Floor) {
 }
 
 formDialog(dlgFloor, async (data) => {
-  const defaults = { coAuthor: data.get('coAuthor') === 'on', instructions: data.get('instructions') };
+  const defaults = { coAuthor: data.get('coAuthor') === 'on', instructions: data.get('instructions'), context: data.get('context') };
   const body = { name: data.get('name'), color: data.get('color'), defaults };
   const floor = (editingFloor ? await api('PATCH', `/api/floors/${editingFloor.id}`, body) : await api('POST', '/api/floors', body)) as Floor;
   upsert(state.floors, floor);
@@ -2204,13 +2231,24 @@ async function closeRoom(room: Room) {
   if (ok) await api('DELETE', `/api/rooms/${room.id}`);
 }
 
-$('#btn-resume').addEventListener('click', async () => {
-  if (!selectedAgent) return;
-  const id = selectedAgent;
+async function returnAction(action: string | undefined) {
+  const agent = state.agents.find((a) => a.id === selectedAgent);
+  if (!agent) return;
+  const id = agent.id;
+  if (action === 'dispensar') {
+    if (contextCache?.info?.lastAt) contextDismissed.set(id, contextCache.info.lastAt);
+    renderExited();
+    return;
+  }
   terminals.remove(id);
-  await api('POST', `/api/agents/${id}/resume`);
+  if (action === 'nova' && agent.status !== 'exited') await api('POST', `/api/agents/${id}/sessao-nova`);
+  // Sem escolha no aviso, vale a política do andar (o servidor decide).
+  else await api('POST', `/api/agents/${id}/resume`, action === 'nova' || action === 'retomar' ? { modo: action } : {});
   selectAgent(id);
-});
+}
+
+$('#btn-resume').addEventListener('click', (e) => returnAction((e.currentTarget as HTMLElement).dataset.action));
+$('#btn-resume-alt').addEventListener('click', (e) => returnAction((e.currentTarget as HTMLElement).dataset.action));
 
 // ---------- avisos ----------
 

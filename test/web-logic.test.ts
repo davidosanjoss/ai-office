@@ -3,6 +3,8 @@ import * as logic from '../web/logic.ts';
 import type { Agent, Floor, Incident, IncidentMessage, MemoryStatus, Room } from '../shared/types.ts';
 import {
   IDLE_RELEASE_MS,
+  agoText,
+  contextNotice,
   TYPING_GRACE_MS,
   attentionQueue,
   becameAttention,
@@ -569,5 +571,38 @@ describe('plano no painel', () => {
     expect(v.stale).toBe(false);
     expect(logic.planView({ ...plan, updatedAt: now - 31 * 60_000 }, now)!.stale).toBe(true);
     expect(logic.planView(undefined, now)).toBeUndefined();
+  });
+});
+
+describe('contexto grande: aviso na volta do agente', () => {
+  const now = Date.parse('2026-11-11T15:00:00Z');
+  const lastAt = now - 3 * 3600_000;
+  const info = { policy: 'avisar' as const, choice: 'perguntar' as const, tokens: 841_000, lastAt, costs: { retomar: 6.728, nova: 0.24 } };
+  const ag = (status: Agent['status'], kind: Agent['kind'] = 'claude') => ({ id: 'a1', kind, roomId: 'r', name: 'Ana', cwd: '/x', sessionId: 's', status, activity: '', subagents: 0, createdAt: 0 }) as Agent;
+
+  it('saiu: o custo das duas opções, sessão nova primeiro e retomar inteira continua possível', () => {
+    const n = contextNotice(ag('exited'), info, now)!;
+    expect(n.text).toContain('Ana saiu do escritório');
+    expect(n.text).toContain('841,0 mil tokens e o cache expirou há 3 h');
+    expect(n.text).toContain('~US$ 6,73 na próxima mensagem');
+    expect(n.text).toContain('~US$ 0,24');
+    expect(n.actions.map((x) => x.action)).toEqual(['nova', 'retomar']);
+  });
+
+  it('parado e aberto: sugere a sessão nova até você dispensar para esta mesma resposta', () => {
+    expect(contextNotice(ag('done'), info, now)?.actions.map((x) => x.action)).toEqual(['nova', 'dispensar']);
+    expect(contextNotice(ag('done'), info, now, lastAt)).toBeUndefined();
+    expect(contextNotice(ag('done'), info, now, lastAt - 1)).toBeDefined();
+    expect(contextNotice(ag('working'), info, now)).toBeUndefined();
+  });
+
+  it('nada a avisar: cache quente, sem informação ou terminal comum', () => {
+    expect(contextNotice(ag('exited'), { ...info, choice: 'retomar' }, now)).toBeUndefined();
+    expect(contextNotice(ag('exited'), undefined, now)).toBeUndefined();
+    expect(contextNotice(ag('exited', 'shell'), info, now)).toBeUndefined();
+  });
+
+  it('há quanto tempo', () => {
+    expect([agoText(30_000), agoText(40 * 60_000), agoText(3 * 3600_000), agoText(72 * 3600_000)]).toEqual(['1 min', '40 min', '3 h', '3 dias']);
   });
 });

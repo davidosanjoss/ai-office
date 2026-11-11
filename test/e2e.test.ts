@@ -230,6 +230,30 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     expect(await screen()).not.toContain('No conversation found');
   });
 
+  it('contexto grande com o cache frio: o aviso sugere a sessão nova, dá para dispensar, e a sessão nova começa com o resumo', async () => {
+    const b = byName('Bruno')!;
+    await typeInTerminal('contexto 700000 120');
+    await waitScreen('stop=ok');
+    await waitStatus(b.id, 'done');
+    // Parado e aberto: a próxima mensagem releria tudo. Sessão nova primeiro, ou continuar nesta.
+    await page.waitForFunction(() => document.querySelector('#exited:not([hidden]) #exited-text')?.textContent?.includes('700,0 mil tokens'));
+    expect(await page.$eval('#btn-resume', (e) => e.textContent)).toBe('Sessão nova com resumo');
+    expect(await page.$eval('#btn-resume-alt', (e) => e.textContent)).toBe('Continuar nesta');
+    await page.click('#btn-resume-alt');
+    await page.waitForSelector('#exited[hidden]');
+
+    // Saiu: o aviso volta junto com o "saiu do escritório", e retomar inteira continua possível.
+    await typeInTerminal('/exit');
+    await waitStatus(b.id, 'exited');
+    await page.waitForFunction(() => document.querySelector('#btn-resume-alt:not([hidden])')?.textContent === 'Retomar inteira');
+    const old = agents().find((x) => x.id === b.id)!.sessionId;
+    await page.click('#btn-resume');
+    await waitScreen('contexto-inicial=# Continuação: resumo do escritório para Bruno');
+    await waitStatus(b.id, 'idle');
+    expect(agents().find((x) => x.id === b.id)!.sessionId).not.toBe(old);
+    await page.waitForSelector('#exited[hidden]');
+  });
+
   it('terminal comum: abre, roda comando e `exit` fecha a aba', async () => {
     const before = new Set(agents().map((a) => a.id));
     await page.click('#tab-actions [title^="Novo terminal"]');
