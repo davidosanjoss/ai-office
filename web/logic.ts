@@ -307,12 +307,17 @@ export function memoryView(st: MemoryStatus | undefined): {
         !st.hooks ? 'As sessões do Claude não estão sendo guardadas (faltam os hooks).' : '',
         !st.mcp ? 'O Claude não consegue consultar a memória (falta o MCP).' : '',
       ].filter(Boolean);
-  const label = busy ? (st.job!.kind === 'instalar' ? 'Memória: instalando…' : 'Memória: removendo…') : on ? 'Memória: ligada' : any ? 'Memória: incompleta' : 'Memória: desligada';
+  // Servidor de outra versão que a fixada: funciona, mas o Instalar atualiza (com backup).
+  if (st.outdated) problems.push(`O servidor está na versão ${st.serverVersion ?? 'antiga'}; o escritório usa a ${st.version}. Atualizar faz um backup dos dados antes.`);
+  const outdated = !!st.outdated && on;
+  const label = busy
+    ? st.job!.kind === 'instalar' ? 'Memória: instalando…' : 'Memória: removendo…'
+    : outdated ? 'Memória: atualizar' : on ? 'Memória: ligada' : any ? 'Memória: incompleta' : 'Memória: desligada';
   return {
     label,
-    tone: busy ? 'busy' : on ? 'on' : any ? 'warn' : 'off',
+    tone: busy ? 'busy' : outdated ? 'warn' : on ? 'on' : any ? 'warn' : 'off',
     problems,
-    canInstall: st.autoInstall && !busy && !on,
+    canInstall: st.autoInstall && !busy && (!on || !!st.outdated),
     canUninstall: st.autoInstall && !busy && any,
     showSteps: !st.autoInstall && !on,
   };

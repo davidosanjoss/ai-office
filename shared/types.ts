@@ -309,6 +309,10 @@ export interface MemoryStatus {
   autoInstall: boolean;
   /** Achou o comando `docker`. */
   docker: boolean;
+  /** Versão que o container do servidor está rodando (ausente sem container ou sem Docker). */
+  serverVersion?: string;
+  /** O container roda outra versão que a fixada: o Instalar atualiza (com backup dos dados). */
+  outdated?: boolean;
   /** Instalação ou remoção em andamento (ou a última, com o erro). */
   job?: MemoryJob;
 }

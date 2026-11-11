@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { MemoryJob, MemoryStatus } from '../shared/types.ts';
-import { MEMORY_CONTAINER, MEMORY_IMAGE, MEMORY_PORT, MEMORY_RELEASE, MEMORY_VERSION } from '../shared/memory.ts';
+import { MEMORY_CONTAINER, MEMORY_IMAGE, MEMORY_PORT, MEMORY_RELEASE, MEMORY_VERSION, imageVersion, sameImage } from '../shared/memory.ts';
 import { CLAUDE_DIR, isWindows, ptyCommand, which } from './platform.ts';
 
 /** Avisa a interface a cada passo da instalação. */
@@ -41,8 +41,11 @@ function wrapperPath(): string {
 let job: MemoryJob | undefined;
 
 export async function memoryStatus(): Promise<MemoryStatus> {
+  const image = await containerImage();
+  const serverVersion = imageVersion(image);
   return {
     running: await healthy(),
+    ...(image ? { serverVersion, outdated: !sameImage(image, MEMORY_IMAGE) } : {}),
     ...claudeWiring(),
     url: url(),
     dataDir: dataDir(),
@@ -51,6 +54,16 @@ export async function memoryStatus(): Promise<MemoryStatus> {
     docker: !!dockerBin(),
     job,
   };
+}
+
+/** Imagem do container do servidor (sem container, ou sem Docker: undefined). Não entra no log do job. */
+function containerImage(): Promise<string | undefined> {
+  const docker = dockerBin();
+  if (!docker) return Promise.resolve(undefined);
+  const cmd = ptyCommand(docker, ['container', 'inspect', '--format', '{{.Config.Image}}', MEMORY_CONTAINER]);
+  return new Promise((resolve) => {
+    execFile(cmd.file, cmd.args, { timeout: 10_000, windowsHide: true }, (err, stdout) => resolve(err ? undefined : stdout.trim() || undefined));
+  });
 }
 
 async function healthy(): Promise<boolean> {
@@ -94,7 +107,12 @@ function startJob(kind: MemoryJob['kind'], run: (step: (s: string) => void) => P
   if (isWindows) throw new MemoryError('No Windows, use o passo a passo do diálogo');
   const current: MemoryJob = { kind, step: 'Começando…', done: false, log: [] };
   job = current;
-  const publish = async () => memoryEvents.emit('status', await memoryStatus());
+  // O job vai como estava na hora do aviso: montar o resto do estado leva um tempo (consulta o
+  // Docker), e sem a cópia um passo rápido sumia, trocado pelo seguinte antes de o aviso sair.
+  const publish = async () => {
+    const job = { ...current, log: [...current.log] };
+    memoryEvents.emit('status', { ...(await memoryStatus()), job });
+  };
   const step = (s: string) => {
     current.step = s;
     void publish();
@@ -166,6 +184,21 @@ async function install(step: (s: string) => void) {
     await run(docker, ['run', '--rm', ...user, '-v', `${data}:/data`, MEMORY_IMAGE, 'init']);
   }
 
+  // Container de outra versão: backup da pasta dos dados (as migrações do banco só andam para
+  // frente; voltar de versão exige esse backup) e um container novo com a imagem fixada.
+  const current = await containerImage();
+  if (current && !sameImage(current, MEMORY_IMAGE)) {
+    const from = imageVersion(current) ?? current;
+    step(`Atualizando o servidor de ${from} para ${MEMORY_VERSION}: parando o servidor`);
+    await run(docker, ['stop', MEMORY_CONTAINER], {}, 60_000);
+    const backup = backupDir(data, from);
+    step(`Guardando uma cópia dos dados em ${backup}`);
+    fs.cpSync(data, backup, { recursive: true, preserveTimestamps: true });
+    fs.chmodSync(backup, 0o700);
+    job?.log.push(`backup dos dados em ${backup}`);
+    await run(docker, ['rm', '-f', MEMORY_CONTAINER], {}, 60_000);
+  }
+
   step('Subindo o servidor');
   const exists = await run(docker, ['container', 'inspect', '--format', '{{.State.Running}}', MEMORY_CONTAINER], {}, 30_000).catch(() => undefined);
   if (exists === undefined) {
@@ -186,7 +219,38 @@ async function install(step: (s: string) => void) {
 
   step('Ligando ao Claude Code (hooks e MCP)');
   await run(wrapper, ['install-mcp', '--client', 'claude-code', '--apply'], wrapperEnv());
+  pinMcp();
   await run(wrapper, ['install-hooks', '--agent', 'claude-code', '--apply'], wrapperEnv());
+}
+
+/** Pasta do backup ao lado da dos dados: ai-memory.antes-3.2.8-2026-11-11 (com sufixo se já existir). */
+export function backupDir(data: string, version: string, now = new Date()): string {
+  const day = now.toISOString().slice(0, 10);
+  const base = `${data.replace(/[\\/]+$/, '')}.antes-${version.replace(/[^\w.-]/g, '_')}-${day}`;
+  let dir = base;
+  for (let i = 2; fs.existsSync(dir); i++) dir = `${base}-${i}`;
+  return dir;
+}
+
+/**
+ * O MCP roda pelo wrapper, que sem AI_MEMORY_IMAGE usa a imagem `latest`: fixa a mesma versão do
+ * servidor (e a pasta dos dados) no registro do MCP. Mexe só nessa entrada do ~/.claude.json.
+ */
+function pinMcp() {
+  const file = claudeJson();
+  let cfg: any;
+  try {
+    cfg = JSON.parse(fs.readFileSync(file, 'utf8'));
+  } catch {
+    return;
+  }
+  const entry = cfg?.mcpServers?.['ai-memory'];
+  if (!entry || typeof entry !== 'object') return;
+  entry.env = { ...(entry.env ?? {}), AI_MEMORY_IMAGE: MEMORY_IMAGE, AI_MEMORY_DATA_DIR: dataDir() };
+  // Grava ao lado e troca de uma vez: o Claude Code nunca lê o arquivo pela metade.
+  const tmp = `${file}.ai-office-${process.pid}`;
+  fs.writeFileSync(tmp, JSON.stringify(cfg, null, 2));
+  fs.renameSync(tmp, file);
 }
 
 async function waitHealthy(ms: number): Promise<boolean> {
