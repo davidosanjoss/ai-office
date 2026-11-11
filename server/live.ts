@@ -7,6 +7,7 @@ import { PARTY_MS, elapsed, finishedShells, githubEvent, roomEffectFor } from '.
 import type { Agent } from '../shared/types.ts';
 import { findTranscript } from './discover.ts';
 import { store } from './store.ts';
+import { recordDayEvent } from './day.ts';
 
 const SHELL_EFFECT_MS = 8_000;
 /** Até onde o transcript de cada sessão já foi lido (só para os agentes com comando rodando). */
@@ -32,6 +33,7 @@ export function onPostToolUse(agent: Agent, payload: Record<string, any>) {
   const ev = githubEvent(command, output);
   if (!ev) return;
   store.log(agent.id, `${ev.kind === 'ci-falhou' ? '🚨' : ev.kind === 'push' ? '🚀' : '🎉'} ${ev.text}`, 'system');
+  recordDayEvent(agent.roomId, `${ev.kind === 'ci-falhou' ? '🚨' : ev.kind === 'push' ? '🚀' : '🎉'} ${ev.text}`);
   const room = store.rooms.get(agent.roomId);
   const effect = roomEffectFor(ev, Date.now());
   if (!room || !effect) return;

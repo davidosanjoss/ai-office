@@ -26,6 +26,16 @@ const opt = (name) => {
   return i >= 0 ? args[i + 1] : undefined;
 };
 
+// `claude -p` (o resumo do dia): lê o pedido da entrada e responde uma linha, como o modo sem tela.
+if (args.includes('-p')) {
+  let input = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (c) => (input += c));
+  process.stdin.on('end', () => {
+    const projeto = /Projeto: (.*)/.exec(input)?.[1] ?? '?';
+    process.stdout.write(`RESUMO de ${projeto} (modelo ${opt('--model')}): ${(input.match(/^- /gm) ?? []).length} itens.\n`);
+  });
+} else {
 const resumeId = opt('--resume');
 const sessionId = resumeId ?? opt('--session-id');
 const settingsFile = opt('--settings');
@@ -80,7 +90,7 @@ function transcriptPath() {
 /** Uma linha do transcript no formato do real (JSONL com type e message.content). */
 function writeTranscript(type, content) {
   fs.mkdirSync(path.dirname(transcriptPath()), { recursive: true });
-  const line = JSON.stringify({ type, sessionId, cwd: process.cwd(), message: { role: type, content } });
+  const line = JSON.stringify({ type, sessionId, cwd: process.cwd(), timestamp: new Date().toISOString(), message: { role: type, content } });
   fs.appendFileSync(transcriptPath(), `${line}\n`);
 }
 
@@ -207,4 +217,5 @@ function run(cmd) {
     return;
   }
   if (cmd) out(`não entendi: ${cmd}\r\n`);
+}
 }

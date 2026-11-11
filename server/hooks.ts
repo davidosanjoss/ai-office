@@ -35,11 +35,15 @@ export function handleHook({ event, agentId, payload }: HookBody) {
     case 'PreToolUse': {
       const text = describeTool(payload.tool_name, payload.tool_input ?? {});
       const isTask = payload.tool_name === 'Task' || payload.tool_name === 'Agent';
+      const input = payload.tool_input ?? {};
       store.patchAgent(id, {
         status: 'working',
         activity: text,
         attentionAt: undefined,
         subagents: agent.subagents + (isTask ? 1 : 0),
+        // Ajudantes: a descrição de cada um, para os detalhes (os 10 mais recentes).
+        ...(isTask ? { helpers: [...(agent.helpers ?? []), String(input.description ?? input.subagent_type ?? 'ajudante').slice(0, 80)].slice(-10) } : {}),
+        ...todosFrom(payload.tool_name, input, agent.todos),
       });
       store.log(id, text, 'tool');
       break;
@@ -69,9 +73,34 @@ export function handleHook({ event, agentId, payload }: HookBody) {
       break;
 
     case 'SubagentStop':
-      store.patchAgent(id, { subagents: Math.max(0, agent.subagents - 1) });
+      store.patchAgent(id, { subagents: Math.max(0, agent.subagents - 1), helpers: (agent.helpers ?? []).slice(1) });
       break;
   }
+}
+
+type Todo = NonNullable<import('../shared/types.ts').Agent['todos']>[number];
+const TODO_STATUS = new Set(['pending', 'in_progress', 'completed']);
+
+/**
+ * Lista de tarefas do agente: o TodoWrite manda a lista inteira; as ferramentas de tarefas mais
+ * novas (TaskCreate / TaskUpdate) criam uma de cada vez e mudam o estado pelo título.
+ */
+export function todosFrom(tool: string, input: Record<string, any>, current: Todo[] = []): { todos?: Todo[] } {
+  const clean = (t: any): Todo | undefined => {
+    const content = String(t?.content ?? t?.subject ?? '').trim();
+    if (!content) return undefined;
+    const status = TODO_STATUS.has(t?.status) ? t.status : 'pending';
+    return { content: content.slice(0, 200), status, ...(t?.activeForm ? { activeForm: String(t.activeForm).slice(0, 200) } : {}) };
+  };
+  if (tool === 'TodoWrite' && Array.isArray(input.todos)) return { todos: input.todos.map(clean).filter((t: Todo | undefined): t is Todo => !!t).slice(0, 50) };
+  if (tool === 'TaskCreate') {
+    const t = clean(input);
+    return t ? { todos: [...current, t].slice(-50) } : {};
+  }
+  if (tool === 'TaskUpdate' && input.subject && TODO_STATUS.has(input.status)) {
+    return { todos: current.map((t) => (t.content === String(input.subject).trim() ? { ...t, status: input.status } : t)) };
+  }
+  return {};
 }
 
 function findBySession(sessionId: unknown) {

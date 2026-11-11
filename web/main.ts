@@ -11,7 +11,7 @@ import { Office, STATUS_COLOR, hash } from './office.ts';
 import { characterFor, type Manifest } from './sprites.ts';
 import { Terminals, uiFontSize } from './terminals.ts';
 import { UsagePanel } from './usage.ts';
-import { type UsageSummary, formatTokens } from '../shared/usage.ts';
+import { type UsageSummary, formatTokens, formatUsd } from '../shared/usage.ts';
 import './styles.css';
 
 const $ = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector(sel) as T;
@@ -378,6 +378,7 @@ function renderAll(full = true) {
   renderRoomInfo();
   renderModelsPanel();
   renderRoomUsage();
+  renderAgentDetails();
   renderSquadBoard();
   renderInbox();
   renderExited();
@@ -716,6 +717,63 @@ function renderRoomUsage() {
   const plan = logic.planView(windowUsage?.plan, Date.now());
   const official = plan?.fiveHour ? `Plano: <b>${plan.fiveHour.pct}%</b> da janela de 5 h${plan.sevenDay ? ` · ${plan.sevenDay.pct}% da semana` : ''}. ` : '';
   box.innerHTML = `${official}Janela (até ${until}): <b>${formatTokens(u.tokens)}</b> tokens em ${name} · ${Math.round(u.share * 100)}% dela`;
+}
+
+// ---------- detalhes do agente ----------
+
+interface AgentDetails {
+  tokens: { input: number; output: number; cacheWrite: number; cacheRead: number };
+  cost: number;
+  model?: string;
+  replies: number;
+  branch?: string;
+  files: number;
+  linesAdded: number;
+  linesRemoved: number;
+}
+/** Detalhes que vêm do servidor (tokens, custo, git), por agente; lidos ao selecionar e a cada 30 s. */
+const details = new Map<string, { at: number; data: AgentDetails }>();
+let detailsLoading = '';
+
+async function loadDetails(id: string) {
+  if (detailsLoading === id) return;
+  detailsLoading = id;
+  try {
+    details.set(id, { at: Date.now(), data: (await api('GET', `/api/agents/${id}/detalhes`)) as AgentDetails });
+    renderAgentDetails();
+  } catch {
+  } finally {
+    detailsLoading = '';
+  }
+}
+setInterval(() => selectedAgent && !document.hidden && loadDetails(selectedAgent), 30_000);
+
+/** Estado, pedido, tarefas com progresso, ajudantes, modelo, branch, linhas e tokens do agente. */
+function renderAgentDetails() {
+  const box = $('#agent-details');
+  const a = selectedWar === undefined ? state.agents.find((x) => x.id === selectedAgent && x.kind !== 'shell') : undefined;
+  box.hidden = !a;
+  if (!a) return;
+  const d = details.get(a.id);
+  if (!d || Date.now() - d.at > 30_000) void loadDetails(a.id);
+  const esc = (t: string) => t.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
+  const task = [...state.activity].reverse().find((e) => e.agentId === a.id && e.kind === 'prompt')?.text.replace(/^Pedido:\s*/, '');
+  const todos = a.todos ?? [];
+  const done = todos.filter((t) => t.status === 'completed').length;
+  const shell = logic.shellBubble(a, Date.now());
+  const row = (k: string, v: string) => `<div class="ad-row"><span>${k}</span><span>${v}</span></div>`;
+  const info = d?.data;
+  box.innerHTML = `
+    <h3>${esc(a.name)} <small class="muted">${esc(logic.STATUS_TEXT[a.status])}</small></h3>
+    ${task ? `<div>📝 ${esc(task)}</div>` : ''}
+    ${shell ? `<div>⏳ ${esc(shell.long.replace(/^Esperando o shell: /, ''))}</div>` : ''}
+    ${todos.length ? `<div class="ad-row"><span>Tarefas</span><span>${done}/${todos.length}</span></div><div class="ad-progress"><i style="width:${(done / todos.length) * 100}%"></i></div>
+      <ul>${todos.map((t) => `<li class="${t.status}">${esc(t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content)}</li>`).join('')}</ul>` : ''}
+    ${a.helpers?.length ? row('Ajudantes', esc(a.helpers.join(' · '))) : ''}
+    ${row('Modelo', esc(info?.model ?? a.models ?? 'padrão da conta'))}
+    ${info?.branch ? row('Branch', `${esc(info.branch)}${a.worktreeBranch ? ' (worktree)' : ''}`) : ''}
+    ${info ? row('Alterado agora', info.files ? `${info.files} arquivo(s), <span style="color:var(--done)">+${info.linesAdded}</span> <span style="color:var(--danger)">−${info.linesRemoved}</span>` : 'nada') : ''}
+    ${info ? row('Sessão', `${formatTokens(info.tokens.input + info.tokens.output + info.tokens.cacheWrite + info.tokens.cacheRead)} tokens · ${formatUsd(info.cost)} · ${info.replies} respostas`) : ''}`;
 }
 
 // ---------- modelos por projeto ----------

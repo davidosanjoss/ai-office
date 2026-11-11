@@ -13,7 +13,7 @@ const rec = (patch: Partial<UsageRecord>): UsageRecord => ({
 describe('transcript do Claude → registro', () => {
   it('lê modelo, pasta, hora e o uso, separando o cache de 1 h', () => {
     const r = claudeRecord(transcriptLine({ id: 'msg_1', ts: '2026-11-03T14:08:35.755Z', cwd: '/p', input: 2, output: 236, write1h: 27178, read: 26047 }));
-    expect(r).toEqual({ source: 'claude', id: 'msg_1', ts: Date.parse('2026-11-03T14:08:35.755Z'), cwd: '/p', model: 'claude-opus-5-5', input: 2, output: 236, cacheWrite5m: 0, cacheWrite1h: 27178, cacheRead: 26047 });
+    expect(r).toEqual({ source: 'claude', id: 'msg_1', ts: Date.parse('2026-11-03T14:08:35.755Z'), cwd: '/p', model: 'claude-opus-5-5', input: 2, output: 236, cacheWrite5m: 0, cacheWrite1h: 27178, cacheRead: 26047, session: 's1' });
   });
 
   it('ignora o que não é resposta com uso, e as respostas sintéticas', () => {

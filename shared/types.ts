@@ -93,6 +93,10 @@ export interface Agent {
   shells?: import('./live.ts').BgShell[];
   /** O comando que ele esperava acabou: comemoração ou nuvem de chuva, até `until`. */
   effect?: import('./live.ts').AgentEffect;
+  /** Lista de tarefas do agente (TodoWrite), para o progresso nos detalhes. */
+  todos?: { content: string; status: 'pending' | 'in_progress' | 'completed'; activeForm?: string }[];
+  /** Ajudantes (subagentes) chamados e ainda trabalhando: a descrição de cada um. */
+  helpers?: string[];
   name: string;
   /** Pasta onde o agente roda: a do projeto ou a de um worktree. */
   cwd: string;

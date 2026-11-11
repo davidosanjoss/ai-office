@@ -4,6 +4,7 @@
 
 import { type Price, type UsageRow, type UsageSummary, formatTokens, formatUsd, totalTokens } from '../shared/usage.ts';
 import * as logic from './logic.ts';
+import { DayPanel } from './day.ts';
 
 type Api = (method: string, url: string, body?: unknown) => Promise<unknown>;
 
@@ -17,6 +18,8 @@ export class UsagePanel {
   private prices?: { prices: Record<string, Price>; custom: string[]; seen: string[] };
   /** Número do último pedido: a resposta de um pedido mais antigo (outro período) é descartada. */
   private seq = 0;
+  private tab: 'consumo' | 'dia' | 'relatorio' = 'consumo';
+  private day: DayPanel;
 
   constructor(
     private api: Api,
@@ -38,6 +41,22 @@ export class UsagePanel {
       }
     });
     $('#usage-models').addEventListener('submit', (e) => void this.savePrice(e));
+    this.day = new DayPanel(api);
+    for (const b of document.querySelectorAll<HTMLButtonElement>('#usage-tabs button')) {
+      b.addEventListener('click', () => this.setTab(b.dataset.tab as UsagePanel['tab']));
+    }
+  }
+
+  /** Consumo, Meu dia ou Relatório: cada aba com o seu filtro (período ou dia). */
+  private setTab(tab: UsagePanel['tab']) {
+    this.tab = tab;
+    for (const b of document.querySelectorAll<HTMLButtonElement>('#usage-tabs button')) b.classList.toggle('active', b.dataset.tab === tab);
+    $('#usage-consumo').hidden = tab !== 'consumo';
+    $('#usage-dia').hidden = tab !== 'dia';
+    $('#usage-relatorio').hidden = tab !== 'relatorio';
+    $('#usage-periods').hidden = tab !== 'consumo';
+    $('#day-date').hidden = tab === 'consumo';
+    void (tab === 'consumo' ? this.refresh() : this.day.refresh());
   }
 
   isShown() {
@@ -47,7 +66,7 @@ export class UsagePanel {
   show() {
     $('#usage-view').hidden = false;
     $('#btn-usage').classList.add('active');
-    void this.refresh();
+    void (this.tab === 'consumo' ? this.refresh() : this.day.refresh());
   }
 
   hide() {

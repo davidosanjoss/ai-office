@@ -733,6 +733,28 @@ describe('sala com vários projetos', () => {
     expect(store.rooms.get(room.id)!.effect!.kind).toBe('festa');
   });
 
+  it('meu dia, relatório com resumo do Claude e detalhes do agente', async () => {
+    const room = await newRoom('meudia', true);
+    const a = await hire(room);
+    await waitStatus(a.id, 'idle');
+    ws.type(a.id, 'prompt fazer o relatório\r');
+    await waitStatus(a.id, 'done');
+    // O Claude falso trabalha num instante (menos de 1 s não conta); o "terminou, sem você ver" vai contando.
+    await new Promise((r) => setTimeout(r, 1200));
+    const { data: dia } = await api<{ projects: { place: { key: string; roomId?: string }; doneMs: number; prompts: { text: string }[]; commits: unknown[] }[] }>('GET', '/api/dia');
+    const p = dia.projects.find((x) => x.place.roomId === room.id)!;
+    expect(p.prompts.map((x) => x.text)).toContain('fazer o relatório');
+    expect(p.doneMs).toBeGreaterThan(1000);
+    const { data: resumo } = await api<{ text: string }>('POST', '/api/dia/resumo', { key: p.place.key });
+    expect(resumo.text).toMatch(/^RESUMO de .* \(modelo haiku\): \d+ itens\.$/);
+    // Fica guardado: o painel mostra sem pedir de novo.
+    const { data: denovo } = await api<{ summaries: Record<string, string> }>('GET', '/api/dia');
+    expect(denovo.summaries[p.place.key]).toBe(resumo.text);
+
+    const { data: det } = await api<{ branch: string; files: number; replies: number }>('GET', `/api/agents/${a.id}/detalhes`);
+    expect(det).toMatchObject({ branch: 'main', replies: 0 });
+  });
+
   it('recusa projeto que não é da sala', async () => {
     const { data: room } = await api<Room>('POST', '/api/rooms', { path: sistema() });
     const { status } = await api('POST', '/api/agents', { roomId: room.id, projectId: 'outro' });

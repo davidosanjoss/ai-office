@@ -16,7 +16,7 @@ export const INBOX_DIR = path.join(USAGE_DIR, 'entrada');
 const INDEX_FILE = path.join(USAGE_DIR, 'indice.json');
 const PRICES_FILE = path.join(USAGE_DIR, 'precos.json');
 /** Versão do índice: mudou o jeito de ler, o índice antigo é descartado e tudo é relido. */
-const INDEX_VERSION = 1;
+const INDEX_VERSION = 2;
 /** Entre duas leituras, no mínimo isso (o painel pode pedir várias vezes seguidas). */
 const MIN_SCAN_MS = 10_000;
 
@@ -170,6 +170,7 @@ export function claudeRecord(line: string): UsageRecord | undefined {
     cacheWrite5m: Math.max(0, write - w1h),
     cacheWrite1h: w1h,
     cacheRead: n(u.cache_read_input_tokens),
+    ...(typeof d.sessionId === 'string' ? { session: d.sessionId } : {}),
   };
 }
 

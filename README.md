@@ -96,6 +96,12 @@ Se você usar o comando `ai-memory` direto no terminal (`ai-memory status`, `ai-
 
 Quando um agente pede permissão ("posso rodar `npm test`?") ou faz uma pergunta, aparece um cartão em cima do terminal dele, no computador ou no celular: **Permitir**, **Permitir e não perguntar de novo** (com a regra que o Claude Code sugeriu), **Negar…** (com um motivo, que vai para o agente, e a opção de interrompê-lo) ou **Responder no terminal**. Nas perguntas, você escolhe as opções ou escreve outra resposta. O terminal continua perguntando ao mesmo tempo, e vale o que for respondido primeiro. Funciona por um hook `PermissionRequest` só nas sessões do escritório; sem nenhuma página do escritório aberta, ou sem resposta em 5 minutos, o pedido fica só no terminal.
 
+### Meu dia, relatório e detalhes do agente
+
+- **📊 → Meu dia**: quanto tempo os agentes trabalharam e quanto **esperaram você** (pedindo permissão ou resposta, e terminados sem você ver), por hora e por projeto, e as esperas mais longas. É tempo de agente (dois agentes numa hora contam duas) e só conta o que acontece com o escritório ligado: a linha do tempo fica em `~/.ai-office/dia/`.
+- **📊 → Relatório**: o que foi feito em cada projeto no dia escolhido: os seus pedidos (dos transcripts do Claude Code), os commits, os eventos do GitHub, o tempo e os tokens. **Resumir com o Claude** gera um resumo curto com o `claude -p` (modelo Haiku, no seu plano), só quando você pede, e guarda para não gastar de novo.
+- **Detalhes do agente** (painel da direita, com o agente selecionado): estado, pedido atual, tarefas com o progresso (do `TodoWrite`), ajudantes, modelo, branch, o que está alterado na pasta dele e os tokens e o custo da sessão.
+
 ### Sala viva
 
 - **GitHub**: quando um agente abre ou faz merge de um PR, publica uma release ou vê o CI verde, cai confete na sala com uma faixa ("PR #12 aberto!"); com o CI vermelho, a sala avermelha e as sirenes piscam nos cantos até o CI ficar verde (ou por 10 minutos). Vem dos comandos que o agente rodou (`gh pr create`, `gh pr merge`, `gh release create`, `gh run watch`, `gh pr checks`, `git push`), sem token nem internet. Os PRs abertos pelo painel de worktree também contam.

@@ -19,6 +19,8 @@ export interface UsageRecord {
   cacheWrite5m: number;
   cacheWrite1h: number;
   cacheRead: number;
+  /** Sessão (Claude Code): liga o consumo a cada agente do escritório. */
+  session?: string;
 }
 
 export interface Tokens {
