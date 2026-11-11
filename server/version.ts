@@ -22,9 +22,11 @@ export function fromDescribe(describe: string): string {
   return `${m[1]}${m[2] ? `+${m[2]}` : ''}${m[3] ? '*' : ''}`;
 }
 
-let cached: Version | undefined;
+/**
+ * Lida a cada pedido (é rápido, e a página só pede ao abrir): a tag da release chega alguns minutos
+ * depois do merge, quando o CI da main termina, e o servidor que já estava no ar precisa vê-la.
+ */
 export function officeVersion(root = ROOT): Version {
-  if (cached && root === ROOT) return cached;
   const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim();
   let v: Version;
   try {
@@ -38,6 +40,5 @@ export function officeVersion(root = ROOT): Version {
     } catch {}
     v = { version: `v${pkg}` };
   }
-  if (root === ROOT) cached = v;
   return v;
 }
