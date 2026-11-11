@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_PRICES, WINDOW_MS, costOf, formatTokens, formatUsd, parseRecord, planWindows, priceFor, summarize, type UsageRecord } from '../shared/usage.ts';
+import { DEFAULT_PRICES, WINDOW_MS, costOf, livePlan, parsePlan, formatTokens, formatUsd, parseRecord, planWindows, priceFor, summarize, type UsageRecord } from '../shared/usage.ts';
 import { claudeRecord, receiveRecords, resetUsage, usageRecords } from '../server/usage.ts';
 import { transcriptLine } from './helpers.ts';
 
@@ -118,5 +118,37 @@ describe('janela do plano', () => {
     expect(s.places.find((p) => p.place.key === '/b')!.bySource).toEqual({ claude: 60, gemini: 1000 });
     // Sem nada nas últimas 5 horas, não há janela aberta.
     expect(summarize(records, { from: 0, to: now, now: now + 10 * h, locate, prices: DEFAULT_PRICES }).window).toBeUndefined();
+  });
+});
+
+describe('uso oficial do plano', () => {
+  const now = Date.parse('2026-11-11T12:00:00Z');
+  const sec = (iso: string) => Date.parse(iso) / 1000;
+
+  it('lê os rate_limits da statusline (resets_at em segundos) e ignora o que não serve', () => {
+    expect(parsePlan({ five_hour: { used_percentage: 23.5, resets_at: sec('2026-11-11T15:00:00Z') }, seven_day: { used_percentage: 41.2, resets_at: sec('2026-11-14T10:00:00Z') } }, now)).toEqual({
+      fiveHour: { usedPct: 23.5, resetsAt: Date.parse('2026-11-11T15:00:00Z') },
+      sevenDay: { usedPct: 41.2, resetsAt: Date.parse('2026-11-14T10:00:00Z') },
+      updatedAt: now,
+    });
+    expect(parsePlan({ seven_day: { used_percentage: 5, resets_at: sec('2026-11-14T10:00:00Z') } }, now)?.fiveHour).toBeUndefined();
+    expect(parsePlan({ five_hour: { used_percentage: 'x' } }, now)).toBeUndefined();
+    expect(parsePlan(undefined, now)).toBeUndefined();
+  });
+
+  it('janela que já reiniciou sai (o número era de antes da virada)', () => {
+    const plan = parsePlan({ five_hour: { used_percentage: 90, resets_at: sec('2026-11-11T11:00:00Z') }, seven_day: { used_percentage: 41, resets_at: sec('2026-11-14T10:00:00Z') } }, now - 3600_000)!;
+    expect(livePlan(plan, now)).toEqual({ sevenDay: plan.sevenDay, updatedAt: plan.updatedAt });
+  });
+
+  it('com o horário oficial, a janela do resumo é exata e substitui a estimada', () => {
+    const resets = Date.parse('2026-11-11T14:00:00Z');
+    const plan = parsePlan({ five_hour: { used_percentage: 30, resets_at: resets / 1000 } }, now)!;
+    const locate = (cwd: string) => ({ key: cwd, label: cwd });
+    // Mensagens às 8h40 (estimaria uma janela das 8h40 às 13h40) e às 11h.
+    const records = [rec({ ts: Date.parse('2026-11-11T08:40:00Z'), output: 10 }), rec({ ts: Date.parse('2026-11-11T11:00:00Z'), output: 20 })];
+    const s = summarize(records, { from: 0, to: now + 1, now, locate, prices: DEFAULT_PRICES, plan });
+    expect(s.window).toMatchObject({ start: resets - WINDOW_MS, end: resets, official: true, total: 20 });
+    expect(s.plan?.fiveHour?.usedPct).toBe(30);
   });
 });

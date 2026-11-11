@@ -30,6 +30,7 @@ import { pickFolder } from './picker.ts';
 import { parseModels } from '../shared/models.ts';
 import { type Place, type Price, summarize } from '../shared/usage.ts';
 import { customPrices, prices, receiveRecords, setPrice, usageRecords } from './usage.ts';
+import { planUsage, recordPlan } from './plan.ts';
 import { detectProjects, draftSummary, insideRoot, newProject, projectOf } from './projects.ts';
 import { WorktreeError, mergeWorktree, openPr, removeWorktree, worktreeStatus } from './worktree.ts';
 import { DATA_DIR, PORT } from './platform.ts';
@@ -103,6 +104,9 @@ export async function buildApp(opts: { port?: number } = {}) {
     if (req.body && typeof req.body === 'object') handleHook(req.body);
     return { ok: true };
   });
+
+  // Uso oficial do plano, que a statusline das sessões do escritório manda (rate_limits).
+  app.post<{ Body: { rate_limits?: unknown } }>('/api/plano', async (req) => ({ ok: !!recordPlan(req.body?.rate_limits) }));
 
   app.get('/api/projects', async () => discoverProjects());
 
@@ -394,7 +398,7 @@ export async function buildApp(opts: { port?: number } = {}) {
     const from = Number(req.query.from) || now - 7 * 24 * 3600 * 1000;
     const to = Number(req.query.to) || now + 1;
     // ler=1 (o painel aberto agora): lê o que há de novo mesmo que a última leitura seja recente.
-    return summarize(await usageRecords(req.query.ler === '1'), { from, to, now, locate: placeOf, prices: prices() });
+    return summarize(await usageRecords(req.query.ler === '1'), { from, to, now, locate: placeOf, prices: prices(), plan: planUsage() });
   });
 
   /** Outras fontes (Codex, Gemini, um script seu): um registro ou uma lista no formato UsageRecord. */

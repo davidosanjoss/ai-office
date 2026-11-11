@@ -604,7 +604,10 @@ function renderRoomUsage() {
   if (!u || !t) return;
   const until = new Date(u.end).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
   const name = (t.room.projects?.length ?? 0) > 1 ? t.project.name : 'esta sala';
-  box.innerHTML = `Janela do plano (até ${until}): <b>${formatTokens(u.tokens)}</b> tokens em ${name} · ${Math.round(u.share * 100)}% da janela`;
+  // Com o número oficial: quanto do plano já foi, e a parte deste projeto na janela.
+  const plan = logic.planView(windowUsage?.plan, Date.now());
+  const official = plan?.fiveHour ? `Plano: <b>${plan.fiveHour.pct}%</b> da janela de 5 h${plan.sevenDay ? ` · ${plan.sevenDay.pct}% da semana` : ''}. ` : '';
+  box.innerHTML = `${official}Janela (até ${until}): <b>${formatTokens(u.tokens)}</b> tokens em ${name} · ${Math.round(u.share * 100)}% dela`;
 }
 
 // ---------- modelos por projeto ----------

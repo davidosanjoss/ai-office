@@ -126,6 +126,53 @@ export function planWindows(times: number[]): PlanWindow[] {
   return out;
 }
 
+// ---------- uso oficial do plano ----------
+
+/** Uma janela do plano como o Claude Code informa: quanto já foi usado e quando reinicia. */
+export interface PlanLimit {
+  /** De 0 a 100. */
+  usedPct: number;
+  /** Quando a janela reinicia (ms). */
+  resetsAt: number;
+}
+
+/** O uso oficial do plano (Pro, Max, Ultra), que a statusline das sessões do escritório entrega. */
+export interface PlanUsage {
+  fiveHour?: PlanLimit;
+  sevenDay?: PlanLimit;
+  /** Quando chegou (ms): números de mais de 30 min são mostrados como desatualizados. */
+  updatedAt: number;
+}
+
+/** Os rate_limits da statusline (resets_at em segundos) no formato do escritório. undefined = nada útil. */
+export function parsePlan(raw: unknown, now: number): PlanUsage | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, any>;
+  const limit = (w: any): PlanLimit | undefined => {
+    const pct = Number(w?.used_percentage);
+    const resets = Number(w?.resets_at);
+    if (!Number.isFinite(pct) || pct < 0 || pct > 1000 || !Number.isFinite(resets) || resets <= 0) return undefined;
+    return { usedPct: Math.min(100, pct), resetsAt: resets * 1000 };
+  };
+  const fiveHour = limit(r.five_hour);
+  const sevenDay = limit(r.seven_day);
+  if (!fiveHour && !sevenDay) return undefined;
+  return { ...(fiveHour ? { fiveHour } : {}), ...(sevenDay ? { sevenDay } : {}), updatedAt: now };
+}
+
+/** Uma janela que já reiniciou não vale mais (o número é de antes da virada). */
+export function livePlan(plan: PlanUsage | undefined, now: number): PlanUsage | undefined {
+  if (!plan) return undefined;
+  const ok = (w?: PlanLimit) => (w && w.resetsAt > now ? w : undefined);
+  const fiveHour = ok(plan.fiveHour);
+  const sevenDay = ok(plan.sevenDay);
+  if (!fiveHour && !sevenDay) return undefined;
+  return { ...(fiveHour ? { fiveHour } : {}), ...(sevenDay ? { sevenDay } : {}), updatedAt: plan.updatedAt };
+}
+
+/** Números de mais de 30 minutos atrás: podem ter mudado em outra sessão fora do escritório. */
+export const PLAN_STALE_MS = 30 * 60 * 1000;
+
 // ---------- resumo para o painel ----------
 
 /** Onde um consumo fica no escritório: sala e projeto, ou fora dele (só a pasta). */
@@ -155,10 +202,14 @@ export interface UsageSummary {
   places: UsageRow[];
   /** Total de tokens por dia (data local "AAAA-MM-DD") e fonte. */
   daily: { day: string; bySource: Record<string, number> }[];
+  /** Uso oficial do plano, quando alguma sessão do escritório já o recebeu. */
+  plan?: PlanUsage;
   /** Janela atual do plano do Claude (ausente se não há uma aberta). */
   window?: {
     start: number;
     end: number;
+    /** A janela veio do horário oficial de reinício (e não da estimativa pelas mensagens). */
+    official?: boolean;
     places: UsageRow[];
     total: number;
     /** Mediana das janelas anteriores (nos últimos 30 dias), para comparar. */
@@ -190,9 +241,10 @@ function rowsFor(records: UsageRecord[], locate: (cwd: string) => Place, prices:
 /** Resumo do período [from, to): por lugar, por modelo, por dia e a janela atual do plano. */
 export function summarize(
   all: UsageRecord[],
-  opts: { from: number; to: number; now: number; locate: (cwd: string) => Place; prices: Record<string, Price> },
+  opts: { from: number; to: number; now: number; locate: (cwd: string) => Place; prices: Record<string, Price>; plan?: PlanUsage },
 ): UsageSummary {
   const { from, to, now, locate, prices } = opts;
+  const plan = livePlan(opts.plan, now);
   const recs = all.filter((r) => r.ts >= from && r.ts < to);
   const totals = { ...zero(), cost: 0 };
   let unpricedTokens = 0;
@@ -232,6 +284,14 @@ export function summarize(
   // A janela do plano só faz sentido para o Claude (é o plano dele que tem o limite de 5 horas).
   const claude = all.filter((r) => r.source === 'claude');
   const windows = planWindows(claude.map((r) => r.ts));
+  // Com o horário oficial de reinício, a janela é exata: termina nele e começa 5 horas antes.
+  const official = plan?.fiveHour ? { start: plan.fiveHour.resetsAt - WINDOW_MS, end: plan.fiveHour.resetsAt } : undefined;
+  if (official) {
+    // As estimadas que encostam na oficial saem: a oficial manda.
+    while (windows.length && windows.at(-1)!.end > official.start) windows.pop();
+    windows.push(official);
+  }
+  if (plan) summary.plan = plan;
   const current = windows.at(-1);
   if (current && now < current.end) {
     const inWin = (w: PlanWindow) => claude.filter((r) => r.ts >= w.start && r.ts < w.end);
@@ -242,6 +302,7 @@ export function summarize(
     summary.window = {
       start: current.start,
       end: current.end,
+      ...(official ? { official: true } : {}),
       places: rowsFor(mine, locate, prices),
       total: sum(mine),
       typical: totalsPrev.length ? totalsPrev[Math.floor(totalsPrev.length / 2)] : undefined,

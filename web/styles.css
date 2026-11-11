@@ -1924,3 +1924,9 @@ body.dir-hidden #directory {
 #term-keys[hidden] { display: none; }
 #term-keys button { flex: 1 0 auto; min-width: 40px; padding: 7px 8px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 6px; font: 13px 'JetBrains Mono', monospace; touch-action: manipulation; }
 #term-keys button:active { background: var(--accent); color: var(--bg); }
+
+/* Medidor do plano (porcentagem oficial). */
+.tile .meter { display: block; height: 6px; border-radius: 3px; background: var(--bg-2); overflow: hidden; margin: 2px 0; }
+.tile .meter i { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+.tile.high .meter i { background: var(--waiting); }
+.tile.high b { color: var(--waiting); }

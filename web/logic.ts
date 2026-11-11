@@ -3,7 +3,7 @@
 import type { ActivityEvent, Agent, FileChange, Floor, Incident, IncidentMessage, MemoryStatus, Project, Room, WorktreeStatus } from '../shared/types.ts';
 import { canDeleteBranch } from '../shared/worktree.ts';
 import { modelsLabel } from '../shared/models.ts';
-import { type UsageRow, type UsageSummary, dayKey, totalTokens } from '../shared/usage.ts';
+import { PLAN_STALE_MS, type PlanUsage, type UsageRow, type UsageSummary, dayKey, totalTokens } from '../shared/usage.ts';
 
 /** Depois da última tecla, quanto esperar antes de trocar de terminal sozinho. */
 export const TYPING_GRACE_MS = 3500;
@@ -622,4 +622,26 @@ export function topPlaces(rows: UsageRow[], keep: number): UsageRow[] {
     out.push(sum);
   }
   return out;
+}
+
+// ---------- uso oficial do plano ----------
+
+export interface PlanLimitView {
+  pct: number;
+  /** "18:54" (hoje) ou "sex 14:00" (outro dia). */
+  resets: string;
+  /** 80% ou mais: perto do limite. */
+  high: boolean;
+}
+
+/** O plano como o painel mostra: porcentagens inteiras, a hora de reiniciar e se o número está velho. */
+export function planView(plan: PlanUsage | undefined, now: number): { fiveHour?: PlanLimitView; sevenDay?: PlanLimitView; stale: boolean } | undefined {
+  if (!plan || (!plan.fiveHour && !plan.sevenDay)) return undefined;
+  const when = (ts: number) => {
+    const d = new Date(ts);
+    const hm = d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+    return d.toDateString() === new Date(now).toDateString() ? hm : `${d.toLocaleDateString('pt-BR', { weekday: 'short' }).replace('.', '')} ${hm}`;
+  };
+  const view = (w: PlanUsage['fiveHour']) => w && { pct: Math.round(w.usedPct), resets: when(w.resetsAt), high: w.usedPct >= 80 };
+  return { fiveHour: view(plan.fiveHour), sevenDay: view(plan.sevenDay), stale: now - plan.updatedAt > PLAN_STALE_MS };
 }

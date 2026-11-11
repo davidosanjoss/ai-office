@@ -94,10 +94,26 @@ export class UsagePanel {
 
   private windowTile(s: UsageSummary): string {
     const w = s.window;
-    if (!w) return `<div class="tile"><span class="tile-label">Janela do plano (5 h)</span><b>—</b><small>Nenhuma aberta: a próxima mensagem abre uma nova.</small></div>`;
-    const vs = w.typical ? `${Math.round((w.total / w.typical) * 100)}% do que você costuma gastar numa janela` : 'ainda sem janelas anteriores para comparar';
-    return `<div class="tile"><span class="tile-label">Janela do plano (5 h) · ${time(w.start)}–${time(w.end)}</span><b>${formatTokens(w.total)}</b>
-      <small>${vs}. Estimativa: o limite oficial não aparece nos transcripts.</small></div>`;
+    const plan = logic.planView(s.plan, Date.now());
+    const meter = (pct: number) => `<span class="meter" role="img" aria-label="${pct}%"><i style="width:${Math.min(100, pct)}%"></i></span>`;
+    const stale = plan?.stale ? ' Números de mais de 30 min: podem ter mudado em sessões fora do escritório.' : '';
+    let out = '';
+    if (plan?.fiveHour) {
+      const p = plan.fiveHour;
+      out += `<div class="tile${p.high ? ' high' : ''}"><span class="tile-label">Plano · janela de 5 h</span><b>${p.high ? '⚠ ' : ''}${p.pct}%</b>${meter(p.pct)}
+        <small>Reinicia às ${p.resets}${w ? ` · ${formatTokens(w.total)} tokens nesta janela` : ''}. Número oficial do Claude Code.${stale}</small></div>`;
+    } else if (w) {
+      const vs = w.typical ? `${Math.round((w.total / w.typical) * 100)}% do que você costuma gastar numa janela` : 'ainda sem janelas anteriores para comparar';
+      out += `<div class="tile"><span class="tile-label">Janela do plano (5 h) · ${time(w.start)}–${time(w.end)}</span><b>${formatTokens(w.total)}</b>
+        <small>${vs}. Estimativa: o número oficial chega quando uma sessão do escritório responder (só nos planos Pro, Max e Ultra).</small></div>`;
+    } else {
+      out += `<div class="tile"><span class="tile-label">Janela do plano (5 h)</span><b>—</b><small>Nenhuma aberta: a próxima mensagem abre uma nova.</small></div>`;
+    }
+    if (plan?.sevenDay) {
+      const p = plan.sevenDay;
+      out += `<div class="tile${p.high ? ' high' : ''}"><span class="tile-label">Plano · semana</span><b>${p.high ? '⚠ ' : ''}${p.pct}%</b>${meter(p.pct)}<small>Reinicia ${p.resets}.${stale}</small></div>`;
+    }
+    return out;
   }
 
   private rows(rows: UsageRow[], total: number): string {

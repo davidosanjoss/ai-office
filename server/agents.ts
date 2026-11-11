@@ -9,10 +9,11 @@ import { addWorktree } from './git.ts';
 import { modelLaunch, modelsLabel } from '../shared/models.ts';
 import { claudeWiring } from './memory.ts';
 import { nowText, projectOf, roomContext } from './projects.ts';
-import { DATA_DIR, HOST, PORT, claudeBin, defaultShell, isWindows, ptyCommand } from './platform.ts';
+import { CLAUDE_DIR, DATA_DIR, HOST, PORT, claudeBin, defaultShell, isWindows, ptyCommand } from './platform.ts';
 import { store } from './store.ts';
 
 const HOOK_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'office-hook.mjs');
+const STATUSLINE_SCRIPT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', 'hooks', 'office-statusline.mjs');
 export const SETTINGS_FILE = path.join(DATA_DIR, 'claude-hooks.json');
 const SCROLLBACK_LIMIT = 400_000;
 /** Saiu com erro em menos tempo que isso: falhou ao iniciar, e a mensagem vai para a atividade. */
@@ -45,7 +46,10 @@ function hookSettings() {
   for (const event of HOOK_EVENTS) {
     hooks[event] = [{ matcher: '', hooks: [{ type: 'command', command: `${command} ${event}`, timeout: 5 }] }];
   }
-  return { hooks };
+  // A statusline é por onde o Claude Code entrega o uso oficial do plano (rate_limits). A sua, se
+  // houver, continua aparecendo: o script a roda com o mesmo JSON (AI_OFFICE_STATUSLINE).
+  const statusLine = { type: 'command', command: `"${process.execPath}" "${STATUSLINE_SCRIPT}"` };
+  return { hooks, statusLine };
 }
 fs.writeFileSync(SETTINGS_FILE, JSON.stringify(hookSettings(), null, 2));
 
@@ -297,7 +301,7 @@ function spawn(agent: Agent, resume: boolean) {
   const cmd = ptyCommand(bin, args);
   const cwd = fs.existsSync(agent.cwd) ? agent.cwd : projectOf(room, agent.projectId).path;
   // Só as sessões do Claude reportam eventos ao escritório.
-  const officeEnv = isShell ? {} : { AI_OFFICE_URL: `http://${HOST}:${PORT}`, AI_OFFICE_AGENT_ID: agent.id };
+  const officeEnv = isShell ? {} : { AI_OFFICE_URL: `http://${HOST}:${PORT}`, AI_OFFICE_AGENT_ID: agent.id, ...userStatusLine() };
 
   const proc = pty.spawn(cmd.file, cmd.args, {
     name: 'xterm-256color',
@@ -344,6 +348,17 @@ function spawn(agent: Agent, resume: boolean) {
   });
 }
 
+/** A statusline que você configurou no Claude Code (o escritório põe a dele e roda a sua dentro). */
+function userStatusLine(): { AI_OFFICE_STATUSLINE?: string } {
+  try {
+    const s = JSON.parse(fs.readFileSync(path.join(CLAUDE_DIR, 'settings.json'), 'utf8'));
+    const cmd = s?.statusLine?.type === 'command' ? s.statusLine.command : undefined;
+    return typeof cmd === 'string' && cmd.trim() ? { AI_OFFICE_STATUSLINE: cmd } : {};
+  } catch {
+    return {};
+  }
+}
+
 // Marcadores de uma sessão do Claude em andamento. Se o servidor foi iniciado de dentro de
 // uma, os agentes se achariam "filhos" dela (e, por exemplo, deixariam de salvar o histórico).
 const INHERITED_SESSION_VARS = [
@@ -363,6 +378,7 @@ const INHERITED_SESSION_VARS = [
   // escritório para os terminais (as sessões do Claude ganham os seus logo em seguida).
   'AI_OFFICE_URL',
   'AI_OFFICE_AGENT_ID',
+  'AI_OFFICE_STATUSLINE',
 ];
 
 export function cleanEnv() {

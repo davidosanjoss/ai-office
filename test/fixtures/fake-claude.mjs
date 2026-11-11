@@ -6,7 +6,7 @@
 // - `--resume` de uma sessão sem transcript sai com o mesmo erro do real.
 //
 // Comandos digitados no terminal:
-//   prompt <texto>  simula um pedido: UserPromptSubmit, PreToolUse(Read), PostToolUse, Stop
+//   prompt <texto>  simula um pedido: UserPromptSubmit, PreToolUse(Read), PostToolUse, Stop e a statusline
 //   [Sala de guerra] ...  idem: o escritório digita isso, e o Claude real trata como um pedido
 //   ask             pede permissão (Notification permission_prompt)
 //   /exit           encerra com código 0
@@ -53,6 +53,19 @@ function hook(event, payload = {}) {
       });
     }
   }
+}
+
+/**
+ * Como o real depois de uma resposta: roda a statusline do --settings com o JSON da sessão. Os
+ * rate_limits vêm de FAKE_RATE_LIMITS (JSON), como numa conta Pro; sem ela, não vêm (conta da API).
+ */
+function statusLine() {
+  const cmd = settings.statusLine?.type === 'command' ? settings.statusLine.command : undefined;
+  if (!cmd) return;
+  const data = { session_id: sessionId, cwd: process.cwd(), model: { display_name: 'Falso' } };
+  if (process.env.FAKE_RATE_LIMITS) data.rate_limits = JSON.parse(process.env.FAKE_RATE_LIMITS);
+  const r = spawnSync(cmd, { shell: true, input: JSON.stringify(data), encoding: 'utf8' });
+  if (r.stdout) out(`statusline=${r.stdout}\r\n`);
 }
 
 function transcriptPath() {
@@ -130,6 +143,7 @@ function run(cmd) {
     hook('PostToolUse', { tool_name: 'Read' });
     writeTranscript('assistant', [{ type: 'text', text: reply }]);
     hook('Stop', { transcript_path: transcriptPath() });
+    statusLine();
     out(`${reply}\r\n`);
     out('\x1b[c');
     return;

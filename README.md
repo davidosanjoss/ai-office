@@ -106,6 +106,7 @@ A escolha vale para quem abre ou retoma a conversa; o painel avisa quem ainda es
 
 O **📊 Consumo** no topo mostra os tokens e o **equivalente na API** (pelos preços da tabela, que você edita) por sala e projeto, por dia, por modelo e na **janela atual do plano** (5 horas). A linha "Janela do plano" no painel da direita mostra quanto o projeto escolhido gastou nela. A janela é uma estimativa: o limite oficial não aparece nos transcripts.
 
+- **Uso oficial do plano** (Pro, Max, Ultra): as sessões abertas pelo escritório usam uma statusline própria (só nelas, pelo `--settings`), por onde o Claude Code entrega a porcentagem usada da janela de 5 horas e da semana e quando cada uma reinicia. O painel mostra esses números; sem eles (antes da primeira resposta, ou numa conta da API), mostra a estimativa. Se você tem uma statusline sua, ela continua aparecendo nessas sessões: o escritório a roda com o mesmo JSON.
 - O Claude Code entra sozinho: o escritório lê os transcripts de `~/.claude/projects` aos poucos (só o que foi acrescentado) e guarda um índice em `~/.ai-office/uso`.
 - Outras fontes (Codex, Gemini, um script seu) entram pela rota `POST /api/uso` ou por arquivos `.jsonl` em `~/.ai-office/uso/entrada`, no formato `UsageRecord` de `shared/usage.ts`. A pasta (`cwd`) liga o consumo à sala e ao projeto.
 

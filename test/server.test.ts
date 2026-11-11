@@ -640,6 +640,33 @@ describe('sala com vários projetos', () => {
     expect(precos.seen).toContain('claude-opus-5-5');
   });
 
+  it('uso oficial do plano: a statusline da sessão entrega os rate_limits, e a sua statusline continua aparecendo', async () => {
+    const resets = Math.floor(Date.now() / 1000) + 3600;
+    process.env.FAKE_RATE_LIMITS = JSON.stringify({ five_hour: { used_percentage: 37.2, resets_at: resets }, seven_day: { used_percentage: 12, resets_at: resets + 86400 } });
+    // Uma statusline sua: ela é que aparece na sessão, com o mesmo JSON.
+    const settings = path.join(process.env.AI_OFFICE_CLAUDE_DIR!, 'settings.json');
+    fs.writeFileSync(settings, JSON.stringify({ statusLine: { type: 'command', command: 'echo minha-statusline' } }));
+    try {
+      const room = await newRoom('plano');
+      const a = await hire(room);
+      await waitStatus(a.id, 'idle');
+      ws.type(a.id, 'prompt oi\r');
+      await waitOutput(a.id, 'statusline=minha-statusline');
+      const plan = await waitFor(async () => (await api<UsageSummary>('GET', '/api/uso')).data.plan, 5000, 'o plano chegar');
+      expect(plan.fiveHour).toEqual({ usedPct: 37.2, resetsAt: resets * 1000 });
+      expect(plan.sevenDay?.usedPct).toBe(12);
+      // Sem statusline sua, a linha mostra o plano.
+      fs.writeFileSync(settings, '{}');
+      const b = await hire(room);
+      await waitStatus(b.id, 'idle');
+      ws.type(b.id, 'prompt oi\r');
+      await waitOutput(b.id, 'statusline=plano: 5h 37% · semana 12%');
+    } finally {
+      delete process.env.FAKE_RATE_LIMITS;
+      fs.rmSync(settings, { force: true });
+    }
+  });
+
   it('recusa projeto que não é da sala', async () => {
     const { data: room } = await api<Room>('POST', '/api/rooms', { path: sistema() });
     const { status } = await api('POST', '/api/agents', { roomId: room.id, projectId: 'outro' });

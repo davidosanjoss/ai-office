@@ -557,3 +557,17 @@ describe('consumo', () => {
     expect(logic.projectWindowUsage({} as any, 'p1')).toBeUndefined();
   });
 });
+
+describe('plano no painel', () => {
+  it('porcentagem inteira, hora de reiniciar, aviso a partir de 80% e número velho depois de 30 min', () => {
+    const now = new Date(2026, 10, 11, 12, 0).getTime();
+    const plan = { fiveHour: { usedPct: 82.6, resetsAt: new Date(2026, 10, 11, 15, 30).getTime() }, sevenDay: { usedPct: 40, resetsAt: new Date(2026, 10, 13, 9, 0).getTime() }, updatedAt: now - 60_000 };
+    const v = logic.planView(plan, now)!;
+    expect(v.fiveHour).toEqual({ pct: 83, resets: '15:30', high: true });
+    expect(v.sevenDay!.resets).toMatch(/09:00$/);
+    expect(v.sevenDay!.resets).not.toBe('09:00');
+    expect(v.stale).toBe(false);
+    expect(logic.planView({ ...plan, updatedAt: now - 31 * 60_000 }, now)!.stale).toBe(true);
+    expect(logic.planView(undefined, now)).toBeUndefined();
+  });
+});
