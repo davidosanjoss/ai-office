@@ -1,0 +1,63 @@
+name: Release
+
+# Toda mudança que entra na main, com o CI verde, vira uma tag e uma release (vX.Y.Z). O salto da
+# versão vem dos PRs que entraram desde a última tag (scripts/versao.mjs): feat/ sobe a do meio,
+# as outras branches sobem a última, e o rótulo "versão-maior" sobe a primeira. As notas da
+# release são os PRs, agrupados pelos rótulos (.github/release.yml).
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: read
+
+# Uma release por vez: dois merges seguidos não disputam o mesmo número.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Tag e release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          if git tag --points-at "$SHA" | grep -q '^v'; then
+            echo "Esse commit já tem versão: $(git tag --points-at "$SHA" | tr '\n' ' ')"
+            exit 0
+          fi
+          LAST=$(node --input-type=module -e "import { latestTag } from './scripts/versao.mjs'; import { execSync } from 'node:child_process'; console.log(latestTag(execSync('git tag').toString().split('\n').filter(Boolean)) ?? '')")
+          RANGE="${LAST:+$LAST..}$SHA"
+          # PRs que entraram desde a última tag, pelo número na mensagem do merge (merge ou squash).
+          NUMS=$(git log --first-parent --format='%s' "$RANGE" | grep -oE '#[0-9]+' | tr -d '#' | sort -un || true)
+          ARGS=()
+          TITLE=""
+          for N in $NUMS; do
+            INFO=$(gh pr view "$N" --json headRefName,labels,title,mergedAt --jq 'select(.mergedAt != null) | "\(.headRefName)|\([.labels[].name] | join(","))|\(.title)"' 2>/dev/null || true)
+            [ -z "$INFO" ] && continue
+            BRANCH=${INFO%%|*}; REST=${INFO#*|}; LABELS=${REST%%|*}; PRTITLE=${REST#*|}
+            ARGS+=("$BRANCH:$LABELS")
+            TITLE=${TITLE:-$PRTITLE}
+          done
+          NEXT=$(node scripts/versao.mjs "${LAST:-v0.0.0}" "${ARGS[@]}")
+          echo "Última: ${LAST:-nenhuma} → próxima: $NEXT (PRs: ${NUMS:-nenhum})"
+          # A própria release cria a tag no commit (pela API, sem empurrar nada para o repositório).
+          gh release create "$NEXT" --target "$SHA" --title "$NEXT${TITLE:+ · $TITLE}" --generate-notes ${LAST:+--notes-start-tag "$LAST"}

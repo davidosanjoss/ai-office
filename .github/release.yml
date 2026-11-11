@@ -1,0 +1,13 @@
+# Como as notas das releases agrupam os PRs (pelo rótulo que o workflow Rótulos põe pela branch).
+changelog:
+  categories:
+    - title: Novidades
+      labels: [novidade, versão-maior]
+    - title: Correções
+      labels: [correção]
+    - title: Arte
+      labels: [arte]
+    - title: Infra, testes e documentação
+      labels: [infra, testes, documentação]
+    - title: Outras mudanças
+      labels: ['*']

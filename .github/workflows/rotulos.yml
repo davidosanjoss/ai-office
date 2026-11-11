@@ -1,0 +1,35 @@
+name: Rótulos
+
+# Cada PR ganha um rótulo pelo prefixo da branch (feat/, fix/, infra/…): é por ele que as notas da
+# release agrupam as mudanças (.github/release.yml).
+
+on:
+  pull_request:
+    types: [opened, reopened]
+
+permissions:
+  pull-requests: write
+  issues: write
+
+jobs:
+  rotulo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rótulo pela branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+        run: |
+          case "$BRANCH" in
+            feat/*) L=novidade; C=1d76db ;;
+            fix/*) L=correção; C=d73a4a ;;
+            arte/*) L=arte; C=c5def5 ;;
+            docs/*) L=documentação; C=0075ca ;;
+            teste/*) L=testes; C=bfd4f2 ;;
+            infra/*) L=infra; C=5319e7 ;;
+            *) exit 0 ;;
+          esac
+          gh label create "$L" --repo "$REPO" --color "$C" 2>/dev/null || true
+          gh pr edit "$PR" --repo "$REPO" --add-label "$L"

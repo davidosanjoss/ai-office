@@ -32,6 +32,7 @@ import { type Place, type Price, type UsageRecord, costOf, dayKey, priceFor, sum
 import { customPrices, prices, receiveRecords, setPrice, usageRecords } from './usage.ts';
 import { planUsage, recordPlan } from './plan.ts';
 import { startShellWatch } from './live.ts';
+import { officeVersion } from './version.ts';
 import { cachedSummaries, dayReport, startDayTracking, summarizeWithClaude } from './day.ts';
 import { projectDigest } from '../shared/day.ts';
 import { PARTY_MS } from '../shared/live.ts';
@@ -151,6 +152,8 @@ export async function buildApp(opts: { port?: number } = {}) {
 
   // Uso oficial do plano, que a statusline das sessões do escritório manda (rate_limits).
   app.post<{ Body: { rate_limits?: unknown } }>('/api/plano', async (req) => ({ ok: !!recordPlan(req.body?.rate_limits) }));
+
+  app.get('/api/versao', async () => officeVersion());
 
   app.get('/api/projects', async () => discoverProjects());
 
