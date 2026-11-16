@@ -5,8 +5,8 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { DirEntry, DirListing, FileContent } from '../shared/types.ts';
-import { isBinary } from './git.ts';
+import type { DirEntry, DirListing, FileContent, SearchMatch, SearchResult } from '../shared/types.ts';
+import { git, isBinary } from './git.ts';
 
 /** Maior arquivo que abre no editor. */
 export const MAX_FILE = 2 * 1024 * 1024;
@@ -163,4 +163,98 @@ function isLink(p: string) {
   } catch {
     return false;
   }
+}
+
+// ---------- busca ----------
+
+/** Ocorrências mostradas por busca: além disso, melhor refinar o texto. */
+export const MAX_MATCHES = 500;
+/** Arquivos lidos por busca (um projeto enorme não trava o servidor). */
+const MAX_SEARCH_FILES = 20000;
+/** Linha mais longa que isso aparece cortada em volta da ocorrência (arquivos minificados). */
+const MAX_LINE = 240;
+/** Pastas que a busca pula quando a pasta não é um repositório (sem .gitignore para seguir). */
+const SKIP_DIRS = new Set(['.git', 'node_modules']);
+
+/**
+ * Arquivos onde procurar, relativos à raiz e com "/". Num repositório, os do git (versionados e
+ * novos, sem o que o .gitignore ignora: node_modules, dist...); fora dele, a pasta inteira.
+ */
+async function searchableFiles(root: string): Promise<string[]> {
+  try {
+    const out = await git(root, ['ls-files', '-z', '--cached', '--others', '--exclude-standard']);
+    // Um arquivo em conflito aparece uma vez por estágio.
+    return [...new Set(out.split('\0').filter(Boolean))].sort();
+  } catch {
+    // Não é repositório (ou não há git): percorre a pasta.
+  }
+  const files: string[] = [];
+  const walk = (rel: string) => {
+    let items: fs.Dirent[];
+    try {
+      items = fs.readdirSync(rel ? path.join(root, ...rel.split('/')) : root, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const item of items) {
+      if (files.length >= MAX_SEARCH_FILES) return;
+      const p = rel ? `${rel}/${item.name}` : item.name;
+      if (item.isDirectory()) {
+        if (!SKIP_DIRS.has(item.name)) walk(p);
+      } else if (item.isFile()) files.push(p);
+    }
+  };
+  walk('');
+  return files.sort();
+}
+
+/** A linha para mostrar: inteira, ou um pedaço em volta da ocorrência se for longa demais. */
+function lineSnippet(line: string, at: number): string {
+  if (line.length <= MAX_LINE) return line;
+  const start = Math.max(0, at - 60);
+  const end = Math.min(line.length, start + MAX_LINE);
+  return `${start > 0 ? '…' : ''}${line.slice(start, end)}${end < line.length ? '…' : ''}`;
+}
+
+/**
+ * Procura `query` (texto literal, não expressão regular) nos arquivos da pasta: uma ocorrência
+ * por linha, até MAX_MATCHES. Pula binários, arquivos grandes demais para o editor, links
+ * simbólicos (que poderiam levar para fora da pasta) e a pasta .git.
+ */
+export async function searchFiles(root: string, query: unknown, opts: { caseSensitive?: boolean } = {}): Promise<SearchResult> {
+  if (typeof query !== 'string' || !query.trim()) throw new FileError('Digite o que procurar');
+  if (query.length > 200) throw new FileError('Texto de busca longo demais');
+  if (/[\r\n]/.test(query)) throw new FileError('A busca é por uma linha só');
+  const needle = opts.caseSensitive ? query : query.toLowerCase();
+  const matches: SearchMatch[] = [];
+  const found = new Set<string>();
+  let truncated = false;
+  const files = (await searchableFiles(root)).filter((f) => !f.split('/').some((p) => p.toLowerCase() === '.git')).slice(0, MAX_SEARCH_FILES);
+
+  for (const file of files) {
+    const full = path.join(root, ...file.split('/'));
+    let buf: Buffer;
+    try {
+      const stat = await fs.promises.lstat(full);
+      if (!stat.isFile() || stat.size > MAX_FILE) continue;
+      buf = await fs.promises.readFile(full);
+    } catch {
+      continue; // Apagado no disco, mas ainda no índice do git.
+    }
+    if (isBinary(buf)) continue;
+    const lines = buf.toString('utf8').split(/\r?\n/);
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const at = (opts.caseSensitive ? line : line.toLowerCase()).indexOf(needle);
+      if (at < 0) continue;
+      if (matches.length >= MAX_MATCHES) {
+        truncated = true;
+        break;
+      }
+      matches.push({ path: file, line: i + 1, col: at + 1, text: lineSnippet(line, at) });
+      found.add(file);
+    }
+    if (truncated) break;
+  }
+  return { query, matches, files: found.size, truncated };
 }

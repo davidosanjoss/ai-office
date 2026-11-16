@@ -465,6 +465,47 @@ export function headState(current: string, head: string | null | undefined): Hea
   return current === head || lf(current) === lf(head) ? 'equal' : 'differs';
 }
 
+// ---------- busca no explorador ----------
+
+/** Busca com menos letras que isso não roda sozinha enquanto você digita (só com Enter). */
+export const SEARCH_MIN = 2;
+
+/** Ocorrências agrupadas por arquivo, na ordem em que vieram. */
+export function groupMatches<T extends { path: string }>(matches: T[]): { path: string; matches: T[] }[] {
+  const groups = new Map<string, T[]>();
+  for (const m of matches) {
+    const g = groups.get(m.path);
+    if (g) g.push(m);
+    else groups.set(m.path, [m]);
+  }
+  return [...groups].map(([path, matches]) => ({ path, matches }));
+}
+
+/** A linha em pedaços, com `hit` nas ocorrências do texto buscado (para destacar). */
+export function matchParts(text: string, query: string, caseSensitive: boolean): { text: string; hit: boolean }[] {
+  if (!query) return [{ text, hit: false }];
+  const hay = caseSensitive ? text : text.toLowerCase();
+  const needle = caseSensitive ? query : query.toLowerCase();
+  const parts: { text: string; hit: boolean }[] = [];
+  let from = 0;
+  for (let at = hay.indexOf(needle); at >= 0; at = hay.indexOf(needle, at + needle.length)) {
+    if (at > from) parts.push({ text: text.slice(from, at), hit: false });
+    parts.push({ text: text.slice(at, at + needle.length), hit: true });
+    from = at + needle.length;
+  }
+  if (from < text.length || !parts.length) parts.push({ text: text.slice(from), hit: false });
+  return parts;
+}
+
+/** Resumo acima dos resultados. */
+export function searchSummary(r: { matches: unknown[]; files: number; truncated: boolean }): string {
+  if (!r.matches.length) return 'Nada encontrado.';
+  const n = r.matches.length;
+  const files = `${r.files} arquivo${r.files === 1 ? '' : 's'}`;
+  if (r.truncated) return `Os primeiros ${n} resultados, em ${files}. Refine a busca para ver o resto.`;
+  return `${n} resultado${n === 1 ? '' : 's'} em ${files}.`;
+}
+
 // ---------- painel de git ----------
 
 /** Seções do painel de git que você pode recolher. */

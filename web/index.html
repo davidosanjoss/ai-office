@@ -151,6 +151,10 @@
           <div class="files-body">
             <aside class="files-side">
               <div id="files-tree-pane">
+                <div class="files-tools files-search">
+                  <input id="files-search" type="search" placeholder="Buscar no projeto…" title="Procura um texto dentro dos arquivos (Ctrl+Shift+F). Esc limpa e volta para a árvore." autocomplete="off" spellcheck="false" />
+                  <button id="files-search-case" class="icon" title="Diferenciar maiúsculas e minúsculas" aria-pressed="false">Aa</button>
+                </div>
                 <div class="files-tools">
                   <select id="files-ref" title="A pasta no disco (editável) ou uma branch (só leitura)">
                     <option value="">Pasta no disco (editável)</option>
@@ -164,6 +168,7 @@
                   <button id="files-reload" class="icon" title="Atualizar a árvore">↻</button>
                 </div>
                 <div id="files-tree"></div>
+                <div id="files-results" hidden></div>
               </div>
               <div id="hist-pane" hidden>
                 <div class="files-tools">

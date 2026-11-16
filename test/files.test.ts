@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { cleanPath, listDir, makeDir, readFile, removePath, renamePath, resolveInside, writeFile } from '../server/files.ts';
+import { MAX_MATCHES, cleanPath, listDir, makeDir, readFile, removePath, renamePath, resolveInside, searchFiles, writeFile } from '../server/files.ts';
 import { commitDetail, commitLog, commitOf, compareRefs, fileAt, fileAtHead, listRefs, treeAt } from '../server/history.ts';
 import { makeRepo, tempDir } from './helpers.ts';
 
@@ -101,6 +101,66 @@ describe('arquivos', () => {
     removePath(dir, 'src');
     expect(fs.existsSync(path.join(dir, 'src'))).toBe(false);
     expect(() => removePath(dir, '')).toThrow(/raiz/);
+  });
+});
+
+describe('busca nos arquivos', () => {
+  it('acha o texto nas linhas, sem diferenciar maiúsculas, e respeita o .gitignore', async () => {
+    const repo = makeRepo('busca');
+    fs.mkdirSync(path.join(repo, 'src'));
+    fs.mkdirSync(path.join(repo, 'node_modules', 'lib'), { recursive: true });
+    fs.writeFileSync(path.join(repo, 'src', 'app.ts'), 'const total = 1;\r\n// calcula o Total\r\nexport { total };\n');
+    fs.writeFileSync(path.join(repo, 'src', 'novo.ts'), 'total novo, ainda sem commit\n');
+    fs.writeFileSync(path.join(repo, 'node_modules', 'lib', 'x.js'), 'total ignorado\n');
+    fs.writeFileSync(path.join(repo, 'imagem.bin'), Buffer.from([0, 1, 2, 116, 111, 116, 97, 108]));
+    fs.writeFileSync(path.join(repo, '.gitignore'), 'node_modules/\n');
+    git(repo, 'add', 'src/app.ts', '.gitignore', 'imagem.bin');
+    git(repo, 'commit', '-q', '-m', 'app');
+
+    const r = await searchFiles(repo, 'total');
+    expect(r.matches.map((m) => `${m.path}:${m.line}:${m.col}`)).toEqual(['src/app.ts:1:7', 'src/app.ts:2:14', 'src/app.ts:3:10', 'src/novo.ts:1:1']);
+    expect(r.matches[1].text).toBe('// calcula o Total');
+    expect(r).toMatchObject({ files: 2, truncated: false });
+
+    const exact = await searchFiles(repo, 'Total', { caseSensitive: true });
+    expect(exact.matches.map((m) => m.line)).toEqual([2]);
+  });
+
+  it('fora de um repositório percorre a pasta, sem node_modules', async () => {
+    const dir = tempDir('busca-sem-git');
+    fs.mkdirSync(path.join(dir, 'a', 'node_modules'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'a', 'b.txt'), 'olá mundo\n');
+    fs.writeFileSync(path.join(dir, 'a', 'node_modules', 'c.txt'), 'mundo\n');
+    const r = await searchFiles(dir, 'MUNDO');
+    expect(r.matches).toEqual([{ path: 'a/b.txt', line: 1, col: 5, text: 'olá mundo' }]);
+  });
+
+  it('corta linhas longas em volta da ocorrência e para no limite de resultados', async () => {
+    const dir = tempDir('busca-limite');
+    fs.writeFileSync(path.join(dir, 'min.js'), `${'x'.repeat(5000)}achou${'y'.repeat(5000)}\n`);
+    fs.writeFileSync(path.join(dir, 'muitos.txt'), 'achou\n'.repeat(MAX_MATCHES + 10));
+    const r = await searchFiles(dir, 'achou');
+    expect(r.truncated).toBe(true);
+    expect(r.matches).toHaveLength(MAX_MATCHES);
+    const long = r.matches[0];
+    expect(long).toMatchObject({ path: 'min.js', col: 5001 });
+    expect(long.text.length).toBeLessThan(300);
+    expect(long.text).toMatch(/^….*achou.*…$/);
+  });
+
+  it('recusa busca vazia ou com quebra de linha', async () => {
+    const dir = tempDir('busca-vazia');
+    await expect(searchFiles(dir, '  ')).rejects.toThrow(/Digite/);
+    await expect(searchFiles(dir, 'a\nb')).rejects.toThrow(/uma linha/);
+    await expect(searchFiles(dir, undefined)).rejects.toThrow(/Digite/);
+  });
+
+  it.skipIf(process.platform === 'win32')('não segue link simbólico para fora da pasta', async () => {
+    const root = tempDir('busca-links');
+    const outside = tempDir('busca-fora');
+    fs.writeFileSync(path.join(outside, 'segredo.txt'), 'senha123\n');
+    fs.symlinkSync(path.join(outside, 'segredo.txt'), path.join(root, 'atalho.txt'));
+    expect((await searchFiles(root, 'senha')).matches).toEqual([]);
   });
 });
 

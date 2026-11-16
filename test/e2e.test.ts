@@ -820,6 +820,36 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
       await page.waitForSelector('#files-undo', { hidden: true });
     });
 
+    it('a busca acha o texto nos arquivos, abre o arquivo na linha e o Esc volta para a árvore', async () => {
+      fs.writeFileSync(path.join(repo, 'src', 'util.ts'), 'linha 1\nlinha 2\nexport function procuraAqui() {}\n');
+      await page.click('#files-search');
+      await page.keyboard.type('PROCURAAQUI');
+      await page.waitForSelector('#files-results:not([hidden]) .hit[data-path="src/util.ts"][data-line="3"]');
+      expect(await page.$eval('#files-tree', (e) => (e as HTMLElement).hidden)).toBe(true);
+      expect(await page.$eval('#files-results .search-sum', (e) => e.textContent)).toBe('1 resultado em 1 arquivo.');
+      expect(await page.$eval('#files-results .hit mark', (e) => e.textContent)).toBe('procuraAqui');
+
+      // Diferenciando maiúsculas, "PROCURAAQUI" não acha nada.
+      await page.click('#files-search-case');
+      await page.waitForFunction(() => document.querySelector('#files-results .search-sum')?.textContent === 'Nada encontrado.');
+      await page.click('#files-search-case');
+      await page.waitForSelector('#files-results .hit[data-line="3"]');
+
+      await page.click('#files-results .hit[data-line="3"]');
+      await page.waitForFunction(() => document.querySelector('#files-path')?.textContent === 'src/util.ts');
+      await waitFor(async () => (await editorText()).includes('procuraAqui'), 5000, 'o arquivo da busca no editor');
+      // A ocorrência fica selecionada no editor.
+      await page.waitForSelector('#files-editor .selected-text');
+
+      await page.click('#files-search');
+      await page.keyboard.press('Escape');
+      await page.waitForSelector('#files-results', { hidden: true });
+      await page.waitForSelector('#files-tree:not([hidden]) .node[data-path="src"]');
+      expect(await page.$eval('#files-search', (e) => (e as HTMLInputElement).value)).toBe('');
+      fs.rmSync(path.join(repo, 'src', 'util.ts'));
+      await page.click('#files-reload');
+    });
+
     it('cria e apaga arquivo pela árvore', async () => {
       await page.click(node('src'));
       await page.click('#files-new-file');
