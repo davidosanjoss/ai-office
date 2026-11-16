@@ -1578,6 +1578,100 @@ body.dir-hidden #directory {
 #files-tree .mk-dir .mk {
   color: var(--waiting);
 }
+.files-search input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 3px 6px;
+  font: 12px 'JetBrains Mono', Consolas, monospace;
+}
+.files-search input:focus {
+  outline: 1px solid var(--accent);
+}
+.files-search input:disabled {
+  opacity: 0.6;
+}
+#files-search-case {
+  font: 11px 'JetBrains Mono', Consolas, monospace;
+}
+#files-search-case[aria-pressed='true'] {
+  color: var(--accent);
+  outline: 1px solid var(--accent);
+  border-radius: 4px;
+}
+#files-results {
+  flex: 1;
+  overflow: auto;
+  padding: 0 0 4px;
+}
+#files-results[hidden] {
+  display: none;
+}
+#files-results .search-sum {
+  margin: 0;
+  padding: 6px 8px;
+  font-size: 11px;
+}
+#files-results button {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  background: none;
+  border: 0;
+  color: var(--text);
+  text-align: left;
+  font: 12px/1.6 'JetBrains Mono', Consolas, monospace;
+  cursor: pointer;
+  white-space: nowrap;
+}
+#files-results button:hover {
+  background: var(--panel);
+}
+#files-results button.current {
+  background: #283457;
+}
+#files-results .hit-file {
+  padding: 4px 8px 0;
+}
+#files-results .hit-file.open .nm {
+  color: var(--accent);
+}
+#files-results .hit-file .dir {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--muted);
+  font-size: 11px;
+}
+#files-results .hit-file .count {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 11px;
+}
+#files-results .hit {
+  padding: 0 8px 0 18px;
+}
+#files-results .hit .ln {
+  min-width: 28px;
+  text-align: right;
+  color: var(--muted);
+  flex-shrink: 0;
+}
+#files-results .hit .tx {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+#files-results mark {
+  background: rgba(255, 200, 80, 0.35);
+  color: inherit;
+  border-radius: 2px;
+}
+#files-results .empty,
 #hist-list .empty,
 #files-tree .empty {
   padding: 8px;

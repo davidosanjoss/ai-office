@@ -245,6 +245,27 @@ export interface DirListing {
   truncated: boolean;
 }
 
+/** Uma linha em que a busca do explorador achou o texto. */
+export interface SearchMatch {
+  /** Arquivo, relativo à raiz do projeto, com "/". */
+  path: string;
+  /** Linha, a partir de 1. */
+  line: number;
+  /** Coluna da primeira ocorrência na linha, a partir de 1 (como no editor). */
+  col: number;
+  /** A linha (cortada em volta da ocorrência, se for muito longa). */
+  text: string;
+}
+
+export interface SearchResult {
+  query: string;
+  matches: SearchMatch[];
+  /** Arquivos com pelo menos uma ocorrência (entre os mostrados). */
+  files: number;
+  /** Havia mais ocorrências do que as mostradas. */
+  truncated: boolean;
+}
+
 /** Um arquivo aberto no editor: da pasta (editável) ou de um commit (só leitura). */
 export interface FileContent {
   path: string;

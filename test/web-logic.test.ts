@@ -372,6 +372,38 @@ describe('abas da sala de guerra e terminais', () => {
   });
 });
 
+describe('busca no explorador', () => {
+  it('agrupa as ocorrências por arquivo, na ordem em que vieram', () => {
+    const m = (path: string, line: number) => ({ path, line });
+    expect(logic.groupMatches([m('a.ts', 1), m('a.ts', 4), m('b/c.ts', 2)])).toEqual([
+      { path: 'a.ts', matches: [m('a.ts', 1), m('a.ts', 4)] },
+      { path: 'b/c.ts', matches: [m('b/c.ts', 2)] },
+    ]);
+  });
+
+  it('destaca todas as ocorrências da linha, com ou sem diferenciar maiúsculas', () => {
+    expect(logic.matchParts('Total = total + 1', 'total', false)).toEqual([
+      { text: 'Total', hit: true },
+      { text: ' = ', hit: false },
+      { text: 'total', hit: true },
+      { text: ' + 1', hit: false },
+    ]);
+    expect(logic.matchParts('Total = total', 'total', true)).toEqual([
+      { text: 'Total = ', hit: false },
+      { text: 'total', hit: true },
+    ]);
+    expect(logic.matchParts('nada', 'x', false)).toEqual([{ text: 'nada', hit: false }]);
+    expect(logic.matchParts('', '', false)).toEqual([{ text: '', hit: false }]);
+  });
+
+  it('resume quantos resultados e arquivos', () => {
+    expect(logic.searchSummary({ matches: [], files: 0, truncated: false })).toBe('Nada encontrado.');
+    expect(logic.searchSummary({ matches: [1], files: 1, truncated: false })).toBe('1 resultado em 1 arquivo.');
+    expect(logic.searchSummary({ matches: [1, 2, 3], files: 2, truncated: false })).toBe('3 resultados em 2 arquivos.');
+    expect(logic.searchSummary({ matches: [1, 2], files: 2, truncated: true })).toMatch(/^Os primeiros 2 resultados, em 2 arquivos\. Refine/);
+  });
+});
+
 describe('explorador de arquivos', () => {
   it('monta e desmonta caminhos com "/"', () => {
     expect(childPath('', 'a.ts')).toBe('a.ts');

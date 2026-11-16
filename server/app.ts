@@ -21,7 +21,7 @@ import {
   writeInput,
 } from './agents.ts';
 import { discoverProjects } from './discover.ts';
-import { FileError, MAX_FILE, listDir, makeDir, readFile, removePath, renamePath, writeFile } from './files.ts';
+import { FileError, MAX_FILE, listDir, makeDir, readFile, removePath, renamePath, searchFiles, writeFile } from './files.ts';
 import { fileDiff, gitInfo } from './git.ts';
 import { commitDetail, commitLog, compareRefs, fileAt, fileAtHead, listRefs, treeAt } from './history.ts';
 import { handleHook } from './hooks.ts';
@@ -388,6 +388,7 @@ export async function buildApp(opts: { port?: number } = {}) {
 
   app.get('/api/:kind/:id/files/list', folderRoute((cwd, req) => listDir(cwd, req.query.path ?? '')));
   app.get('/api/:kind/:id/files/read', folderRoute((cwd, req) => readFile(cwd, req.query.path)));
+  app.get('/api/:kind/:id/files/search', folderRoute((cwd, req) => searchFiles(cwd, req.query.q, { caseSensitive: req.query.case === '1' })));
   app.get('/api/:kind/:id/files/head', folderRoute((cwd, req) => fileAtHead(cwd, req.query.path)));
   app.put(
     '/api/:kind/:id/files/write',

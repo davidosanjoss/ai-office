@@ -142,6 +142,16 @@ describe('explorador de arquivos e histórico', () => {
     expect(fs.readdirSync(room.path).sort()).toEqual(['.git', 'README.md']);
   });
 
+  it('busca um texto nos arquivos da sala', async () => {
+    const room = await newRoom('busca', true);
+    const base = `/api/rooms/${room.id}`;
+    const { data } = await api('GET', `${base}/files/search?q=TESTE`);
+    expect(data).toMatchObject({ query: 'TESTE', files: 1, truncated: false, matches: [{ path: 'README.md', line: 1, col: 3, text: '# teste' }] });
+    expect((await api('GET', `${base}/files/search?q=TESTE&case=1`)).data.matches).toEqual([]);
+    expect((await api('GET', `${base}/files/search?q=`)).status).toBe(400);
+    expect((await api('GET', `/api/rooms/nada/files/search?q=x`)).status).toBe(404);
+  });
+
   it('salva arquivo maior que o limite padrão do Fastify (1 MB)', async () => {
     const room = await newRoom('explorador-grande');
     const content = 'linha "com aspas"\n'.repeat(80_000);

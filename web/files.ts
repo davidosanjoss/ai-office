@@ -5,7 +5,7 @@
 
 import { uiFontSize } from './terminals.ts';
 import type * as Monaco from 'monaco-editor';
-import type { CommitDetail, CommitLog, CommitSummary, DirEntry, DirListing, FileChange, FileContent, GitInfo, GitRef, RefCompare } from '../shared/types.ts';
+import type { CommitDetail, CommitLog, CommitSummary, DirEntry, DirListing, FileChange, FileContent, GitInfo, GitRef, RefCompare, SearchResult } from '../shared/types.ts';
 import * as logic from './logic.ts';
 
 type MonacoModule = typeof import('./monaco.ts');
@@ -88,6 +88,13 @@ export class Explorer {
   /** O arquivo aberto aparece lado a lado com o último commit. */
   private showingChanges = false;
 
+  // Busca
+  private searchCase = false;
+  private search?: SearchResult & { caseSensitive: boolean };
+  /** Conta as buscas: a resposta de uma busca velha não pisa na mais nova. */
+  private searchSeq = 0;
+  private searchTimer?: ReturnType<typeof setTimeout>;
+
   // Histórico
   private refs: GitRef[] = [];
   private histRef = '';
@@ -118,7 +125,30 @@ export class Explorer {
     $('#files-new-dir').addEventListener('click', () => this.create('dir'));
     $('#files-rename').addEventListener('click', () => this.rename());
     $('#files-delete').addEventListener('click', () => this.remove());
-    $('#files-reload').addEventListener('click', () => this.reloadTree());
+    $('#files-reload').addEventListener('click', () => {
+      this.reloadTree();
+      if (this.search) this.runSearch();
+    });
+    const search = $<HTMLInputElement>('#files-search');
+    search.addEventListener('input', () => {
+      clearTimeout(this.searchTimer);
+      this.searchTimer = setTimeout(() => this.runSearch(), 300);
+    });
+    search.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        clearTimeout(this.searchTimer);
+        this.runSearch(true);
+      } else if (e.key === 'Escape' && search.value) {
+        e.preventDefault();
+        this.clearSearch();
+      }
+    });
+    $('#files-search-case').addEventListener('click', () => {
+      this.searchCase = !this.searchCase;
+      $('#files-search-case').setAttribute('aria-pressed', String(this.searchCase));
+      if (search.value) this.runSearch();
+    });
+    $('#files-results').addEventListener('click', (e) => this.onResultClick(e));
     $('#files-save').addEventListener('click', () => this.save());
     $('#files-undo').addEventListener('click', () => this.undoEdit());
     $('#files-changes-btn').addEventListener('click', () => this.toggleChanges());
@@ -141,6 +171,13 @@ export class Explorer {
 
     window.addEventListener('keydown', (e) => {
       if (!this.shown || document.querySelector('dialog[open]')) return;
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'f' && this.mode === 'files' && !this.treeRef) {
+        e.preventDefault();
+        const input = $<HTMLInputElement>('#files-search');
+        input.focus();
+        input.select();
+        return;
+      }
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         // Fora do editor também: o navegador abriria o "Salvar página".
         e.preventDefault();
@@ -227,6 +264,7 @@ export class Explorer {
     this.diff = undefined;
     this.closeModels();
     this.disposeDiffModels();
+    this.clearSearch();
     this.showPane('empty');
     this.setBar('', '');
   }
@@ -373,6 +411,7 @@ export class Explorer {
       return;
     }
     this.treeRef = ref;
+    this.clearSearch();
     this.expanded = new Set(['']);
     this.selected = '';
     this.selectedKind = 'dir';
@@ -407,6 +446,9 @@ export class Explorer {
     $('#files-tree').innerHTML = rows.join('') || '<p class="muted empty">Pasta vazia</p>';
     const editable = !this.treeRef;
     for (const id of ['#files-new-file', '#files-new-dir']) $<HTMLButtonElement>(id).disabled = !editable;
+    const search = $<HTMLInputElement>('#files-search');
+    search.disabled = !editable;
+    search.placeholder = editable ? 'Buscar no projeto…' : 'A busca é na pasta no disco';
     for (const id of ['#files-rename', '#files-delete']) $<HTMLButtonElement>(id).disabled = !editable || !this.selected;
   }
 
@@ -427,6 +469,98 @@ export class Explorer {
       this.renderTree();
       this.openFile(p);
     }
+  }
+
+  // ---------- busca ----------
+
+  /** Procura o texto da caixa nos arquivos da pasta. `now` (Enter) busca mesmo com poucas letras. */
+  private async runSearch(now = false) {
+    const query = $<HTMLInputElement>('#files-search').value;
+    if (!query.trim() || (!now && query.trim().length < logic.SEARCH_MIN)) {
+      if (!query.trim()) this.clearSearch();
+      return;
+    }
+    const seq = ++this.searchSeq;
+    const base = this.base;
+    const caseSensitive = this.searchCase;
+    this.showResults();
+    const box = $('#files-results');
+    if (!this.search) box.innerHTML = '<p class="muted empty">Procurando…</p>';
+    try {
+      const r = (await this.deps.api('GET', `${this.base}/files/search?${q({ q: query, case: caseSensitive ? 1 : undefined })}`)) as SearchResult;
+      if (seq !== this.searchSeq || base !== this.base) return;
+      this.search = { ...r, caseSensitive };
+      this.renderResults();
+    } catch (err) {
+      if (seq !== this.searchSeq || base !== this.base) return;
+      this.search = undefined;
+      box.innerHTML = `<p class="muted empty">${esc((err as Error).message)}</p>`;
+    }
+  }
+
+  /** Esvazia a busca e volta para a árvore. */
+  private clearSearch() {
+    clearTimeout(this.searchTimer);
+    this.searchSeq++;
+    this.search = undefined;
+    $<HTMLInputElement>('#files-search').value = '';
+    $('#files-results').hidden = true;
+    $('#files-results').innerHTML = '';
+    $('#files-tree').hidden = false;
+  }
+
+  private showResults() {
+    $('#files-tree').hidden = true;
+    $('#files-results').hidden = false;
+  }
+
+  private renderResults() {
+    const r = this.search;
+    if (!r) return;
+    const rows = [`<p class="muted search-sum">${esc(logic.searchSummary(r))}</p>`];
+    for (const g of logic.groupMatches(r.matches)) {
+      const name = g.path.slice(g.path.lastIndexOf('/') + 1);
+      const dir = logic.parentPath(g.path);
+      rows.push(
+        `<button class="hit-file${g.path === this.open?.path ? ' open' : ''}" data-path="${esc(g.path)}" title="${esc(g.path)}">` +
+          `<span class="nm">${esc(name)}</span>${dir ? `<span class="dir">${esc(dir)}</span>` : ''}<span class="count">${g.matches.length}</span></button>`,
+      );
+      for (const m of g.matches) {
+        const text = logic
+          .matchParts(m.text, r.query, r.caseSensitive)
+          .map((p) => (p.hit ? `<mark>${esc(p.text)}</mark>` : esc(p.text)))
+          .join('');
+        rows.push(
+          `<button class="hit" data-path="${esc(m.path)}" data-line="${m.line}" data-col="${m.col}" title="${esc(m.path)}:${m.line}">` +
+            `<span class="ln">${m.line}</span><span class="tx">${text}</span></button>`,
+        );
+      }
+    }
+    $('#files-results').innerHTML = rows.join('');
+  }
+
+  private async onResultClick(e: Event) {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-path]');
+    if (!btn || !this.search) return;
+    const file = btn.dataset.path!;
+    const line = Number(btn.dataset.line ?? 0);
+    const col = Number(btn.dataset.col ?? 1);
+    const len = this.search.query.length;
+    for (const el of document.querySelectorAll('#files-results .current')) el.classList.remove('current');
+    btn.classList.add('current');
+    await this.openFile(file);
+    if (this.open?.path !== file || this.open.ref) return;
+    if (this.showingChanges) await this.toggleChanges();
+    this.renderResults();
+    document.querySelector(`#files-results button[data-path="${CSS.escape(file)}"]${line ? `[data-line="${line}"]` : ''}`)?.classList.add('current');
+    if (!line || !this.editor) return;
+    const range = { startLineNumber: line, startColumn: col, endLineNumber: line, endColumn: col + len };
+    // O editor pode ter acabado de aparecer (estava escondido): sem medir a altura antes, o
+    // "centro" é o de um editor de altura zero e a linha fica no topo, atrás da rolagem fixa.
+    this.editor.layout();
+    this.editor.setSelection(range);
+    this.editor.revealRangeInCenter(range);
+    this.editor.focus();
   }
 
   // ---------- editor ----------
