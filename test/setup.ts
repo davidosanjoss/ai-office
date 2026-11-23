@@ -7,6 +7,8 @@ import path from 'node:path';
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-office-test-'));
 process.env.AI_OFFICE_TMP = tmp;
 process.env.AI_OFFICE_DATA = path.join(tmp, 'data');
+process.env.AI_OFFICE_CODEX_DIR = path.join(tmp, 'codex');
+process.env.AI_OFFICE_CODEX_BIN = '';
 process.env.AI_OFFICE_CLAUDE_DIR = path.join(tmp, 'claude');
 process.env.AI_OFFICE_CLAUDE_BIN = path.resolve('test/fixtures/fake-claude.mjs');
 process.env.AI_OFFICE_GH_BIN = path.resolve('test/fixtures/fake-gh.mjs');

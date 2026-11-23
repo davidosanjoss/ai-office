@@ -86,7 +86,7 @@ export function stopDecision(agent: Agent, payload: Record<string, any>, now = D
 
 /** O que a interface mostra na volta de um agente. */
 export function contextInfo(agent: Agent, now = Date.now()) {
-  const state = agent.kind === 'shell' ? undefined : contextOf(agent);
+  const state = agent.kind === 'shell' || agent.kind === 'codex' ? undefined : contextOf(agent);
   const policy = policyOf(agent);
   if (!state) return { policy, choice: 'retomar' as const };
   const costs = returnCosts(state, priceFor(state.model, prices()));

@@ -42,12 +42,30 @@ export interface Price {
 /** Escrita de cache pela regra padrão: 1,25× a entrada (5 min) e 2× (1 h). */
 const priced = (input: number, output: number, cacheRead: number): Price => ({ input, output, cacheWrite5m: input * 1.25, cacheWrite1h: input * 2, cacheRead });
 
+/** Os campos de escrita de 5 min e 1 h correspondem ao cache da Anthropic. */
+const openAIPrice = (input: number, output: number, cacheRead: number): Price => ({ input, output, cacheRead, cacheWrite5m: 0, cacheWrite1h: 0 });
+
+/** Tarifas Standard para contexto curto em USD por milhão de tokens. */
+export const OPENAI_STANDARD_PRICES: Record<string, Price> = {
+  'gpt-6.2-astra': openAIPrice(8, 40, 0.4),
+  'gpt-6.2-sol': openAIPrice(2, 10, 0.1),
+  'gpt-6.1-sol': openAIPrice(2, 10, 0.1),
+  'gpt-6.1-terra': openAIPrice(1, 5, 0.05),
+  'gpt-6-astra': openAIPrice(10, 50, 1),
+  'gpt-6-luna': openAIPrice(0.1, 0.5, 0.01),
+  'gpt-5.5': openAIPrice(5, 30, 0.5),
+  'gpt-5.4': openAIPrice(2.5, 15, 0.25),
+  'gpt-5.4-mini': openAIPrice(0.75, 4.5, 0.075),
+  'gpt-5.3-codex': openAIPrice(1.75, 14, 0.175),
+};
+
 /**
  * Preços da API da Anthropic (tabela de 2026-10-06). O Haiku 5.5 não tinha leitura de cache
  * publicada nela: 0,1× a entrada, como nos outros. Você edita os seus no painel (ficam em
  * ~/.ai-office/uso/precos.json) e acrescenta os de outras fontes (GPT, Gemini...).
  */
 export const DEFAULT_PRICES: Record<string, Price> = {
+  ...OPENAI_STANDARD_PRICES,
   'claude-fable-5-1': priced(10, 50, 0.25),
   'claude-fable-5': priced(10, 50, 1),
   'claude-opus-5-5': priced(4, 20, 0.2),
@@ -65,7 +83,7 @@ export const DEFAULT_PRICES: Record<string, Price> = {
 /** Preço de um modelo: o nome exato, ou sem o sufixo de data ou de contexto ("-20251001", "[1m]"). */
 export function priceFor(model: string, prices: Record<string, Price>): Price | undefined {
   if (prices[model]) return prices[model];
-  const base = model.replace(/\[[^\]]*\]$/, '').replace(/-\d{8}$/, '');
+  const base = model.replace(/\[[^\]]*\]$/, '').replace(/-(?:\d{8}|\d{4}-\d{2}-\d{2})$/, '');
   return prices[base];
 }
 

@@ -43,7 +43,7 @@ export interface Project {
   summary: string;
   /** Você editou a ficha: o rascunho automático não a substitui mais. */
   summaryEdited?: boolean;
-  /** Modelos dos agentes deste projeto (ausente = o padrão da sua conta no Claude Code). */
+  /** Modelos dos agentes deste projeto (ausente = o padrão da conta do agente). */
   models?: ProjectModels;
 }
 
@@ -85,7 +85,7 @@ export interface Room {
 export interface Agent {
   id: string;
   /** 'shell' é um terminal comum, sem Claude. Ausente nos registros antigos = 'claude'. */
-  kind?: 'claude' | 'shell';
+  kind?: 'claude' | 'codex' | 'shell';
   roomId: string;
   /** Projeto da sala em que o agente trabalha. Ausente nos registros antigos = o primeiro da sala. */
   projectId?: string;

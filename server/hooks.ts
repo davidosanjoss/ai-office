@@ -21,6 +21,16 @@ export function handleHook({ event, agentId, payload }: HookBody): object | unde
   const agent = agentId ? store.agents.get(agentId) : findBySession(payload.session_id);
   if (!agent) return undefined;
   const id = agent.id;
+  if (agent.kind === 'codex') {
+    if (event === 'SessionStart' && typeof payload.session_id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(payload.session_id)) {
+      store.patchAgent(id, { sessionId: payload.session_id, status: 'idle', activity: 'Pronto para trabalhar' });
+      return;
+    }
+    if (event === 'PermissionRequest') {
+      store.patchAgent(id, { status: 'waiting', activity: 'Aguardando aprovação no terminal', attentionAt: Date.now() });
+      return;
+    }
+  }
   // O agente seguiu adiante (a ferramenta rodou, chegou outro pedido, terminou): o que estava
   // esperando resposta no escritório foi respondido no terminal.
   if (['PostToolUse', 'UserPromptSubmit', 'Stop', 'SessionEnd'].includes(event)) agentMovedOn(id);
@@ -80,7 +90,7 @@ export function handleHook({ event, agentId, payload }: HookBody): object | unde
 
     case 'Stop': {
       // Contexto grande com o cache quente: antes de parar, o agente grava o que importa.
-      const output = stopDecision(agent, payload);
+      const output = agent.kind === 'codex' ? undefined : stopDecision(agent, payload);
       if (output) return output;
       store.patchAgent(id, { status: 'done', activity: 'Terminou!', subagents: 0, attentionAt: Date.now() });
       store.log(id, 'Terminou o pedido', 'done');

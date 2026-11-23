@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { MemoryJob, MemoryStatus } from '../shared/types.ts';
 import { MEMORY_CONTAINER, MEMORY_IMAGE, MEMORY_PORT, MEMORY_RELEASE, MEMORY_VERSION, imageVersion, sameImage } from '../shared/memory.ts';
-import { CLAUDE_DIR, isWindows, ptyCommand, which } from './platform.ts';
+import { CLAUDE_DIR, CODEX_DIR, codexBin, isWindows, ptyCommand, which } from './platform.ts';
 
 /** Avisa a interface a cada passo da instalação. */
 export const memoryEvents = new EventEmitter();
@@ -163,6 +163,12 @@ function wrapperEnv(): NodeJS.ProcessEnv {
   };
 }
 
+export function codexMemory() {
+  const wrapper = wrapperPath();
+  if (!fs.existsSync(wrapper) || !fs.existsSync(path.join(dataDir(), 'auth-tokens', 'default'))) return;
+  return { ...ptyCommand(wrapper, ['mcp-bridge', '--no-session-id']), env: wrapperEnv() };
+}
+
 async function install(step: (s: string) => void) {
   const docker = dockerBin();
   if (!docker) throw new MemoryError('O Docker não está instalado. Instale-o (https://docs.docker.com/get-docker/) e tente de novo.');
@@ -221,6 +227,10 @@ async function install(step: (s: string) => void) {
   await run(wrapper, ['install-mcp', '--client', 'claude-code', '--apply'], wrapperEnv());
   pinMcp();
   await run(wrapper, ['install-hooks', '--agent', 'claude-code', '--apply'], wrapperEnv());
+  if (codexBin()) {
+    step('Ligando a captura do ai-memory ao Codex');
+    await run(wrapper, ['install-hooks', '--agent', 'codex', '--apply'], { ...wrapperEnv(), CODEX_HOME: CODEX_DIR });
+  }
 }
 
 /** Pasta do backup ao lado da dos dados: ai-memory.antes-3.2.8-2026-11-11 (com sufixo se já existir). */
@@ -284,8 +294,8 @@ async function installWrapper(dest: string) {
 async function uninstall(step: (s: string) => void) {
   const wrapper = wrapperPath();
   if (fs.existsSync(wrapper)) {
-    step('Desligando do Claude Code (hooks e MCP)');
-    await run(wrapper, ['uninstall', '--apply'], wrapperEnv());
+    step('Desligando os clientes do ai-memory');
+    await run(wrapper, ['uninstall', '--apply'], { ...wrapperEnv(), CODEX_HOME: CODEX_DIR });
   }
   const docker = dockerBin();
   if (docker) {
