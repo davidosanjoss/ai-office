@@ -2,7 +2,7 @@
 // dia e fonte, por modelo (com os preços editáveis) e na janela atual do plano do Claude.
 // Cobre o mapa e os terminais enquanto está aberto; Esc ou × fecha.
 
-import { type Price, type UsageRow, type UsageSummary, formatTokens, formatUsd, totalTokens } from '../shared/usage.ts';
+import { type Price, type UsageRow, type UsageSummary, formatTokens, formatUsd, priceFor, totalTokens } from '../shared/usage.ts';
 import * as logic from './logic.ts';
 import { DayPanel } from './day.ts';
 
@@ -15,7 +15,7 @@ const time = (ts: number) => new Date(ts).toLocaleTimeString('pt-BR', { hour: '2
 export class UsagePanel {
   private period: logic.UsagePeriod = '7d';
   private summary?: UsageSummary;
-  private prices?: { prices: Record<string, Price>; custom: string[]; seen: string[] };
+  private prices?: { prices: Record<string, Price>; custom: string[]; seen: string[]; openAI: string[] };
   /** Número do último pedido: a resposta de um pedido mais antigo (outro período) é descartada. */
   private seq = 0;
   private tab: 'consumo' | 'dia' | 'relatorio' = 'consumo';
@@ -208,20 +208,21 @@ export class UsagePanel {
     }
   }
 
-  /** Modelos do período com o preço de cada um, editável (USD por milhão de tokens). */
+  /** Modelos observados e catálogo OpenAI, com preços editáveis em USD por milhão de tokens. */
   private renderModels(s: UsageSummary) {
     const p = this.prices!;
-    const models = [...new Set([...s.byModel.map((m) => m.model), ...p.seen])];
+    const models = [...new Set([...s.byModel.map((m) => m.model), ...p.seen, ...p.openAI])];
     const used = new Map(s.byModel.map((m) => [m.model, m]));
-    const cell = (model: string, k: keyof Price) => `<td><input name="${k}" type="number" min="0" step="any" value="${p.prices[model]?.[k] ?? ''}" placeholder="—" /></td>`;
+    const cell = (price: Price | undefined, k: keyof Price) => `<td><input name="${k}" type="number" min="0" step="any" value="${price?.[k] ?? ''}" placeholder="—" /></td>`;
     $('#usage-models tbody').innerHTML = models
       .map((model) => {
         const m = used.get(model);
+        const price = priceFor(model, p.prices);
         return `<tr data-model="${esc(model)}">
           <td><b>${esc(model)}</b><small class="muted"> ${esc(m?.source ?? '')}${p.custom.includes(model) ? ' · preço seu' : ''}</small></td>
           <td class="num">${m ? formatTokens(totalTokens(m.tokens)) : '—'}</td>
           <td class="num">${m?.cost !== undefined ? formatUsd(m.cost) : m ? 'sem preço' : '—'}</td>
-          ${cell(model, 'input')}${cell(model, 'output')}${cell(model, 'cacheWrite5m')}${cell(model, 'cacheWrite1h')}${cell(model, 'cacheRead')}
+          ${cell(price, 'input')}${cell(price, 'output')}${cell(price, 'cacheWrite5m')}${cell(price, 'cacheWrite1h')}${cell(price, 'cacheRead')}
           <td><button class="btn small" type="submit" value="${esc(model)}">Salvar</button></td>
         </tr>`;
       })

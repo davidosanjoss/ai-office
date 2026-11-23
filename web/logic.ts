@@ -4,7 +4,7 @@ import type { ActivityEvent, Agent, FileChange, Floor, Incident, IncidentMessage
 import { canDeleteBranch } from '../shared/worktree.ts';
 import type { PendingRequest, Question } from '../shared/permissions.ts';
 import { elapsed, shellStage } from '../shared/live.ts';
-import { modelsLabel } from '../shared/models.ts';
+import { modelsForAgent, modelsLabel } from '../shared/models.ts';
 import { PLAN_STALE_MS, type PlanUsage, type UsageRow, type UsageSummary, dayKey, formatTokens, formatUsd, totalTokens } from '../shared/usage.ts';
 import type { ContextPolicy, ReturnChoice } from '../shared/context.ts';
 
@@ -636,9 +636,9 @@ export function squadBoard(room: Room, agents: Agent[], activity: ActivityEvent[
  * eles retomam. Quem está fora do escritório já pega a escolha nova ao voltar.
  */
 export function staleModelAgents(room: Room, project: Project, agents: Agent[]): Agent[] {
-  const want = modelsLabel(project.models);
+  const want = (agent: Agent) => modelsLabel(modelsForAgent(project.models, agent.kind === 'codex' ? 'codex' : 'claude'));
   return agents.filter(
-    (a) => a.roomId === room.id && a.kind !== 'shell' && a.status !== 'exited' && agentProject(room, a)?.id === project.id && (a.models ?? 'padrão da conta') !== want,
+    (a) => a.roomId === room.id && a.kind !== 'shell' && a.status !== 'exited' && agentProject(room, a)?.id === project.id && (a.models ?? 'padrão da conta') !== want(a),
   );
 }
 

@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
 import path from 'node:path';
 import { FLOOR_COLORS, type PlanRoom, autoPlace, isFixedRow, isWarColumn, roomWidth } from '../shared/building.ts';
+import { validModelName } from '../shared/models.ts';
 import type { ActivityEvent, Agent, Floor, Incident, OfficeState, Room, ServerMsg } from '../shared/types.ts';
 import { DATA_DIR } from './platform.ts';
 import { newProject } from './projects.ts';
@@ -67,6 +68,15 @@ export class Store extends EventEmitter {
       for (const r of this.rooms.values()) {
         if (!r.projects?.length) {
           r.projects = [newProject(r.path)];
+          migrated = true;
+        }
+        for (const project of r.projects) {
+          const legacy = project as typeof project & { codexModel?: unknown };
+          if (!('codexModel' in legacy)) continue;
+          if (!project.models && validModelName(legacy.codexModel)) {
+            project.models = { mode: 'unico', model: legacy.codexModel };
+          }
+          delete legacy.codexModel;
           migrated = true;
         }
       }

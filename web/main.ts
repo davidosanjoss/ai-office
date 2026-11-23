@@ -2,7 +2,8 @@ import type { ActivityEvent, Agent, ClientMsg, Project, DiffScope, FileChange, F
 import { type MentionSuggestion, type Participant, applyMention, mentionQuery, mentionSuggestions } from '../shared/incident.ts';
 import { windowsSteps } from '../shared/memory.ts';
 import { type PendingRequest, alwaysLabel, requestSummary } from '../shared/permissions.ts';
-import { MODEL_SUGGESTIONS, modelsLabel } from '../shared/models.ts';
+import { MODEL_GROUPS, modelsLabel } from '../shared/models.ts';
+import { CONTEXT_LIMIT } from '../shared/context.ts';
 import { FLOOR_COLORS, type Cell } from '../shared/building.ts';
 import { countChanges, parseDiff, renderDiff } from './diff.ts';
 import { Explorer, type ExplorerTarget } from './files.ts';
@@ -796,6 +797,7 @@ function renderAgentDetails() {
     ${todos.length ? `<div class="ad-row"><span>Tarefas</span><span>${done}/${todos.length}</span></div><div class="ad-progress"><i style="width:${(done / todos.length) * 100}%"></i></div>
       <ul>${todos.map((t) => `<li class="${t.status}">${esc(t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content)}</li>`).join('')}</ul>` : ''}
     ${a.helpers?.length ? row('Ajudantes', esc(a.helpers.join(' · '))) : ''}
+    ${row('Agente', a.kind === 'codex' ? 'Codex' : 'Claude Code')}
     ${row('Modelo', esc(info?.model ?? a.models ?? 'padrão da conta'))}
     ${info?.branch ? row('Branch', `${esc(info.branch)}${a.worktreeBranch ? ' (worktree)' : ''}`) : ''}
     ${info ? row('Alterado agora', info.files ? `${info.files} arquivo(s), <span style="color:var(--done)">+${info.linesAdded}</span> <span style="color:var(--danger)">−${info.linesRemoved}</span>` : 'nada') : ''}
@@ -815,7 +817,22 @@ function modelsTarget(): { room: Room; project: Project } | undefined {
 }
 
 let modelsKey = '';
-$('#model-suggestions').replaceChildren(...MODEL_SUGGESTIONS.map((m) => new Option('', m)));
+$('#floor-context-limit').textContent = `${CONTEXT_LIMIT / 1000} mil`;
+const customModel = ':custom';
+const modelFields = (['model', 'reasoning', 'execution'] as const).map((name) => {
+  const select = $<HTMLSelectElement>(`#model-choice-${name}`);
+  const input = $<HTMLInputElement>(`#models-form input[name=${name}]`);
+  select.add(new Option('Selecione um modelo', ''));
+  for (const provider of MODEL_GROUPS) {
+    const group = document.createElement('optgroup');
+    group.label = provider.label;
+    group.disabled = !!provider.disabled;
+    group.append(...provider.models.map((model) => new Option(model, model)));
+    select.append(group);
+  }
+  select.add(new Option('Outro modelo…', customModel));
+  return { name, select, input };
+});
 
 function renderModelsPanel() {
   const t = modelsTarget();
@@ -832,9 +849,12 @@ function renderModelsPanel() {
     const m = project.models;
     const mode = m?.mode ?? 'padrao';
     form.querySelector<HTMLInputElement>(`input[name=mode][value=${mode}]`)!.checked = true;
-    form.querySelector<HTMLInputElement>('input[name=model]')!.value = m?.model ?? '';
-    form.querySelector<HTMLInputElement>('input[name=reasoning]')!.value = m?.reasoning ?? '';
-    form.querySelector<HTMLInputElement>('input[name=execution]')!.value = m?.execution ?? '';
+    for (const { name, select, input } of modelFields) {
+      const value = m?.[name] ?? '';
+      const available = MODEL_GROUPS.some((provider) => !provider.disabled && provider.models.includes(value));
+      select.value = value && !available ? customModel : value;
+      input.value = select.value === customModel ? value : '';
+    }
     $('#models-msg').textContent = '';
     showModelFields();
   }
@@ -848,7 +868,11 @@ function renderModelsPanel() {
 
 function showModelFields() {
   const mode = $<HTMLFormElement>('#models-form').querySelector<HTMLInputElement>('input[name=mode]:checked')?.value ?? 'padrao';
-  for (const f of document.querySelectorAll<HTMLElement>('#models-form .models-field')) f.hidden = f.dataset.for !== mode;
+  for (const { select, input } of modelFields) {
+    const field = select.closest<HTMLElement>('.models-field')!;
+    field.hidden = field.dataset.for !== mode;
+    input.hidden = select.value !== customModel;
+  }
 }
 $('#models-form').addEventListener('change', showModelFields);
 
@@ -858,11 +882,14 @@ $('#models-form').addEventListener('submit', async (e) => {
   if (!t) return;
   const data = new FormData(e.target as HTMLFormElement);
   const mode = String(data.get('mode') ?? 'padrao');
+  const chosen = Object.fromEntries(modelFields.map(({ name, select, input }) =>
+    [name, select.value === customModel ? input.value : select.value],
+  ));
   const models =
     mode === 'unico'
-      ? { mode, model: data.get('model') }
+      ? { mode, model: chosen.model }
       : mode === 'duplo'
-        ? { mode, reasoning: data.get('reasoning'), execution: data.get('execution') }
+        ? { mode, reasoning: chosen.reasoning, execution: chosen.execution }
         : null;
   const msg = $('#models-msg');
   try {
@@ -2051,6 +2078,7 @@ let agentRoom = '';
 formDialog(dlgAgent, async (data) => {
   const agent = (await api('POST', '/api/agents', {
     roomId: agentRoom,
+    kind: data.get('kind'),
     projectId: data.get('project') || undefined,
     name: data.get('name'),
     worktree: data.get('worktree') === 'on',
