@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { DEFAULT_PRICES, WINDOW_MS, costOf, livePlan, parsePlan, formatTokens, formatUsd, parseRecord, planWindows, priceFor, summarize, type UsageRecord } from '../shared/usage.ts';
+import { ANTHROPIC_CURRENT_MODELS, DEFAULT_PRICES, WINDOW_MS, costOf, livePlan, parsePlan, formatTokens, formatUsd, parseRecord, planWindows, priceFor, summarize, type UsageRecord } from '../shared/usage.ts';
 import { claudeRecord, receiveRecords, resetUsage, usageRecords } from '../server/usage.ts';
 import { transcriptLine } from './helpers.ts';
 
@@ -74,6 +74,15 @@ describe('preços e custo', () => {
     // Opus 5.5: $4 entrada, $20 saída, $8 cache de 1 h, $5 cache de 5 min, $0,20 leitura (por milhão).
     const r = rec({ input: 1e6, output: 1e6, cacheWrite1h: 1e6, cacheWrite5m: 1e6, cacheRead: 1e6 });
     expect(costOf(r, DEFAULT_PRICES['claude-opus-5-5'])).toBeCloseTo(4 + 20 + 8 + 5 + 0.2);
+  });
+
+  it('regressão: os modelos atuais da Anthropic têm o preço da tabela (o Sonnet 5.5 lia cache a $0,20, e o Fable 5.2 não tinha preço)', () => {
+    const p = (m: string) => DEFAULT_PRICES[m] && [DEFAULT_PRICES[m].input, DEFAULT_PRICES[m].output, DEFAULT_PRICES[m].cacheRead];
+    expect(p('claude-fable-5-2')).toEqual([8, 40, 0.2]);
+    expect(p('claude-opus-5-5')).toEqual([4, 20, 0.2]);
+    expect(p('claude-sonnet-5-5')).toEqual([2, 10, 0.1]);
+    expect(p('claude-haiku-5-5')).toEqual([0.1, 0.5, 0.01]);
+    for (const m of ANTHROPIC_CURRENT_MODELS) expect(DEFAULT_PRICES[m], m).toBeDefined();
   });
 
   it('registro de fora inválido é recusado', () => {

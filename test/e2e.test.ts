@@ -1016,10 +1016,10 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     )).toEqual([['Anthropic', false], ['OpenAI', false], ['Google · Antigravity', false]]);
     await page.click('#models-form input[value=duplo]');
     await page.select('#model-choice-reasoning', 'claude-opus-5-5');
-    await page.select('#model-choice-execution', 'sonnet');
+    await page.select('#model-choice-execution', 'claude-sonnet-5-5');
     await page.click('#models-form button[type=submit]');
     await waitFor(() => store.rooms.get(room.id)!.projects![1].models?.mode === 'duplo', 3000, 'modelos salvos');
-    expect(store.rooms.get(room.id)!.projects![1].models).toEqual({ mode: 'duplo', reasoning: 'claude-opus-5-5', execution: 'sonnet' });
+    expect(store.rooms.get(room.id)!.projects![1].models).toEqual({ mode: 'duplo', reasoning: 'claude-opus-5-5', execution: 'claude-sonnet-5-5' });
     // O Saulo abriu no padrão da conta: a troca vale quando ele retomar.
     await page.waitForFunction(() => document.querySelector('#models-stale:not([hidden])')?.textContent?.includes('Saulo'));
     // Nome que não é de modelo: o servidor recusa e a mensagem aparece.

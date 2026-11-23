@@ -70,20 +70,26 @@ export const GOOGLE_STANDARD_PRICES: Record<string, Price> = {
   'gemini-4-neon': flatCachePrice(3, 15, 0.15),
   'gemini-4-hydrogen': flatCachePrice(1.5, 7.5, 0.075),
   'gemini-pro-orchestrator-neon': flatCachePrice(3, 15, 0.15),
+  'gemini-pro-orchestrator': flatCachePrice(4, 20, 0.2),
+  'gemini-pro-orchestrator-argon': flatCachePrice(4, 20, 0.2),
   'gemini-pro-orchestrator-g1-pro': flatCachePrice(4, 20, 0.2),
   'gemini-3.8-flash': flatCachePrice(0.75, 3.75, 0.075),
   'gemini-3.1-pro-preview': flatCachePrice(2, 12, 0.2),
   'gemini-3-flash-preview': flatCachePrice(0.5, 3, 0.05),
 };
 
+/** Modelos atuais da Anthropic: aparecem na tabela de preços do consumo mesmo antes de serem usados. */
+export const ANTHROPIC_CURRENT_MODELS = ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
+
 /**
- * Preços da API da Anthropic (tabela de 2026-10-06). O Haiku 5.5 não tinha leitura de cache
+ * Preços da API da Anthropic (tabela de 2026-11-03). O Haiku 5.5 não tem leitura de cache
  * publicada nela: 0,1× a entrada, como nos outros. Você edita os seus no painel (ficam em
  * ~/.ai-office/uso/precos.json) e acrescenta os de outras fontes (GPT, Gemini...).
  */
 export const DEFAULT_PRICES: Record<string, Price> = {
   ...OPENAI_STANDARD_PRICES,
   ...GOOGLE_STANDARD_PRICES,
+  'claude-fable-5-2': priced(8, 40, 0.2),
   'claude-fable-5-1': priced(10, 50, 0.25),
   'claude-fable-5': priced(10, 50, 1),
   'claude-opus-5-5': priced(4, 20, 0.2),
@@ -91,7 +97,7 @@ export const DEFAULT_PRICES: Record<string, Price> = {
   'claude-opus-4-8': priced(5, 25, 0.5),
   'claude-opus-4-7': priced(5, 25, 0.5),
   'claude-opus-4-6': priced(5, 25, 0.5),
-  'claude-sonnet-5-5': priced(2, 10, 0.2),
+  'claude-sonnet-5-5': priced(2, 10, 0.1),
   'claude-sonnet-5': priced(2, 10, 0.2),
   'claude-sonnet-4-6': priced(3, 15, 0.3),
   'claude-haiku-5-5': priced(0.1, 0.5, 0.01),

@@ -15,7 +15,7 @@ import { agyHasMemory, agyWiring } from '../server/memory.ts';
 import { store } from '../server/store.ts';
 import { resetUsage, usageRecords } from '../server/usage.ts';
 import { cleanEnv } from '../server/agents.ts';
-import { modelsForAgent } from '../shared/models.ts';
+import { MODEL_GROUPS, modelsForAgent } from '../shared/models.ts';
 import { DEFAULT_PRICES, GOOGLE_STANDARD_PRICES, costOf, priceFor } from '../shared/usage.ts';
 import type { Agent } from '../shared/types.ts';
 
@@ -24,7 +24,18 @@ const agyDir = process.env.AI_OFFICE_ANTIGRAVITY_DIR!;
 const agyConfigDir = process.env.AI_OFFICE_ANTIGRAVITY_CONFIG_DIR!;
 
 describe('Antigravity: modelos e preços', () => {
+  it('lista somente modelos Google sem sufixo de esforço no grupo Google · Antigravity', () => {
+    const group = MODEL_GROUPS.find((g) => g.label === 'Google · Antigravity');
+    expect(group).toBeDefined();
+    expect(group!.models.length).toBeGreaterThan(0);
+    for (const model of group!.models) {
+      expect(model).toMatch(/^gemini-/i);
+      expect(model).not.toMatch(/-(?:low|medium|high|xhigh|max)$/i);
+    }
+  });
+
   it('filtra modelos compatíveis por tipo de agente', () => {
+    expect(modelsForAgent({ mode: 'unico', model: 'gemini-4-neon' }, 'antigravity')).toEqual({ mode: 'unico', model: 'gemini-4-neon' });
     expect(modelsForAgent({ mode: 'unico', model: 'gemini-4-neon-high' }, 'antigravity')).toEqual({ mode: 'unico', model: 'gemini-4-neon-high' });
     expect(modelsForAgent({ mode: 'unico', model: 'gemini-4-neon-high' }, 'claude')).toBeUndefined();
     expect(modelsForAgent({ mode: 'unico', model: 'gemini-4-neon-high' }, 'codex')).toBeUndefined();

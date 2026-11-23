@@ -31,7 +31,7 @@ import { IncidentError, addParticipants, closeIncident, incidentAt, leaveInciden
 import { MemoryError, memoryEvents, memoryStatus, openDataDir, startInstall, startUninstall } from './memory.ts';
 import { pickFolder } from './picker.ts';
 import { parseModels } from '../shared/models.ts';
-import { GOOGLE_STANDARD_PRICES, OPENAI_STANDARD_PRICES, type Place, type Price, type UsageRecord, costOf, dayKey, priceFor, summarize, tokensOf } from '../shared/usage.ts';
+import { ANTHROPIC_CURRENT_MODELS, GOOGLE_STANDARD_PRICES, OPENAI_STANDARD_PRICES, type Place, type Price, type UsageRecord, costOf, dayKey, priceFor, summarize, tokensOf } from '../shared/usage.ts';
 import { customPrices, prices, receiveRecords, setPrice, usageRecords } from './usage.ts';
 import { planUsage, recordPlan } from './plan.ts';
 import { startShellWatch } from './live.ts';
@@ -531,6 +531,7 @@ export async function buildApp(opts: { port?: number } = {}) {
       prices: prices(),
       custom: Object.keys(customPrices()),
       seen,
+      anthropic: ANTHROPIC_CURRENT_MODELS,
       openAI: Object.keys(OPENAI_STANDARD_PRICES),
       google: Object.keys(GOOGLE_STANDARD_PRICES),
     };

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { modelLaunch, modelsLabel, parseModels, validModelName } from '../shared/models.ts';
+import { MODEL_GROUPS, modelLaunch, modelsLabel, parseModels, validModelName } from '../shared/models.ts';
+import { ANTHROPIC_CURRENT_MODELS } from '../shared/usage.ts';
 
 describe('modelos por projeto', () => {
   it('um modelo vira --model', () => {
@@ -33,5 +34,13 @@ describe('modelos por projeto', () => {
     expect(parseModels({ mode: 'duplo', reasoning: 'opus', execution: 'x|y' })).toBeNull();
     expect(parseModels({ mode: 'outro' })).toBeNull();
     expect(parseModels('opus')).toBeNull();
+  });
+});
+
+describe('modelos da Anthropic no select', () => {
+  it('mostra só os nomes exatos (claude-...) dos modelos atuais, sem os apelidos', () => {
+    const anthropic = MODEL_GROUPS.find((g) => g.label === 'Anthropic')!.models;
+    expect(anthropic).toEqual(ANTHROPIC_CURRENT_MODELS);
+    for (const m of anthropic) expect(m).toMatch(/^claude-/);
   });
 });

@@ -17,34 +17,24 @@ export interface ModelGroup {
 
 /** Sugestões nos campos de modelo do projeto. */
 export const MODEL_GROUPS: ModelGroup[] = [
-  { label: 'Anthropic', models: ['opus', 'sonnet', 'haiku', 'fable', 'opus[1m]', 'sonnet[1m]', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] },
+  {
+    label: 'Anthropic',
+    // Só os nomes exatos dos modelos atuais. Um apelido do Claude Code ("opus", "sonnet[1m]") ainda
+    // entra pelo "Outro modelo…".
+    models: ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
+  },
   { label: 'OpenAI', models: ['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex'] },
   {
     label: 'Google · Antigravity',
     models: [
-      'gemini-4-neon-high',
-      'gemini-4-neon-xhigh',
-      'gemini-4-neon-medium',
-      'gemini-4-neon-low',
-      'gemini-4-argon-high',
-      'gemini-4-argon-medium',
-      'gemini-4-argon-low',
-      'gemini-4-hydrogen-high',
-      'gemini-4-hydrogen-xhigh',
-      'gemini-4-hydrogen-medium',
-      'gemini-4-hydrogen-low',
+      'gemini-4-neon',
+      'gemini-4-carbon',
+      'gemini-4-argon',
+      'gemini-4-hydrogen',
       'gemini-pro-orchestrator-neon',
-      'gemini-pro-orchestrator-g1-pro',
-      'gemini-3.8-flash-high',
-      'gemini-3.8-flash-medium',
-      'gemini-3.8-flash-low',
-      'claude-opus-5-5-high',
-      'claude-opus-5-5-medium',
-      'claude-opus-5-5-low',
-      'claude-sonnet-5-5-high',
-      'claude-sonnet-5-5-medium',
-      'claude-sonnet-5-5-low',
-      'gpt-oss-120b-medium',
+      'gemini-pro-orchestrator',
+      'gemini-pro-orchestrator-argon',
+      'gemini-3.8-flash',
     ],
   },
 ];

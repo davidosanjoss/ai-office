@@ -15,7 +15,7 @@ const time = (ts: number) => new Date(ts).toLocaleTimeString('pt-BR', { hour: '2
 export class UsagePanel {
   private period: logic.UsagePeriod = '7d';
   private summary?: UsageSummary;
-  private prices?: { prices: Record<string, Price>; custom: string[]; seen: string[]; openAI: string[]; google: string[] };
+  private prices?: { prices: Record<string, Price>; custom: string[]; seen: string[]; anthropic?: string[]; openAI: string[]; google: string[] };
   /** Número do último pedido: a resposta de um pedido mais antigo (outro período) é descartada. */
   private seq = 0;
   private tab: 'consumo' | 'dia' | 'relatorio' = 'consumo';
@@ -208,10 +208,10 @@ export class UsagePanel {
     }
   }
 
-  /** Modelos observados e catálogos OpenAI e Google/Antigravity, com preços editáveis em USD por milhão de tokens. */
+  /** Modelos observados e catálogos Anthropic, OpenAI e Google/Antigravity, com preços editáveis em USD por milhão de tokens. */
   private renderModels(s: UsageSummary) {
     const p = this.prices!;
-    const models = [...new Set([...s.byModel.map((m) => m.model), ...p.seen, ...p.openAI, ...(p.google ?? [])])];
+    const models = [...new Set([...s.byModel.map((m) => m.model), ...p.seen, ...(p.anthropic ?? []), ...p.openAI, ...(p.google ?? [])])];
     const used = new Map(s.byModel.map((m) => [m.model, m]));
     const cell = (price: Price | undefined, k: keyof Price) => `<td><input name="${k}" type="number" min="0" step="any" value="${price?.[k] ?? ''}" placeholder="—" /></td>`;
     $('#usage-models tbody').innerHTML = models
