@@ -129,7 +129,13 @@ export function workspaceFromUris(raw: unknown): string {
         try {
           return fileURLToPath(item);
         } catch {
-          continue;
+          // No Windows, uma URI sem letra de unidade ("file:///tmp/x") não é caminho absoluto para o
+          // fileURLToPath: usa o caminho da URI mesmo, resolvido na unidade atual.
+          try {
+            return path.resolve(decodeURIComponent(new URL(item).pathname));
+          } catch {
+            continue;
+          }
         }
       }
       return item;

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   antigravityArgs,
@@ -204,6 +205,14 @@ describe('Antigravity: leitura de consumo e transcripts', () => {
     store.agents.clear();
   });
 
+  it('regressão: a pasta da URI do workspace não some no Windows quando a URI não tem letra de unidade', () => {
+    // No Windows, fileURLToPath('file:///tmp/meu-repo') lança erro, e a pasta voltava vazia.
+    expect(workspaceFromUris('["file:///tmp/meu-repo"]')).toBe(path.resolve('/tmp/meu-repo'));
+    expect(workspaceFromUris(JSON.stringify([pathToFileURL(path.resolve('/tmp/com espaço')).href]))).toBe(path.resolve('/tmp/com espaço'));
+    expect(workspaceFromUris('["/sem/uri"]')).toBe('/sem/uri');
+    expect(workspaceFromUris('nada')).toBe('');
+  });
+
   it('extrai registro de consumo de PLANNER_RESPONSE e ignora transcript_full.jsonl', async () => {
     const convId = 'aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee';
     const logsDir = path.join(agyDir, 'brain', convId, '.system_generated', 'logs');
@@ -213,7 +222,6 @@ describe('Antigravity: leitura de consumo e transcripts', () => {
 
     expect(antigravitySessionId(file, agyDir)).toBe(convId);
     expect(antigravitySessionId(fullFile, agyDir)).toBeUndefined();
-    expect(workspaceFromUris('["file:///tmp/meu-repo"]')).toBe(path.resolve('/tmp/meu-repo'));
 
     const line = JSON.stringify({
       step_index: 3,
