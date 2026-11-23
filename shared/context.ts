@@ -16,7 +16,7 @@ export const CONTEXT_POLICIES: ContextPolicy[] = ['avisar', 'automatico', 'desli
 export const DEFAULT_CONTEXT_POLICY: ContextPolicy = 'avisar';
 
 /** A partir daqui o contexto é "grande". */
-export const CONTEXT_LIMIT = 500_000;
+export const CONTEXT_LIMIT = 400_000;
 /** Validade do cache do Claude Code (assinaturas gravam o de 1 h; quem grava só o de 5 min usa 5 min). */
 export const CACHE_TTL_MS = 60 * 60 * 1000;
 export const CACHE_TTL_5M_MS = 5 * 60 * 1000;
