@@ -43,20 +43,37 @@ export interface Price {
 const priced = (input: number, output: number, cacheRead: number): Price => ({ input, output, cacheWrite5m: input * 1.25, cacheWrite1h: input * 2, cacheRead });
 
 /** Os campos de escrita de 5 min e 1 h correspondem ao cache da Anthropic. */
-const openAIPrice = (input: number, output: number, cacheRead: number): Price => ({ input, output, cacheRead, cacheWrite5m: 0, cacheWrite1h: 0 });
+const flatCachePrice = (input: number, output: number, cacheRead: number): Price => ({ input, output, cacheRead, cacheWrite5m: 0, cacheWrite1h: 0 });
 
 /** Tarifas Standard para contexto curto em USD por milhão de tokens. */
 export const OPENAI_STANDARD_PRICES: Record<string, Price> = {
-  'gpt-6.2-astra': openAIPrice(8, 40, 0.4),
-  'gpt-6.2-sol': openAIPrice(2, 10, 0.1),
-  'gpt-6.1-sol': openAIPrice(2, 10, 0.1),
-  'gpt-6.1-terra': openAIPrice(1, 5, 0.05),
-  'gpt-6-astra': openAIPrice(10, 50, 1),
-  'gpt-6-luna': openAIPrice(0.1, 0.5, 0.01),
-  'gpt-5.5': openAIPrice(5, 30, 0.5),
-  'gpt-5.4': openAIPrice(2.5, 15, 0.25),
-  'gpt-5.4-mini': openAIPrice(0.75, 4.5, 0.075),
-  'gpt-5.3-codex': openAIPrice(1.75, 14, 0.175),
+  'gpt-6.2-astra': flatCachePrice(8, 40, 0.4),
+  'gpt-6.2-sol': flatCachePrice(2, 10, 0.1),
+  'gpt-6.1-sol': flatCachePrice(2, 10, 0.1),
+  'gpt-6.1-terra': flatCachePrice(1, 5, 0.05),
+  'gpt-6-astra': flatCachePrice(10, 50, 1),
+  'gpt-6-luna': flatCachePrice(0.1, 0.5, 0.01),
+  'gpt-5.5': flatCachePrice(5, 30, 0.5),
+  'gpt-5.4': flatCachePrice(2.5, 15, 0.25),
+  'gpt-5.4-mini': flatCachePrice(0.75, 4.5, 0.075),
+  'gpt-5.3-codex': flatCachePrice(1.75, 14, 0.175),
+};
+
+/**
+ * Tarifas Standard da API do Google / Gemini (USD por milhão de tokens, contexto até 200k).
+ * Modelos do Antigravity com sufixo de esforço (-low, -medium, -high, -xhigh, -max) herdam o
+ * preço base automaticamente pelo `priceFor()`.
+ */
+export const GOOGLE_STANDARD_PRICES: Record<string, Price> = {
+  'gemini-4-carbon': flatCachePrice(4, 20, 0.2),
+  'gemini-4-argon': flatCachePrice(4, 20, 0.2),
+  'gemini-4-neon': flatCachePrice(3, 15, 0.15),
+  'gemini-4-hydrogen': flatCachePrice(1.5, 7.5, 0.075),
+  'gemini-pro-orchestrator-neon': flatCachePrice(3, 15, 0.15),
+  'gemini-pro-orchestrator-g1-pro': flatCachePrice(4, 20, 0.2),
+  'gemini-3.8-flash': flatCachePrice(0.75, 3.75, 0.075),
+  'gemini-3.1-pro-preview': flatCachePrice(2, 12, 0.2),
+  'gemini-3-flash-preview': flatCachePrice(0.5, 3, 0.05),
 };
 
 /**
@@ -66,6 +83,7 @@ export const OPENAI_STANDARD_PRICES: Record<string, Price> = {
  */
 export const DEFAULT_PRICES: Record<string, Price> = {
   ...OPENAI_STANDARD_PRICES,
+  ...GOOGLE_STANDARD_PRICES,
   'claude-fable-5-1': priced(10, 50, 0.25),
   'claude-fable-5': priced(10, 50, 1),
   'claude-opus-5-5': priced(4, 20, 0.2),
@@ -80,10 +98,13 @@ export const DEFAULT_PRICES: Record<string, Price> = {
   'claude-haiku-4-5': priced(1, 5, 0.1),
 };
 
-/** Preço de um modelo: o nome exato, ou sem o sufixo de data ou de contexto ("-20251001", "[1m]"). */
+/** Preço de um modelo: o nome exato, ou sem o sufixo de data, contexto ou esforço ("-20251001", "[1m]", "-high"). */
 export function priceFor(model: string, prices: Record<string, Price>): Price | undefined {
   if (prices[model]) return prices[model];
-  const base = model.replace(/\[[^\]]*\]$/, '').replace(/-(?:\d{8}|\d{4}-\d{2}-\d{2})$/, '');
+  const base = model
+    .replace(/\[[^\]]*\]$/, '')
+    .replace(/-(?:\d{8}|\d{4}-\d{2}-\d{2})$/, '')
+    .replace(/-(?:low|medium|high|xhigh|max)$/i, '');
   return prices[base];
 }
 

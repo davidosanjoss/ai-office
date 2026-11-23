@@ -1,9 +1,11 @@
 #!/usr/bin/env node
-// Hook do Claude Code: repassa o evento para o servidor do AI Office. Quando o escritório decide
-// algo (Stop: gravar a memória com o contexto grande; SessionStart: o resumo da sessão nova), a
-// decisão vai para a saída. Nunca falha a sessão: qualquer erro termina com código 0, sem saída.
+// Hook do Claude Code / Codex / Antigravity: repassa o evento para o servidor do AI Office.
+// Quando o escritório decide algo (Stop: gravar a memória com o contexto grande; SessionStart: o
+// resumo da sessão nova ou contexto da sala), a decisão vai para a saída. Nunca falha a sessão:
+// qualquer erro termina com código 0 (e `{}` no Antigravity, que exige JSON na saída).
 
-const [, , eventName] = process.argv;
+const [, , eventName, client] = process.argv;
+const isAgy = client === 'antigravity';
 const url = process.env.AI_OFFICE_URL;
 const agentId = process.env.AI_OFFICE_AGENT_ID;
 
@@ -11,12 +13,15 @@ let input = '';
 process.stdin.setEncoding('utf8');
 process.stdin.on('data', (chunk) => (input += chunk));
 process.stdin.on('end', async () => {
-  if (!url) return;
+  if (!url) {
+    if (isAgy) process.stdout.write('{}');
+    return;
+  }
   let payload = {};
   try {
     payload = JSON.parse(input || '{}');
   } catch {}
-  // Stop e SessionStart esperam a decisão (o servidor lê o fim do transcript); os outros só avisam.
+  // Stop e SessionStart esperam a decisão (o servidor lê o fim do transcript ou monta o contexto); os outros só avisam.
   const decides = eventName === 'Stop' || eventName === 'SessionStart';
   try {
     const res = await fetch(`${url}/api/hook`, {
@@ -27,7 +32,10 @@ process.stdin.on('end', async () => {
     });
     if (decides) {
       const data = await res.json();
-      if (data?.output) process.stdout.write(JSON.stringify(data.output));
+      if (data?.output) return process.stdout.write(JSON.stringify(data.output));
     }
-  } catch {}
+    if (isAgy) process.stdout.write('{}');
+  } catch {
+    if (isAgy) process.stdout.write('{}');
+  }
 });

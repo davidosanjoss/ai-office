@@ -84,8 +84,8 @@ export interface Room {
 
 export interface Agent {
   id: string;
-  /** 'shell' é um terminal comum, sem Claude. Ausente nos registros antigos = 'claude'. */
-  kind?: 'claude' | 'codex' | 'shell';
+  /** 'shell' é um terminal comum, sem agente. Ausente nos registros antigos = 'claude'. */
+  kind?: 'claude' | 'codex' | 'antigravity' | 'shell';
   roomId: string;
   /** Projeto da sala em que o agente trabalha. Ausente nos registros antigos = o primeiro da sala. */
   projectId?: string;

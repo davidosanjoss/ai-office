@@ -11,7 +11,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { MemoryJob, MemoryStatus } from '../shared/types.ts';
 import { MEMORY_CONTAINER, MEMORY_IMAGE, MEMORY_PORT, MEMORY_RELEASE, MEMORY_VERSION, imageVersion, sameImage } from '../shared/memory.ts';
-import { CLAUDE_DIR, CODEX_DIR, codexBin, isWindows, ptyCommand, which } from './platform.ts';
+import { ANTIGRAVITY_CONFIG_DIR, CLAUDE_DIR, CODEX_DIR, antigravityBin, codexBin, isWindows, ptyCommand, which } from './platform.ts';
 
 /** Avisa a interface a cada passo da instalação. */
 export const memoryEvents = new EventEmitter();
@@ -163,10 +163,35 @@ function wrapperEnv(): NodeJS.ProcessEnv {
   };
 }
 
-export function codexMemory() {
+/** Lê (sem mexer) se os hooks e o MCP do ai-memory estão nas configurações do Antigravity CLI. */
+export function agyWiring(configDir = ANTIGRAVITY_CONFIG_DIR): { hooks: boolean; mcp: boolean } {
+  const read = (file: string) => {
+    try {
+      return JSON.parse(fs.readFileSync(file, 'utf8'));
+    } catch {
+      return undefined;
+    }
+  };
+  const hooksCfg = read(path.join(configDir, 'hooks.json'));
+  const hooks = JSON.stringify(hooksCfg ?? {}).includes('ai-memory');
+  const mcpCfg = read(path.join(configDir, 'mcp_config.json'));
+  const mcp = !!mcpCfg?.mcpServers?.['ai-memory'];
+  return { hooks, mcp };
+}
+
+/** Ponte stdio do ai-memory (usada por Codex e pelo plugin do Antigravity quando o MCP global não está ligado). */
+export function memoryBridge() {
   const wrapper = wrapperPath();
   if (!fs.existsSync(wrapper) || !fs.existsSync(path.join(dataDir(), 'auth-tokens', 'default'))) return;
   return { ...ptyCommand(wrapper, ['mcp-bridge', '--no-session-id']), env: wrapperEnv() };
+}
+
+export function codexMemory() {
+  return memoryBridge();
+}
+
+export function agyHasMemory(configDir = ANTIGRAVITY_CONFIG_DIR): boolean {
+  return agyWiring(configDir).mcp || !!memoryBridge();
 }
 
 async function install(step: (s: string) => void) {
@@ -230,6 +255,11 @@ async function install(step: (s: string) => void) {
   if (codexBin()) {
     step('Ligando a captura do ai-memory ao Codex');
     await run(wrapper, ['install-hooks', '--agent', 'codex', '--apply'], { ...wrapperEnv(), CODEX_HOME: CODEX_DIR });
+  }
+  if (antigravityBin()) {
+    step('Ligando o ai-memory ao Antigravity (hooks e MCP)');
+    await run(wrapper, ['install-mcp', '--client', 'antigravity-cli', '--apply'], wrapperEnv());
+    await run(wrapper, ['install-hooks', '--agent', 'antigravity-cli', '--apply'], wrapperEnv());
   }
 }
 
@@ -297,6 +327,7 @@ async function uninstall(step: (s: string) => void) {
     step('Desligando os clientes do ai-memory');
     await run(wrapper, ['uninstall', '--apply'], { ...wrapperEnv(), CODEX_HOME: CODEX_DIR });
   }
+  fs.rmSync(path.join(ANTIGRAVITY_CONFIG_DIR, 'plugins', 'ai-office', 'mcp_config.json'), { force: true });
   const docker = dockerBin();
   if (docker) {
     step('Removendo o container');

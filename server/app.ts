@@ -31,7 +31,7 @@ import { IncidentError, addParticipants, closeIncident, incidentAt, leaveInciden
 import { MemoryError, memoryEvents, memoryStatus, openDataDir, startInstall, startUninstall } from './memory.ts';
 import { pickFolder } from './picker.ts';
 import { parseModels } from '../shared/models.ts';
-import { OPENAI_STANDARD_PRICES, type Place, type Price, type UsageRecord, costOf, dayKey, priceFor, summarize, tokensOf } from '../shared/usage.ts';
+import { GOOGLE_STANDARD_PRICES, OPENAI_STANDARD_PRICES, type Place, type Price, type UsageRecord, costOf, dayKey, priceFor, summarize, tokensOf } from '../shared/usage.ts';
 import { customPrices, prices, receiveRecords, setPrice, usageRecords } from './usage.ts';
 import { planUsage, recordPlan } from './plan.ts';
 import { startShellWatch } from './live.ts';
@@ -410,7 +410,7 @@ export async function buildApp(opts: { port?: number } = {}) {
     try {
       const projectId = req.body?.projectId ? String(req.body.projectId) : undefined;
       const kind = req.body?.kind ?? 'claude';
-      if (kind !== 'claude' && kind !== 'codex') return reply.code(400).send({ error: 'Tipo de agente inválido' });
+      if (kind !== 'claude' && kind !== 'codex' && kind !== 'antigravity') return reply.code(400).send({ error: 'Tipo de agente inválido' });
       return await createAgent(String(req.body?.roomId), { name: req.body?.name, worktree: !!req.body?.worktree, projectId, kind });
     } catch (err) {
       return reply.code(400).send({ error: (err as Error).message });
@@ -527,7 +527,13 @@ export async function buildApp(opts: { port?: number } = {}) {
 
   app.get('/api/uso/precos', async () => {
     const seen = [...new Set((await usageRecords()).map((r) => r.model))].sort();
-    return { prices: prices(), custom: Object.keys(customPrices()), seen, openAI: Object.keys(OPENAI_STANDARD_PRICES) };
+    return {
+      prices: prices(),
+      custom: Object.keys(customPrices()),
+      seen,
+      openAI: Object.keys(OPENAI_STANDARD_PRICES),
+      google: Object.keys(GOOGLE_STANDARD_PRICES),
+    };
   });
 
   /** Preço de um modelo (USD por milhão de tokens); price null volta ao padrão. */

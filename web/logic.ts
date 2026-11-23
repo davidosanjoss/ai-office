@@ -636,7 +636,8 @@ export function squadBoard(room: Room, agents: Agent[], activity: ActivityEvent[
  * eles retomam. Quem está fora do escritório já pega a escolha nova ao voltar.
  */
 export function staleModelAgents(room: Room, project: Project, agents: Agent[]): Agent[] {
-  const want = (agent: Agent) => modelsLabel(modelsForAgent(project.models, agent.kind === 'codex' ? 'codex' : 'claude'));
+  const want = (agent: Agent) =>
+    modelsLabel(modelsForAgent(project.models, agent.kind === 'codex' ? 'codex' : agent.kind === 'antigravity' ? 'antigravity' : 'claude'));
   return agents.filter(
     (a) => a.roomId === room.id && a.kind !== 'shell' && a.status !== 'exited' && agentProject(room, a)?.id === project.id && (a.models ?? 'padrão da conta') !== want(a),
   );

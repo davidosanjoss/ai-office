@@ -9,16 +9,17 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_PRICES, type Price, type UsageRecord, parseRecord } from '../shared/usage.ts';
-import { CLAUDE_DIR, CODEX_DIR, DATA_DIR } from './platform.ts';
-
+import { ANTIGRAVITY_DIR, CLAUDE_DIR, CODEX_DIR, DATA_DIR } from './platform.ts';
+import { antigravitySessionId, antigravityUsageLine, antigravityWorkspaces } from './antigravity.ts';
 import { codexUsageLine, type CodexUsageState } from './codex.ts';
+import { store } from './store.ts';
 
 const USAGE_DIR = path.join(DATA_DIR, 'uso');
 export const INBOX_DIR = path.join(USAGE_DIR, 'entrada');
 const INDEX_FILE = path.join(USAGE_DIR, 'indice.json');
 const PRICES_FILE = path.join(USAGE_DIR, 'precos.json');
 /** Versão do índice: mudou o jeito de ler, o índice antigo é descartado e tudo é relido. */
-const INDEX_VERSION = 2;
+const INDEX_VERSION = 3;
 /** Entre duas leituras, no mínimo isso (o painel pode pedir várias vezes seguidas). */
 const MIN_SCAN_MS = 10_000;
 
@@ -73,6 +74,28 @@ async function scan(idx: Index) {
     for (const file of jsonlFiles(path.join(CODEX_DIR, dir))) {
       await readNew(idx, file, (line, state) => push(codexUsageLine(line, state.codex ??= {})));
     }
+  }
+  const agyAgentCwds: [string, string][] = [];
+  for (const a of store.agents.values()) {
+    if (a.kind !== 'antigravity' || !a.cwd) continue;
+    if (a.sessionId) agyAgentCwds.push([a.sessionId, a.cwd]);
+    for (const past of a.pastSessions ?? []) if (past) agyAgentCwds.push([past, a.cwd]);
+  }
+  const agyCwds = await antigravityWorkspaces(ANTIGRAVITY_DIR, agyAgentCwds);
+  for (const r of idx.records) {
+    if (r.source === 'antigravity' && !r.cwd && r.session) {
+      const cwd = agyCwds.get(r.session);
+      if (cwd) {
+        r.cwd = cwd;
+        added++;
+      }
+    }
+  }
+  for (const file of jsonlFiles(path.join(ANTIGRAVITY_DIR, 'brain'))) {
+    const session = antigravitySessionId(file, ANTIGRAVITY_DIR);
+    if (!session) continue;
+    const cwd = agyCwds.get(session) ?? '';
+    await readNew(idx, file, (line) => push(antigravityUsageLine(line, session, cwd)));
   }
   for (const file of jsonlFiles(INBOX_DIR)) {
     await readNew(idx, file, (line) => {
