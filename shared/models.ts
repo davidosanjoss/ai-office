@@ -7,8 +7,23 @@
 
 import type { ProjectModels } from './types.ts';
 
-/** Sugestões: os aliases do Claude Code e os nomes completos dos modelos atuais. */
-export const MODEL_SUGGESTIONS = ['opus', 'sonnet', 'haiku', 'fable', 'opus[1m]', 'sonnet[1m]', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'];
+/** Sugestões nos campos de modelo do projeto. */
+export const MODEL_GROUPS = [
+  { label: 'Anthropic', models: ['opus', 'sonnet', 'haiku', 'fable', 'opus[1m]', 'sonnet[1m]', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] },
+  { label: 'OpenAI', models: ['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex'] },
+  { label: 'Google · integração indisponível', models: ['gemini-3.8-flash', 'gemini-3.1-pro-preview'], disabled: true },
+];
+
+/** Aplica ao agente os modelos compatíveis que foram escolhidos no projeto. */
+export function modelsForAgent(models: ProjectModels | undefined, kind: 'claude' | 'codex'): ProjectModels | undefined {
+  if (!models) return undefined;
+  const compatible = (model: string | undefined): model is string =>
+    !!model && !/^gemini-/i.test(model) && /^(?:gpt-|codex-|o\d(?:-|$))/i.test(model) === (kind === 'codex');
+  if (models.mode === 'unico') return compatible(models.model) ? models : undefined;
+  if (kind === 'claude' && compatible(models.reasoning) && compatible(models.execution)) return models;
+  const model = [models.execution, models.reasoning].find(compatible);
+  return model ? { mode: 'unico', model } : undefined;
+}
 
 /** Nome de modelo aceito: letras, números, ponto, hífen, sublinhado e colchetes (ex.: "sonnet[1m]"). Nada que o shell interprete. */
 export function validModelName(m: unknown): m is string {

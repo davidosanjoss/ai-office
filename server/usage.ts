@@ -9,7 +9,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { DEFAULT_PRICES, type Price, type UsageRecord, parseRecord } from '../shared/usage.ts';
-import { CLAUDE_DIR, DATA_DIR } from './platform.ts';
+import { CLAUDE_DIR, CODEX_DIR, DATA_DIR } from './platform.ts';
+
+import { codexUsageLine, type CodexUsageState } from './codex.ts';
 
 const USAGE_DIR = path.join(DATA_DIR, 'uso');
 export const INBOX_DIR = path.join(USAGE_DIR, 'entrada');
@@ -20,10 +22,12 @@ const INDEX_VERSION = 2;
 /** Entre duas leituras, no mínimo isso (o painel pode pedir várias vezes seguidas). */
 const MIN_SCAN_MS = 10_000;
 
+interface FileState { offset: number; codex?: CodexUsageState }
+
 interface Index {
   version: number;
   /** Até onde cada arquivo foi lido (bytes), e o tamanho na hora. */
-  files: Record<string, { offset: number }>;
+  files: Record<string, FileState>;
   records: UsageRecord[];
 }
 
@@ -65,6 +69,11 @@ async function scan(idx: Index) {
     added++;
   };
   for (const file of jsonlFiles(path.join(CLAUDE_DIR, 'projects'))) await readNew(idx, file, (line) => push(claudeRecord(line)));
+  for (const dir of ['sessions', 'archived_sessions']) {
+    for (const file of jsonlFiles(path.join(CODEX_DIR, dir))) {
+      await readNew(idx, file, (line, state) => push(codexUsageLine(line, state.codex ??= {})));
+    }
+  }
   for (const file of jsonlFiles(INBOX_DIR)) {
     await readNew(idx, file, (line) => {
       try {
@@ -99,16 +108,16 @@ function jsonlFiles(dir: string): string[] {
 }
 
 /** Lê do ponto em que parou até a última linha completa do arquivo. */
-async function readNew(idx: Index, file: string, onLine: (line: string) => void) {
+async function readNew(idx: Index, file: string, onLine: (line: string, state: FileState) => void) {
   let size: number;
   try {
     size = fs.statSync(file).size;
   } catch {
     return;
   }
-  const state = idx.files[file] ?? { offset: 0 };
+  let state = idx.files[file] ?? { offset: 0 };
   // Arquivo menor que antes: foi reescrito, lê de novo (as respostas repetidas não contam duas vezes).
-  if (size < state.offset) state.offset = 0;
+  if (size < state.offset) state = { offset: 0 };
   if (size === state.offset) return;
   const fd = fs.openSync(file, 'r');
   try {
@@ -127,7 +136,7 @@ async function readNew(idx: Index, file: string, onLine: (line: string) => void)
         carry = data;
         continue;
       }
-      for (const l of data.toString('utf8', 0, nl).split('\n')) if (l.trim()) onLine(l);
+      for (const l of data.toString('utf8', 0, nl).split('\n')) if (l.trim()) onLine(l, state);
       carry = Buffer.from(data.subarray(nl + 1));
       // Não deixa o servidor parado: a leitura grande (1 GB na primeira vez) cede a vez a cada pedaço.
       await new Promise((r) => setImmediate(r));

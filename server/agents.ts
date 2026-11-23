@@ -6,12 +6,13 @@ import pty, { type IPty } from '@lydell/node-pty';
 import type { Agent, Floor, Room } from '../shared/types.ts';
 import { findTranscript } from './discover.ts';
 import { addWorktree } from './git.ts';
-import { modelLaunch, modelsLabel } from '../shared/models.ts';
-import { claudeWiring } from './memory.ts';
+import { modelLaunch, modelsForAgent, modelsLabel } from '../shared/models.ts';
+import { codexArgs } from './codex.ts';
+import { claudeWiring, codexMemory } from './memory.ts';
 import { nowText, projectOf, roomContext } from './projects.ts';
 import { agentMovedOn } from './permissions.ts';
 import { forgetShells } from './live.ts';
-import { CLAUDE_DIR, DATA_DIR, HOST, PORT, claudeBin, defaultShell, isWindows, ptyCommand } from './platform.ts';
+import { CLAUDE_DIR, CODEX_DIR, DATA_DIR, HOST, PORT, claudeBin, codexBin, defaultShell, isWindows, ptyCommand } from './platform.ts';
 import { store } from './store.ts';
 import { CONTEXT_DIR, buildDossier, contextInfo, setPendingDossier } from './context.ts';
 
@@ -111,7 +112,7 @@ export function writeNowFile(room: Room) {
  * sistema, os projetos vizinhos, os documentos da raiz e a memória compartilhada).
  */
 export function agentPromptFile(agent: Agent, room: Room, floor: Floor | undefined): string {
-  const parts = [floor?.defaults?.instructions?.trim(), roomContext(room, agent, { memory: claudeWiring().mcp, nowFile: nowFile(room.id) })];
+  const parts = [floor?.defaults?.instructions?.trim(), roomContext(room, agent, { memory: agent.kind === 'codex' ? !!codexMemory() : claudeWiring().mcp, nowFile: nowFile(room.id) })];
   const file = path.join(roomDir(room.id), `prompt-${agent.id}.md`);
   fs.mkdirSync(roomDir(room.id), { recursive: true });
   fs.writeFileSync(file, parts.filter(Boolean).join('\n\n---\n\n'));
@@ -189,12 +190,13 @@ export function createShell(roomId: string, opts: { incidentId?: string; project
 
 export async function createAgent(
   roomId: string,
-  opts: { name?: string; worktree?: boolean; incidentId?: string; projectId?: string },
+  opts: { name?: string; worktree?: boolean; incidentId?: string; projectId?: string; kind?: 'claude' | 'codex' },
 ): Promise<Agent> {
   const room = store.rooms.get(roomId);
   if (!room) throw new Error('Sala não encontrada');
   if (opts.projectId && !room.projects?.some((p) => p.id === opts.projectId)) throw new Error('Projeto não encontrado na sala');
   const project = projectOf(room, opts.projectId);
+  if (opts.kind === 'codex' && !codexBin()) throw new Error('Codex CLI não encontrado no PATH');
   const name = opts.name?.trim() || pickName(roomId);
   const id = randomUUID().slice(0, 8);
 
@@ -209,13 +211,13 @@ export async function createAgent(
 
   const agent: Agent = {
     id,
-    kind: 'claude',
+    kind: opts.kind ?? 'claude',
     roomId,
     projectId: project.id,
     name,
     cwd,
     worktreeBranch,
-    sessionId: randomUUID(),
+    sessionId: opts.kind === 'codex' ? '' : randomUUID(),
     status: 'starting',
     activity: opts.incidentId ? 'Indo para a sala de guerra…' : 'Chegando no escritório…',
     subagents: 0,
@@ -238,14 +240,14 @@ export async function createAgent(
 export async function resumeAgent(id: string, mode?: 'retomar' | 'nova') {
   const agent = store.agents.get(id);
   if (!agent || running.has(id)) return;
-  if (agent.kind !== 'shell' && (mode ?? (contextInfo(agent).choice === 'nova' ? 'nova' : 'retomar')) === 'nova') return freshAgent(id);
+  if (agent.kind !== 'shell' && agent.kind !== 'codex' && (mode ?? (contextInfo(agent).choice === 'nova' ? 'nova' : 'retomar')) === 'nova') return freshAgent(id);
   appendScrollback(id, '\r\n\x1b[2m──── reaberto ────\x1b[0m\r\n');
   if (agent.kind === 'shell') {
     store.patchAgent(id, { status: 'idle', exitCode: undefined });
     spawn(agent, false);
     return;
   }
-  const resume = !!findTranscript(agent.sessionId);
+  const resume = agent.kind === 'codex' ? !!agent.sessionId : !!findTranscript(agent.sessionId);
   store.patchAgent(id, {
     status: 'starting',
     activity: resume ? 'Voltando ao trabalho…' : 'Começando uma conversa nova…',
@@ -268,7 +270,7 @@ export async function resumeAgent(id: string, mode?: 'retomar' | 'nova') {
  */
 export async function freshAgent(id: string) {
   const agent = store.agents.get(id);
-  if (!agent || agent.kind === 'shell') return;
+  if (!agent || agent.kind === 'shell' || agent.kind === 'codex') return;
   if (running.has(id)) await stopAgent(id);
   const current = store.agents.get(id);
   if (!current || running.has(id)) return;
@@ -319,32 +321,41 @@ export function lastLine(output: string): string {
 
 function spawn(agent: Agent, resume: boolean) {
   const isShell = agent.kind === 'shell';
-  const bin = isShell ? defaultShell() : claudeBin();
+  const isCodex = agent.kind === 'codex';
+  const bin = isShell ? defaultShell() : isCodex ? codexBin() : claudeBin();
   if (!bin) {
-    store.patchAgent(agent.id, { status: 'exited', activity: 'Claude Code não encontrado no PATH' });
+    store.patchAgent(agent.id, { status: 'exited', activity: isCodex ? 'Codex CLI não encontrado no PATH' : 'Claude Code não encontrado no PATH' });
     return;
   }
   let args: string[] = [];
   let modelEnv: Record<string, string> = {};
   const room = store.rooms.get(agent.roomId)!;
-  if (!isShell) {
+  if (isCodex) {
+    const project = projectOf(room, agent.projectId);
+    const floor = store.floors.get(room.floorId ?? '');
+    const models = modelsForAgent(project.models, 'codex');
+    args = codexArgs(agent, resume, models?.mode === 'unico' ? models.model : undefined, agentPromptFile(agent, room, floor));
+    store.patchAgent(agent.id, { models: modelsLabel(models) });
+    modelEnv = { CODEX_HOME: CODEX_DIR };
+  } else if (!isShell) {
     const floor = store.floors.get(room.floorId ?? '');
     const files = floorSessionFiles(floor);
     const project = projectOf(room, agent.projectId);
     // Os modelos do projeto valem por execução: quem abre ou retoma pega a escolha atual.
-    const models = modelLaunch(project.models);
+    const projectModels = modelsForAgent(project.models, 'claude');
+    const models = modelLaunch(projectModels);
     modelEnv = models.env;
     // A pasta do contexto: onde o agente grava o que importa quando a conversa fica grande.
     fs.mkdirSync(CONTEXT_DIR, { recursive: true });
     const dirs = [...(project.path === room.path ? [] : [room.path]), CONTEXT_DIR];
     args = [...claudeArgs(agent.sessionId, resume, files.settings, agentPromptFile(agent, room, floor), dirs), ...models.args];
-    const label = modelsLabel(project.models);
+    const label = modelsLabel(projectModels);
     if (agent.models !== label) store.patchAgent(agent.id, { models: label });
   }
   const cmd = ptyCommand(bin, args);
   const cwd = fs.existsSync(agent.cwd) ? agent.cwd : projectOf(room, agent.projectId).path;
   // Só as sessões do Claude reportam eventos ao escritório.
-  const officeEnv = isShell ? {} : { AI_OFFICE_URL: `http://${HOST}:${PORT}`, AI_OFFICE_AGENT_ID: agent.id, ...userStatusLine() };
+  const officeEnv = isShell ? {} : { AI_OFFICE_URL: `http://${HOST}:${PORT}`, AI_OFFICE_AGENT_ID: agent.id, ...(isCodex ? {} : userStatusLine()) };
 
   const proc = pty.spawn(cmd.file, cmd.args, {
     name: 'xterm-256color',
@@ -407,6 +418,7 @@ function userStatusLine(): { AI_OFFICE_STATUSLINE?: string } {
 // Marcadores de uma sessão do Claude em andamento. Se o servidor foi iniciado de dentro de
 // uma, os agentes se achariam "filhos" dela (e, por exemplo, deixariam de salvar o histórico).
 const INHERITED_SESSION_VARS = [
+  'CODEX_THREAD_ID',
   'CLAUDECODE',
   'CLAUDE_PID',
   'CLAUDE_EFFORT',

@@ -35,6 +35,12 @@ export function claudeBin(): string | undefined {
   return process.env.AI_OFFICE_CLAUDE_BIN || which('claude');
 }
 
+export const CODEX_DIR = process.env.AI_OFFICE_CODEX_DIR ?? process.env.CODEX_HOME ?? path.join(os.homedir(), '.codex');
+
+export function codexBin(): string | undefined {
+  return process.env.AI_OFFICE_CODEX_BIN ?? which('codex');
+}
+
 /** GitHub CLI, para abrir PRs. Configurável para os testes usarem um falso. */
 export function ghBin(): string | undefined {
   return process.env.AI_OFFICE_GH_BIN || which('gh');

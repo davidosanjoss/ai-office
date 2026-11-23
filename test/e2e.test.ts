@@ -1011,9 +1011,12 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForSelector('#models-panel:not([hidden])');
     expect(await page.$eval('#models-project', (e) => e.textContent)).toBe('· ms-sales');
     expect(await page.$eval('#models-form input[value=padrao]', (e) => (e as HTMLInputElement).checked)).toBe(true);
+    expect(await page.$$eval('#model-choice-model optgroup', (groups) =>
+      groups.map((group) => [group.label, group.disabled]),
+    )).toEqual([['Anthropic', false], ['OpenAI', false], ['Google · integração indisponível', true]]);
     await page.click('#models-form input[value=duplo]');
-    await page.type('#models-form input[name=reasoning]', 'claude-opus-5-5');
-    await page.type('#models-form input[name=execution]', 'sonnet');
+    await page.select('#model-choice-reasoning', 'claude-opus-5-5');
+    await page.select('#model-choice-execution', 'sonnet');
     await page.click('#models-form button[type=submit]');
     await waitFor(() => store.rooms.get(room.id)!.projects![1].models?.mode === 'duplo', 3000, 'modelos salvos');
     expect(store.rooms.get(room.id)!.projects![1].models).toEqual({ mode: 'duplo', reasoning: 'claude-opus-5-5', execution: 'sonnet' });
@@ -1021,6 +1024,7 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     await page.waitForFunction(() => document.querySelector('#models-stale:not([hidden])')?.textContent?.includes('Saulo'));
     // Nome que não é de modelo: o servidor recusa e a mensagem aparece.
     await page.click('#models-form input[value=unico]');
+    await page.select('#model-choice-model', ':custom');
     await page.type('#models-form input[name=model]', 'opus; ls');
     await page.click('#models-form button[type=submit]');
     await page.waitForFunction(() => document.querySelector('#models-msg')?.textContent?.includes('Modelo inválido'));
@@ -1039,6 +1043,10 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     expect(await page.$$('#usage-chart path.bar')).not.toHaveLength(0);
     expect(await page.$eval('#usage-legend', (e) => e.textContent)).toContain('claude');
     expect(await page.$('#usage-models tr[data-model="claude-opus-5-5"] input[name=input]')).not.toBeNull();
+    const openAIPrice = await page.$$eval('#usage-models tr[data-model="gpt-6.2-sol"] input', (inputs) =>
+      Object.fromEntries(inputs.map((input) => [input.name, Number(input.value)])),
+    );
+    expect(openAIPrice).toEqual({ input: 2, output: 10, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0.1 });
     // regressão: trocar de período antes da resposta anterior chegar não deixa o período antigo na tela.
     await page.click('#usage-periods button[data-period="hoje"]');
     await page.click('#usage-periods button[data-period="30d"]');
