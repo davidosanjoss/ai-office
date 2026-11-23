@@ -797,7 +797,7 @@ function renderAgentDetails() {
     ${todos.length ? `<div class="ad-row"><span>Tarefas</span><span>${done}/${todos.length}</span></div><div class="ad-progress"><i style="width:${(done / todos.length) * 100}%"></i></div>
       <ul>${todos.map((t) => `<li class="${t.status}">${esc(t.status === 'in_progress' && t.activeForm ? t.activeForm : t.content)}</li>`).join('')}</ul>` : ''}
     ${a.helpers?.length ? row('Ajudantes', esc(a.helpers.join(' · '))) : ''}
-    ${row('Agente', a.kind === 'codex' ? 'Codex' : 'Claude Code')}
+    ${row('Agente', a.kind === 'codex' ? 'Codex' : a.kind === 'antigravity' ? 'Antigravity' : 'Claude Code')}
     ${row('Modelo', esc(info?.model ?? a.models ?? 'padrão da conta'))}
     ${info?.branch ? row('Branch', `${esc(info.branch)}${a.worktreeBranch ? ' (worktree)' : ''}`) : ''}
     ${info ? row('Alterado agora', info.files ? `${info.files} arquivo(s), <span style="color:var(--done)">+${info.linesAdded}</span> <span style="color:var(--danger)">−${info.linesRemoved}</span>` : 'nada') : ''}

@@ -41,6 +41,17 @@ export function codexBin(): string | undefined {
   return process.env.AI_OFFICE_CODEX_BIN ?? which('codex');
 }
 
+export const ANTIGRAVITY_DIR = process.env.AI_OFFICE_ANTIGRAVITY_DIR ?? path.join(os.homedir(), '.gemini', 'antigravity-cli');
+export const ANTIGRAVITY_CONFIG_DIR = process.env.AI_OFFICE_ANTIGRAVITY_CONFIG_DIR ?? path.join(os.homedir(), '.gemini', 'config');
+
+export function antigravityBin(): string | undefined {
+  if ('AI_OFFICE_ANTIGRAVITY_BIN' in process.env) return process.env.AI_OFFICE_ANTIGRAVITY_BIN || undefined;
+  const found = which('agy');
+  if (found) return found;
+  const fallback = path.join(ANTIGRAVITY_DIR, 'bin', isWindows ? 'agy.exe' : 'agy');
+  return fs.existsSync(fallback) ? fallback : undefined;
+}
+
 /** GitHub CLI, para abrir PRs. Configurável para os testes usarem um falso. */
 export function ghBin(): string | undefined {
   return process.env.AI_OFFICE_GH_BIN || which('gh');
