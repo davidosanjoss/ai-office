@@ -87,9 +87,9 @@
           </form>
         </section>
         <section class="card usage-help">
-          <h3>Outras fontes (GPT, Gemini…)</h3>
-          <p>O Claude Code entra sozinho. Para outras ferramentas, mande o consumo para <code>POST /api/uso</code> (só do próprio computador) ou ponha arquivos <code>.jsonl</code> em <code>~/.ai-office/uso/entrada</code>, um registro por linha:</p>
-          <pre>{"source":"gemini","id":"resp-123","ts":"2026-11-09T14:00:00Z","cwd":"/home/voce/ampm/saff/ms-sales","model":"gemini-3-pro","input":1200,"output":300,"cacheRead":0}</pre>
+          <h3>Outras fontes</h3>
+          <p>Claude Code, Codex e Antigravity entram sozinhos. Para outras ferramentas, mande o consumo para <code>POST /api/uso</code> (só do próprio computador) ou ponha arquivos <code>.jsonl</code> em <code>~/.ai-office/uso/entrada</code>, um registro por linha:</p>
+          <pre>{"source":"gemini","id":"resp-123","ts":"2026-11-09T14:00:00Z","cwd":"/home/voce/ampm/saff/ms-sales","model":"gemini-4-neon","input":1200,"output":300,"cacheRead":0}</pre>
           <p class="muted">A pasta (<code>cwd</code>) liga o consumo à sala e ao projeto. Depois, ponha o preço do modelo na tabela acima.</p>
         </section>
       </div>
@@ -332,7 +332,7 @@
       <form method="dialog">
         <h2>Contratar agente</h2>
         <p class="muted" id="dlg-agent-room"></p>
-        <label>Agente <select name="kind"><option value="claude">Claude Code</option><option value="codex">Codex</option></select></label>
+        <label>Agente <select name="kind"><option value="claude">Claude Code</option><option value="codex">Codex</option><option value="antigravity">Antigravity</option></select></label>
         <label id="agent-project-row">Projeto <select name="project" id="agent-project"></select></label>
         <label>Nome (opcional) <input name="name" autocomplete="off" placeholder="sorteado se vazio" /></label>
         <label class="check">

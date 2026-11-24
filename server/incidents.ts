@@ -10,8 +10,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { type Participant, invitation, parseMentions, recordMarkdown, sharedMessage, userMessage } from '../shared/incident.ts';
 import type { Incident, IncidentMessage } from '../shared/types.ts';
+import { antigravityLastText } from './antigravity.ts';
 import { createAgent, createShell, isRunning, removeAgent, resumeAgent, slugify, writeInput } from './agents.ts';
-import { CLAUDE_DIR, DATA_DIR } from './platform.ts';
+import { ANTIGRAVITY_DIR, CLAUDE_DIR, DATA_DIR } from './platform.ts';
 import { store } from './store.ts';
 
 export const INCIDENTS_DIR = path.join(DATA_DIR, 'incidentes');
@@ -211,19 +212,23 @@ export function onStop(agentId: string, payload: Record<string, unknown>) {
   flush(agentId);
 }
 
-/** A última resposta: o campo do hook, se a versão do Claude manda, ou o fim do transcript. */
+/** A última resposta: o campo do hook, se a versão do agente manda, ou o fim do transcript. */
 function replyFrom(payload: Record<string, unknown>): string {
   if (typeof payload.last_assistant_message === 'string' && payload.last_assistant_message.trim()) return payload.last_assistant_message.trim();
-  const file = typeof payload.transcript_path === 'string' ? path.resolve(payload.transcript_path) : '';
-  // Só lê transcripts do próprio Claude, nunca um caminho qualquer vindo da rede.
-  if (!file || !file.startsWith(path.resolve(CLAUDE_DIR) + path.sep) || !file.endsWith('.jsonl') || !fs.existsSync(file)) return '';
+  const rawPath = typeof payload.transcript_path === 'string' ? payload.transcript_path : typeof payload.transcriptPath === 'string' ? payload.transcriptPath : '';
+  const file = rawPath ? path.resolve(rawPath) : '';
+  const inClaude = file.startsWith(path.resolve(CLAUDE_DIR) + path.sep);
+  const inAgy = file.startsWith(path.resolve(ANTIGRAVITY_DIR) + path.sep);
+  // Só lê transcripts do próprio Claude ou Antigravity, nunca um caminho qualquer vindo da rede.
+  if (!file || (!inClaude && !inAgy) || !file.endsWith('.jsonl') || !fs.existsSync(file)) return '';
   const size = fs.statSync(file).size;
   const fd = fs.openSync(file, 'r');
   try {
     const len = Math.min(size, 2_000_000);
     const buf = Buffer.alloc(len);
     fs.readSync(fd, buf, 0, len, size - len);
-    return lastAssistantText(buf.toString('utf8'));
+    const text = buf.toString('utf8');
+    return inAgy ? antigravityLastText(text) : lastAssistantText(text);
   } finally {
     fs.closeSync(fd);
   }

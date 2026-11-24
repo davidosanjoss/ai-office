@@ -646,9 +646,11 @@ describe('sala com vários projetos', () => {
     const gem = depois.byModel.find((m) => m.model === 'gemini-3-pro')!;
     expect(gem).toMatchObject({ source: 'gemini', cost: 2 });
     expect(depois.places.find((p) => p.place.projectId === sales.id)!.bySource.gemini).toBe(1_000_000);
-    const { data: precos } = await api<{ custom: string[]; seen: string[] }>('GET', '/api/uso/precos');
+    const { data: precos } = await api<{ custom: string[]; seen: string[]; anthropic: string[] }>('GET', '/api/uso/precos');
     expect(precos.custom).toContain('gemini-3-pro');
     expect(precos.seen).toContain('claude-opus-5-5');
+    // O catálogo atual da Anthropic aparece no consumo mesmo sem uso (o Fable 5.2 ainda não foi usado aqui).
+    expect(precos.anthropic).toEqual(['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5']);
   });
 
   it('uso oficial do plano: a statusline da sessão entrega os rate_limits, e a sua statusline continua aparecendo', async () => {

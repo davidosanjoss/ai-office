@@ -1013,13 +1013,13 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
     expect(await page.$eval('#models-form input[value=padrao]', (e) => (e as HTMLInputElement).checked)).toBe(true);
     expect(await page.$$eval('#model-choice-model optgroup', (groups) =>
       groups.map((group) => [group.label, group.disabled]),
-    )).toEqual([['Anthropic', false], ['OpenAI', false], ['Google · integração indisponível', true]]);
+    )).toEqual([['Anthropic', false], ['OpenAI', false], ['Google · Antigravity', false]]);
     await page.click('#models-form input[value=duplo]');
     await page.select('#model-choice-reasoning', 'claude-opus-5-5');
-    await page.select('#model-choice-execution', 'sonnet');
+    await page.select('#model-choice-execution', 'claude-sonnet-5-5');
     await page.click('#models-form button[type=submit]');
     await waitFor(() => store.rooms.get(room.id)!.projects![1].models?.mode === 'duplo', 3000, 'modelos salvos');
-    expect(store.rooms.get(room.id)!.projects![1].models).toEqual({ mode: 'duplo', reasoning: 'claude-opus-5-5', execution: 'sonnet' });
+    expect(store.rooms.get(room.id)!.projects![1].models).toEqual({ mode: 'duplo', reasoning: 'claude-opus-5-5', execution: 'claude-sonnet-5-5' });
     // O Saulo abriu no padrão da conta: a troca vale quando ele retomar.
     await page.waitForFunction(() => document.querySelector('#models-stale:not([hidden])')?.textContent?.includes('Saulo'));
     // Nome que não é de modelo: o servidor recusa e a mensagem aparece.
@@ -1047,6 +1047,10 @@ describe.skipIf(!chrome)('interface (navegador headless)', () => {
       Object.fromEntries(inputs.map((input) => [input.name, Number(input.value)])),
     );
     expect(openAIPrice).toEqual({ input: 2, output: 10, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0.1 });
+    const googlePrice = await page.$$eval('#usage-models tr[data-model="gemini-4-neon"] input', (inputs) =>
+      Object.fromEntries(inputs.map((input) => [input.name, Number(input.value)])),
+    );
+    expect(googlePrice).toEqual({ input: 3, output: 15, cacheWrite5m: 0, cacheWrite1h: 0, cacheRead: 0.15 });
     // regressão: trocar de período antes da resposta anterior chegar não deixa o período antigo na tela.
     await page.click('#usage-periods button[data-period="hoje"]');
     await page.click('#usage-periods button[data-period="30d"]');

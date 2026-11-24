@@ -7,18 +7,55 @@
 
 import type { ProjectModels } from './types.ts';
 
+export type AgentKind = 'claude' | 'codex' | 'antigravity';
+
+export interface ModelGroup {
+  label: string;
+  models: string[];
+  disabled?: boolean;
+}
+
 /** Sugestões nos campos de modelo do projeto. */
-export const MODEL_GROUPS = [
-  { label: 'Anthropic', models: ['opus', 'sonnet', 'haiku', 'fable', 'opus[1m]', 'sonnet[1m]', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'] },
+export const MODEL_GROUPS: ModelGroup[] = [
+  {
+    label: 'Anthropic',
+    // Só os nomes exatos dos modelos atuais. Um apelido do Claude Code ("opus", "sonnet[1m]") ainda
+    // entra pelo "Outro modelo…".
+    models: ['claude-fable-5-2', 'claude-opus-5-5', 'claude-sonnet-5-5', 'claude-haiku-5-5'],
+  },
   { label: 'OpenAI', models: ['gpt-6.2-sol', 'gpt-6.2-astra', 'gpt-5.5', 'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex'] },
-  { label: 'Google · integração indisponível', models: ['gemini-3.8-flash', 'gemini-3.1-pro-preview'], disabled: true },
+  {
+    label: 'Google · Antigravity',
+    models: [
+      'gemini-4-neon',
+      'gemini-4-carbon',
+      'gemini-4-argon',
+      'gemini-4-hydrogen',
+      'gemini-pro-orchestrator-neon',
+      'gemini-pro-orchestrator',
+      'gemini-pro-orchestrator-argon',
+      'gemini-3.8-flash',
+    ],
+  },
 ];
 
+export function isAntigravityModel(model: string): boolean {
+  return /^gemini-/i.test(model) || /^gpt-oss-/i.test(model) || /^claude-.+-(?:low|medium|high|xhigh|max)$/i.test(model);
+}
+
+export function isCodexModel(model: string): boolean {
+  return /^(?:gpt-(?!oss-)|codex-|o\d(?:-|$))/i.test(model);
+}
+
 /** Aplica ao agente os modelos compatíveis que foram escolhidos no projeto. */
-export function modelsForAgent(models: ProjectModels | undefined, kind: 'claude' | 'codex'): ProjectModels | undefined {
+export function modelsForAgent(models: ProjectModels | undefined, kind: AgentKind): ProjectModels | undefined {
   if (!models) return undefined;
-  const compatible = (model: string | undefined): model is string =>
-    !!model && !/^gemini-/i.test(model) && /^(?:gpt-|codex-|o\d(?:-|$))/i.test(model) === (kind === 'codex');
+  const compatible = (model: string | undefined): model is string => {
+    if (!model) return false;
+    if (kind === 'antigravity') return isAntigravityModel(model);
+    if (kind === 'codex') return isCodexModel(model);
+    return !isAntigravityModel(model) && !isCodexModel(model);
+  };
   if (models.mode === 'unico') return compatible(models.model) ? models : undefined;
   if (kind === 'claude' && compatible(models.reasoning) && compatible(models.execution)) return models;
   const model = [models.execution, models.reasoning].find(compatible);

@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { isAgyConversationId, readAgyPrompt, rememberAgySession } from './antigravity.ts';
 import { onSessionStart, onStop } from './incidents.ts';
 import { agentMovedOn } from './permissions.ts';
 import { onPostToolUse } from './live.ts';
@@ -13,12 +14,16 @@ interface HookBody {
   payload: Record<string, any>;
 }
 
+/** Último prompt registrado por agente Antigravity (PreInvocation dispara antes de cada chamada ao modelo no turno). */
+const lastAgyPrompt = new Map<string, string>();
+
 /**
- * Transforma um evento de hook do Claude Code em estado do personagem. Devolve a saída do hook,
- * quando o escritório decide algo (Stop: gravar a memória; SessionStart: o dossiê da sessão nova).
+ * Transforma um evento de hook do Claude Code / Codex / Antigravity em estado do personagem.
+ * Devolve a saída do hook, quando o escritório decide algo (Stop: gravar a memória; SessionStart:
+ * o dossiê da sessão nova ou o contexto da sala no Antigravity).
  */
 export function handleHook({ event, agentId, payload }: HookBody): object | undefined {
-  const agent = agentId ? store.agents.get(agentId) : findBySession(payload.session_id);
+  const agent = agentId ? store.agents.get(agentId) : findBySession(payload.session_id ?? payload.conversationId);
   if (!agent) return undefined;
   const id = agent.id;
   if (agent.kind === 'codex') {
@@ -29,6 +34,60 @@ export function handleHook({ event, agentId, payload }: HookBody): object | unde
     if (event === 'PermissionRequest') {
       store.patchAgent(id, { status: 'waiting', activity: 'Aguardando aprovação no terminal', attentionAt: Date.now() });
       return;
+    }
+  }
+  if (agent.kind === 'antigravity') {
+    const convId = isAgyConversationId(payload.conversationId) ? payload.conversationId : undefined;
+    if (convId) rememberAgySession(convId, typeof payload.cwd === 'string' && payload.cwd ? payload.cwd : agent.cwd);
+    if (['PostToolUse', 'PreInvocation', 'Stop'].includes(event)) agentMovedOn(id);
+    switch (event) {
+      case 'SessionStart': {
+        store.patchAgent(id, { ...(convId ? { sessionId: convId } : {}), status: 'idle', activity: 'Pronto para trabalhar' });
+        onSessionStart(id);
+        const prompt = readAgyPrompt(id);
+        return prompt ? { injectSteps: [{ systemMessage: { systemMessage: prompt } }] } : {};
+      }
+      case 'PreInvocation': {
+        const prompt = String(payload.lastUserInput ?? '').trim();
+        store.patchAgent(id, {
+          ...(convId && !agent.sessionId ? { sessionId: convId } : {}),
+          status: 'working',
+          activity: 'Pensando…',
+          attentionAt: undefined,
+        });
+        if (prompt && lastAgyPrompt.get(id) !== prompt) {
+          lastAgyPrompt.set(id, prompt);
+          store.log(id, `Pedido: ${truncate(prompt, 120)}`, 'prompt');
+        }
+        return {};
+      }
+      case 'PreToolUse': {
+        const toolName = String(payload.toolCall?.name ?? payload.tool_name ?? '');
+        const toolInput = (payload.toolCall?.args ?? payload.tool_input ?? {}) as Record<string, any>;
+        const text = describeTool(toolName, toolInput);
+        const isTask = toolName === 'invoke_subagent' || toolName === 'Task' || toolName === 'Agent';
+        store.patchAgent(id, {
+          ...(convId && !agent.sessionId ? { sessionId: convId } : {}),
+          status: 'working',
+          activity: text,
+          attentionAt: undefined,
+          subagents: agent.subagents + (isTask ? 1 : 0),
+          ...(isTask ? { helpers: [...(agent.helpers ?? []), String(toolInput.Role ?? toolInput.description ?? toolInput.TypeName ?? 'ajudante').slice(0, 80)].slice(-10) } : {}),
+        });
+        store.log(id, text, 'tool');
+        return {};
+      }
+      case 'PostToolUse':
+        if (agent.status === 'waiting') store.patchAgent(id, { status: 'working', attentionAt: undefined });
+        return {};
+      case 'Stop':
+        lastAgyPrompt.delete(id);
+        store.patchAgent(id, { status: 'done', activity: 'Terminou!', subagents: 0, attentionAt: Date.now() });
+        store.log(id, 'Terminou o pedido', 'done');
+        onStop(id, payload);
+        return {};
+      default:
+        return {};
     }
   }
   // O agente seguiu adiante (a ferramenta rodou, chegou outro pedido, terminou): o que estava
@@ -143,27 +202,43 @@ export function describeTool(tool: string, input: Record<string, any>): string {
   const file = (p: unknown) => (typeof p === 'string' ? path.basename(p) : '');
   switch (tool) {
     case 'Read':
-      return `Lendo ${file(input.file_path)}`;
+    case 'read_file':
+    case 'view_file':
+    case 'view_file_outline':
+    case 'view_code_item':
+      return `Lendo ${file(input.file_path ?? input.Path ?? input.AbsolutePath)}`;
     case 'Edit':
     case 'MultiEdit':
-      return `Editando ${file(input.file_path)}`;
+    case 'edit_file':
+    case 'replace_file_content':
+    case 'multi_replace_file_content':
+      return `Editando ${file(input.file_path ?? input.Path ?? input.TargetFile)}`;
     case 'Write':
-      return `Escrevendo ${file(input.file_path)}`;
+    case 'write_file':
+    case 'write_to_file':
+      return `Escrevendo ${file(input.file_path ?? input.Path ?? input.TargetFile)}`;
     case 'NotebookEdit':
       return `Editando ${file(input.notebook_path)}`;
     case 'Bash':
-      return `Rodando: ${truncate(input.description || input.command || '', 60)}`;
+    case 'run_command':
+      return `Rodando: ${truncate(input.description || input.toolSummary || input.command || input.CommandLine || '', 60)}`;
     case 'Grep':
-      return `Buscando "${truncate(input.pattern ?? '', 40)}"`;
+    case 'grep_search':
+      return `Buscando "${truncate(input.pattern ?? input.Query ?? '', 40)}"`;
     case 'Glob':
-      return `Procurando ${truncate(input.pattern ?? '', 40)}`;
+    case 'find_by_name':
+    case 'list_dir':
+      return `Procurando ${truncate(input.pattern ?? input.Pattern ?? file(input.DirectoryPath) ?? '', 40)}`;
     case 'WebFetch':
-      return `Lendo ${truncate(input.url ?? 'página web', 50)}`;
+    case 'read_url_content':
+      return `Lendo ${truncate(input.url ?? input.Url ?? 'página web', 50)}`;
     case 'WebSearch':
+    case 'search_web':
       return `Pesquisando "${truncate(input.query ?? '', 40)}"`;
     case 'Task':
     case 'Agent':
-      return `Chamou ajudante: ${truncate(input.description ?? '', 50)}`;
+    case 'invoke_subagent':
+      return `Chamou ajudante: ${truncate(input.description ?? input.Role ?? input.TypeName ?? '', 50)}`;
     case 'TodoWrite':
       return 'Organizando tarefas';
     default:

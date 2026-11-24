@@ -7,12 +7,13 @@ import type { Agent, Floor, Room } from '../shared/types.ts';
 import { findTranscript } from './discover.ts';
 import { addWorktree } from './git.ts';
 import { modelLaunch, modelsForAgent, modelsLabel } from '../shared/models.ts';
+import { antigravityArgs, ensureAgyPlugin, setAgyPrompt } from './antigravity.ts';
 import { codexArgs } from './codex.ts';
-import { claudeWiring, codexMemory } from './memory.ts';
+import { agyHasMemory, claudeWiring, codexMemory } from './memory.ts';
 import { nowText, projectOf, roomContext } from './projects.ts';
 import { agentMovedOn } from './permissions.ts';
 import { forgetShells } from './live.ts';
-import { CLAUDE_DIR, CODEX_DIR, DATA_DIR, HOST, PORT, claudeBin, codexBin, defaultShell, isWindows, ptyCommand } from './platform.ts';
+import { CLAUDE_DIR, CODEX_DIR, DATA_DIR, HOST, PORT, antigravityBin, claudeBin, codexBin, defaultShell, isWindows, ptyCommand } from './platform.ts';
 import { store } from './store.ts';
 import { CONTEXT_DIR, buildDossier, contextInfo, setPendingDossier } from './context.ts';
 
@@ -112,7 +113,8 @@ export function writeNowFile(room: Room) {
  * sistema, os projetos vizinhos, os documentos da raiz e a memória compartilhada).
  */
 export function agentPromptFile(agent: Agent, room: Room, floor: Floor | undefined): string {
-  const parts = [floor?.defaults?.instructions?.trim(), roomContext(room, agent, { memory: agent.kind === 'codex' ? !!codexMemory() : claudeWiring().mcp, nowFile: nowFile(room.id) })];
+  const memory = agent.kind === 'codex' ? !!codexMemory() : agent.kind === 'antigravity' ? agyHasMemory() : claudeWiring().mcp;
+  const parts = [floor?.defaults?.instructions?.trim(), roomContext(room, agent, { memory, nowFile: nowFile(room.id) })];
   const file = path.join(roomDir(room.id), `prompt-${agent.id}.md`);
   fs.mkdirSync(roomDir(room.id), { recursive: true });
   fs.writeFileSync(file, parts.filter(Boolean).join('\n\n---\n\n'));
@@ -190,13 +192,14 @@ export function createShell(roomId: string, opts: { incidentId?: string; project
 
 export async function createAgent(
   roomId: string,
-  opts: { name?: string; worktree?: boolean; incidentId?: string; projectId?: string; kind?: 'claude' | 'codex' },
+  opts: { name?: string; worktree?: boolean; incidentId?: string; projectId?: string; kind?: 'claude' | 'codex' | 'antigravity' },
 ): Promise<Agent> {
   const room = store.rooms.get(roomId);
   if (!room) throw new Error('Sala não encontrada');
   if (opts.projectId && !room.projects?.some((p) => p.id === opts.projectId)) throw new Error('Projeto não encontrado na sala');
   const project = projectOf(room, opts.projectId);
   if (opts.kind === 'codex' && !codexBin()) throw new Error('Codex CLI não encontrado no PATH');
+  if (opts.kind === 'antigravity' && !antigravityBin()) throw new Error('Antigravity CLI (agy) não encontrado no PATH');
   const name = opts.name?.trim() || pickName(roomId);
   const id = randomUUID().slice(0, 8);
 
@@ -217,7 +220,7 @@ export async function createAgent(
     name,
     cwd,
     worktreeBranch,
-    sessionId: opts.kind === 'codex' ? '' : randomUUID(),
+    sessionId: opts.kind === 'codex' || opts.kind === 'antigravity' ? '' : randomUUID(),
     status: 'starting',
     activity: opts.incidentId ? 'Indo para a sala de guerra…' : 'Chegando no escritório…',
     subagents: 0,
@@ -240,14 +243,14 @@ export async function createAgent(
 export async function resumeAgent(id: string, mode?: 'retomar' | 'nova') {
   const agent = store.agents.get(id);
   if (!agent || running.has(id)) return;
-  if (agent.kind !== 'shell' && agent.kind !== 'codex' && (mode ?? (contextInfo(agent).choice === 'nova' ? 'nova' : 'retomar')) === 'nova') return freshAgent(id);
+  if (agent.kind !== 'shell' && agent.kind !== 'codex' && agent.kind !== 'antigravity' && (mode ?? (contextInfo(agent).choice === 'nova' ? 'nova' : 'retomar')) === 'nova') return freshAgent(id);
   appendScrollback(id, '\r\n\x1b[2m──── reaberto ────\x1b[0m\r\n');
   if (agent.kind === 'shell') {
     store.patchAgent(id, { status: 'idle', exitCode: undefined });
     spawn(agent, false);
     return;
   }
-  const resume = agent.kind === 'codex' ? !!agent.sessionId : !!findTranscript(agent.sessionId);
+  const resume = agent.kind === 'codex' || agent.kind === 'antigravity' ? !!agent.sessionId : !!findTranscript(agent.sessionId);
   store.patchAgent(id, {
     status: 'starting',
     activity: resume ? 'Voltando ao trabalho…' : 'Começando uma conversa nova…',
@@ -270,7 +273,7 @@ export async function resumeAgent(id: string, mode?: 'retomar' | 'nova') {
  */
 export async function freshAgent(id: string) {
   const agent = store.agents.get(id);
-  if (!agent || agent.kind === 'shell' || agent.kind === 'codex') return;
+  if (!agent || agent.kind === 'shell' || agent.kind === 'codex' || agent.kind === 'antigravity') return;
   if (running.has(id)) await stopAgent(id);
   const current = store.agents.get(id);
   if (!current || running.has(id)) return;
@@ -322,9 +325,13 @@ export function lastLine(output: string): string {
 function spawn(agent: Agent, resume: boolean) {
   const isShell = agent.kind === 'shell';
   const isCodex = agent.kind === 'codex';
-  const bin = isShell ? defaultShell() : isCodex ? codexBin() : claudeBin();
+  const isAgy = agent.kind === 'antigravity';
+  const bin = isShell ? defaultShell() : isCodex ? codexBin() : isAgy ? antigravityBin() : claudeBin();
   if (!bin) {
-    store.patchAgent(agent.id, { status: 'exited', activity: isCodex ? 'Codex CLI não encontrado no PATH' : 'Claude Code não encontrado no PATH' });
+    store.patchAgent(agent.id, {
+      status: 'exited',
+      activity: isCodex ? 'Codex CLI não encontrado no PATH' : isAgy ? 'Antigravity CLI (agy) não encontrado no PATH' : 'Claude Code não encontrado no PATH',
+    });
     return;
   }
   let args: string[] = [];
@@ -337,6 +344,16 @@ function spawn(agent: Agent, resume: boolean) {
     args = codexArgs(agent, resume, models?.mode === 'unico' ? models.model : undefined, agentPromptFile(agent, room, floor));
     store.patchAgent(agent.id, { models: modelsLabel(models) });
     modelEnv = { CODEX_HOME: CODEX_DIR };
+  } else if (isAgy) {
+    ensureAgyPlugin();
+    const project = projectOf(room, agent.projectId);
+    const floor = store.floors.get(room.floorId ?? '');
+    const models = modelsForAgent(project.models, 'antigravity');
+    const dirs = project.path === room.path ? [] : [room.path];
+    setAgyPrompt(agent.id, agentPromptFile(agent, room, floor));
+    args = antigravityArgs(agent, resume, models?.mode === 'unico' ? models.model : undefined, dirs);
+    const label = modelsLabel(models);
+    if (agent.models !== label) store.patchAgent(agent.id, { models: label });
   } else if (!isShell) {
     const floor = store.floors.get(room.floorId ?? '');
     const files = floorSessionFiles(floor);
@@ -354,8 +371,8 @@ function spawn(agent: Agent, resume: boolean) {
   }
   const cmd = ptyCommand(bin, args);
   const cwd = fs.existsSync(agent.cwd) ? agent.cwd : projectOf(room, agent.projectId).path;
-  // Só as sessões do Claude reportam eventos ao escritório.
-  const officeEnv = isShell ? {} : { AI_OFFICE_URL: `http://${HOST}:${PORT}`, AI_OFFICE_AGENT_ID: agent.id, ...(isCodex ? {} : userStatusLine()) };
+  // Só as sessões de agente reportam eventos ao escritório.
+  const officeEnv = isShell ? {} : { AI_OFFICE_URL: `http://${HOST}:${PORT}`, AI_OFFICE_AGENT_ID: agent.id, ...(isCodex || isAgy ? {} : userStatusLine()) };
 
   const proc = pty.spawn(cmd.file, cmd.args, {
     name: 'xterm-256color',
@@ -419,6 +436,16 @@ function userStatusLine(): { AI_OFFICE_STATUSLINE?: string } {
 // uma, os agentes se achariam "filhos" dela (e, por exemplo, deixariam de salvar o histórico).
 const INHERITED_SESSION_VARS = [
   'CODEX_THREAD_ID',
+  'ANTIGRAVITY_AGENT',
+  'ANTIGRAVITY_LS_ADDRESS',
+  'ANTIGRAVITY_CSRF_TOKEN',
+  'ANTIGRAVITY_CONVERSATION_ID',
+  'ANTIGRAVITY_TRAJECTORY_ID',
+  'ANTIGRAVITY_SOURCE_METADATA',
+  'ANTIGRAVITY_PROJECT_ID',
+  'ANTIGRAVITY_LS_VERSION',
+  'ANTIGRAVITY_AGENTAPI_EXE',
+  'ANTIGRAVITY_APP_DATA_DIR',
   'CLAUDECODE',
   'CLAUDE_PID',
   'CLAUDE_EFFORT',
